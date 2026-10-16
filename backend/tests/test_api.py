@@ -108,22 +108,23 @@ def test_same_version_twice_is_rejected(client: TestClient) -> None:
 
 def test_same_version_under_another_spelling_is_rejected(client: TestClient) -> None:
     assert _upload(client, filename="VAN26 _ Event_Network_Requirements_V1.xlsx").status_code == 201
-    r = _upload(client, filename="van26_event_network_requirements_v1.xlsx", data=_wb("other"))
+    r = _upload(client, filename="VAN26 _ Event Network Requirements - V1.xlsx", data=_wb("other"))
     assert r.status_code == 409
     assert "V1 of VAN26 | Event_Network_Requirements has already been uploaded" in r.json()["detail"]
     assert len(client.get("/api/documents").json()) == 1
 
 
-def test_spaces_instead_of_underscores_explained(client: TestClient) -> None:
+def test_spaces_and_hyphens_are_accepted(client: TestClient) -> None:
     r = _upload(client, filename="VAN26 _ Event Network Requirements - V1.xlsx")
-    assert r.status_code == 422
-    assert "Use underscores" in r.json()["detail"]
+    assert r.status_code == 201, r.text
+    assert r.json()["document"]["name"] == "VAN26 | Event_Network_Requirements"
+    assert r.json()["version"]["version"] == 1
 
 
 @pytest.mark.parametrize(
     ("filename", "message"),
     [
-        ("Budget.xlsx", "must contain 'Event_Network_Requirements'"),
+        ("Budget.xlsx", "must contain 'Event Network Requirements'"),
         ("Event_Network_Requirements_V1.xlsx", "event code"),
         ("LIS26 _ Event_Network_Requirements.xlsx", "version number"),
         ("LIS26 _ Event_Network_Requirements_V1.xlsm", ".xlsm"),

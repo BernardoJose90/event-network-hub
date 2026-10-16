@@ -103,3 +103,14 @@ export async function downloadFile(documentId, version, format, identity) {
   a.remove()
   URL.revokeObjectURL(url)
 }
+
+// Admin only: open a version in the in-browser editor (Collabora Online).
+// Resolves with { editor_url, access_token, access_token_ttl, base_version }.
+export async function startEdit(documentId, version, identity) {
+  return json(
+    await fetch(`/api/documents/${documentId}/versions/${version}/edit`, {
+      method: 'POST',
+      headers: identityHeaders(identity),
+    }),
+  )
+}

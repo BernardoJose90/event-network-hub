@@ -3,6 +3,7 @@ import {
   deleteDocument,
   downloadFile,
   fetchFile,
+  startEdit,
   listDocuments,
   listVersions,
   uploadDocument,
@@ -236,7 +237,7 @@ function DocumentHeader({ document, identity, onDeleted }) {
   )
 }
 
-function VersionTable({ documentId, versions, identity, onView }) {
+function VersionTable({ documentId, versions, identity, onView, onEdit }) {
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
 
@@ -253,6 +254,8 @@ function VersionTable({ documentId, versions, identity, onView }) {
   }
 
   const hasReady = versions.some((v) => v.status === 'ready')
+  const latestReady = versions.find((v) => v.status === 'ready')?.version
+  const isAdmin = identity.role === 'network-admin'
 
   return (
     <section className="panel">
@@ -263,6 +266,11 @@ function VersionTable({ documentId, versions, identity, onView }) {
           <button onClick={() => onView(null)} disabled={!hasReady || busy}>
             View
           </button>
+          {isAdmin && (
+            <button onClick={() => onEdit(latestReady)} disabled={!hasReady || busy}>
+              Edit
+            </button>
+          )}
           <button onClick={() => download(null, 'pdf')} disabled={!hasReady || busy}>
             Download PDF
           </button>
@@ -290,7 +298,10 @@ function VersionTable({ documentId, versions, identity, onView }) {
             <tbody>
               {versions.map((v) => (
                 <tr key={v.id}>
-                  <td>V{v.version}</td>
+                  <td>
+                    V{v.version}
+                    {v.edited_from && <div className="muted small">edited from V{v.edited_from}</div>}
+                  </td>
                   <td>{v.uploaded_by}</td>
                   <td>{formatTime(v.uploaded_at)}</td>
                   <td>
@@ -310,6 +321,15 @@ function VersionTable({ documentId, versions, identity, onView }) {
                       >
                         View
                       </button>
+                      {isAdmin && (
+                        <button
+                          className="secondary"
+                          onClick={() => onEdit(v.version)}
+                          disabled={v.status !== 'ready' || busy}
+                        >
+                          Edit
+                        </button>
+                      )}
                       <button
                         className="secondary"
                         onClick={() => download(v.version, 'pdf')}
@@ -332,6 +352,115 @@ function VersionTable({ documentId, versions, identity, onView }) {
           </table>
         </div>
       )}
+    </section>
+  )
+}
+
+// Embeds Collabora Online the standard WOPI way: POST the access token into a
+// named iframe. Talks to the editor over postMessage to know when the document
+// is loaded, whether it has unsaved changes, and when a save has finished.
+function SpreadsheetEditor({ session, onSaved, onClose }) {
+  const frameRef = useRef(null)
+  const formRef = useRef(null)
+  const modifiedRef = useRef(false)
+  const pendingCloseRef = useRef(null)
+  const [status, setStatus] = useState('Loading editor…')
+  const [closing, setClosing] = useState(false)
+  const editorOrigin = new URL(session.editor_url).origin
+
+  const post = useCallback(
+    (MessageId, Values = {}) =>
+      frameRef.current?.contentWindow?.postMessage(
+        JSON.stringify({ MessageId, SendTime: Date.now(), Values }),
+        editorOrigin,
+      ),
+    [editorOrigin],
+  )
+
+  useEffect(() => {
+    formRef.current.submit()
+  }, [session])
+
+  useEffect(() => {
+    function onMessage(event) {
+      if (event.origin !== editorOrigin || event.source !== frameRef.current?.contentWindow) return
+      let msg
+      try {
+        msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data
+      } catch {
+        return
+      }
+      const values = msg.Values || {}
+      switch (msg.MessageId) {
+        case 'App_LoadingStatus':
+          if (values.Status === 'Document_Loaded') {
+            post('Host_PostmessageReady')
+            setStatus(`Editing V${session.base_version}. Saving creates a new version.`)
+          }
+          break
+        case 'Doc_ModifiedStatus':
+          // Modified -> unmodified means a save (Ctrl+S, toolbar or autosave) finished.
+          if (modifiedRef.current && !values.Modified) onSaved()
+          modifiedRef.current = !!values.Modified
+          setStatus(values.Modified ? 'Unsaved changes' : 'All changes saved')
+          break
+        case 'Action_Save_Resp':
+          if (values.success) onSaved()
+          setStatus(values.success ? 'Saved as a new version' : `Save failed: ${values.result || 'unknown error'}`)
+          pendingCloseRef.current?.(values.success)
+          break
+        case 'UI_Close':
+          requestClose()
+          break
+        default:
+      }
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  })
+
+  // Save unsaved changes before closing, so closing never loses work.
+  async function requestClose() {
+    if (closing) return
+    setClosing(true)
+    if (modifiedRef.current) {
+      setStatus('Saving before closing…')
+      const saved = await new Promise((resolve) => {
+        pendingCloseRef.current = resolve
+        post('Action_Save', { DontTerminateEdit: true, DontSaveIfUnmodified: true, Notify: true })
+        setTimeout(() => resolve(false), 20000)
+      })
+      pendingCloseRef.current = null
+      if (!saved && !window.confirm('Saving did not finish. Close the editor anyway and lose unsaved changes?')) {
+        setClosing(false)
+        return
+      }
+    }
+    onClose()
+  }
+
+  return (
+    <section className="panel editor">
+      <div className="row space-between">
+        <div>
+          <h3>{session.title}</h3>
+          <p className="muted small">{status}</p>
+        </div>
+        <button className="secondary" onClick={requestClose} disabled={closing}>
+          {closing ? 'Closing…' : 'Close editor'}
+        </button>
+      </div>
+      <form ref={formRef} action={session.editor_url} method="post" target="spreadsheet-editor">
+        <input type="hidden" name="access_token" value={session.access_token} />
+        <input type="hidden" name="access_token_ttl" value={session.access_token_ttl} />
+      </form>
+      <iframe
+        ref={frameRef}
+        name="spreadsheet-editor"
+        className="editor-frame"
+        title={session.title}
+        allow="clipboard-read *; clipboard-write *; fullscreen"
+      />
     </section>
   )
 }
@@ -364,6 +493,7 @@ export default function App() {
   const [versions, setVersions] = useState([])
   const [error, setError] = useState(null)
   const [preview, setPreview] = useState(null) // { url, title } of the PDF shown on the page
+  const [editing, setEditing] = useState(null) // editor session, see SpreadsheetEditor
 
   const closePreview = useCallback(() => {
     setPreview((p) => {
@@ -391,6 +521,21 @@ export default function App() {
   )
 
   useEffect(closePreview, [selectedId, closePreview])
+  useEffect(() => setEditing(null), [selectedId])
+
+  const openEditor = useCallback(
+    async (documentId, documentName, version) => {
+      setError(null)
+      try {
+        const session = await startEdit(documentId, version, identity)
+        closePreview()
+        setEditing({ ...session, title: `${documentName} · editing V${version}` })
+      } catch (err) {
+        setError(err.message)
+      }
+    },
+    [identity, closePreview],
+  )
 
   const refreshDocuments = useCallback(async () => {
     try {
@@ -417,6 +562,16 @@ export default function App() {
     setVersions([])
     refreshVersions()
   }, [refreshVersions])
+
+  // A new or edited version is converted in the background; re-check until it settles.
+  useEffect(() => {
+    if (!versions.some((v) => v.status === 'processing')) return undefined
+    const timer = setTimeout(() => {
+      refreshVersions()
+      refreshDocuments()
+    }, 2000)
+    return () => clearTimeout(timer)
+  }, [versions, refreshVersions, refreshDocuments])
 
   const selected = documents.find((d) => d.id === selectedId)
 
@@ -460,7 +615,23 @@ export default function App() {
                 versions={versions}
                 identity={identity}
                 onView={(version) => viewPdf(selected.id, selected.name, version)}
+                onEdit={(version) => openEditor(selected.id, selected.name, version)}
               />
+              {editing && (
+                <SpreadsheetEditor
+                  key={editing.access_token}
+                  session={editing}
+                  onSaved={() => {
+                    refreshVersions()
+                    refreshDocuments()
+                  }}
+                  onClose={() => {
+                    setEditing(null)
+                    refreshVersions()
+                    refreshDocuments()
+                  }}
+                />
+              )}
               {preview && <PdfViewer preview={preview} onClose={closePreview} />}
             </>
           ) : (

@@ -93,6 +93,24 @@ a.button:hover {
   margin: 0;
 }
 
+.editor h3 {
+  margin: 0;
+}
+
+.editor p {
+  margin: 2px 0 0;
+}
+
+.editor-frame {
+  display: block;
+  width: 100%;
+  height: 85vh;
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #fff;
+}
+
 .pdf-frame {
   display: block;
   width: 100%;

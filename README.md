@@ -213,6 +213,40 @@ Code: `backend/app/sheets/` (model, importer, engine, exporter) and `backend/app
 | PUT  | `/api/documents/{id}/sheet` | `{data, revision}`; 409 if someone else saved first |
 | GET  | `/api/documents/{id}/sheet/download?format=xlsx\|pdf` | generated on demand |
 
+## UI and accessibility
+
+The interface follows these published standards:
+
+- **[WCAG 2.2](https://www.w3.org/WAI/standards-guidelines/wcag/new-in-22/) level AA:**
+  - text contrast of at least 4.5:1, and 3:1 for controls and focus rings;
+  - a visible focus ring everywhere;
+  - pointer targets of at least 24×24px;
+  - a skip link and landmarks, so keyboard users can jump to the content;
+  - page titles that name the event and the view;
+  - status messages announced to screen readers ([SC 4.1.3](https://www.w3.org/WAI/WCAG22/Understanding/status-messages.html)): `role="status"` for results, `role="alert"` for errors;
+  - support for reduced motion and Windows forced colours.
+- **[WAI-ARIA Authoring Practices](https://www.w3.org/WAI/ARIA/apg/):**
+  - **Data grid** for the requirement tables. Tab enters the grid once. Arrow keys, Home/End, Ctrl+Home/End and PageUp/PageDown move between cells. Enter, F2 or typing starts editing. Enter saves, Escape cancels and Tab saves and moves on, and focus returns to the cell afterwards.
+  - **Tabs** for venues: arrow keys, Home and End.
+  - **Modal and alert dialogs** in place of the browser's `confirm()` and `prompt()`, using native `<dialog>`. Focus moves into the dialog, onto Cancel for destructive steps, and back to the button that opened it. Prompts show inline errors linked to the field.
+- **[GOV.UK Design System](https://design-system.service.gov.uk/components/notification-banner/):** messages carry an icon and a text label ("Success", "Note", "Error"), so meaning never depends on colour alone.
+- **[Nielsen Norman Group's heuristics](https://www.nngroup.com/articles/ten-usability-heuristics/):**
+  - feedback on every action, plus loading skeletons;
+  - Undo after deleting (user control);
+  - confirmations before hard-to-reverse steps (error prevention);
+  - plain-language errors that say how to recover.
+
+Shared pieces live in `frontend/src/ui/` (`Dialog.jsx`, `Notice.jsx`) and `frontend/src/event/grid.js`. The browser's built-in pop-ups remain only on the legacy Excel editor and live sheet pages.
+
+**Accessibility audit.** It runs axe-core 4.10.2, pinned as a dev dependency, against every page of an event and a template, using headless Chrome. It only views pages and exits 1 on any violation:
+
+```bash
+(cd frontend && npm ci)
+node scripts/a11y.mjs <event id> [<template id>]   # APP_URL and CHROME can be overridden
+```
+
+Automated checks find only part of the problems. Keyboard use and screen-reader announcements were also checked by hand. Before a release, test the requirement tables and dialogs with a screen reader (VoiceOver or NVDA).
+
 ## What changes for production
 
 - **Storage: S3 with presigned URLs.** Add an `S3Storage` implementing `put`/`get`, plus a `presign(key)` method. Downloads return a short-lived presigned GET URL, after the authorization check and the `download_log` write, instead of streaming bytes through the API. Use bucket encryption (SSE-KMS), block all public access, and add a lifecycle policy for old versions.

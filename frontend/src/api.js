@@ -68,9 +68,11 @@ function filenameFrom(res, fallback) {
   return match ? match[1] : fallback
 }
 
-export async function downloadPdf(documentId, version, identity) {
-  const query = version ? `?version=${encodeURIComponent(version)}` : ''
-  const res = await fetch(`/api/documents/${documentId}/download${query}`, {
+// format: 'pdf' (converted PDF) or 'xlsx' (the original upload)
+export async function downloadFile(documentId, version, format, identity) {
+  const params = new URLSearchParams({ format })
+  if (version) params.set('version', version)
+  const res = await fetch(`/api/documents/${documentId}/download?${params}`, {
     headers: identityHeaders(identity),
   })
   if (!res.ok) throw new Error(await errorMessage(res))
@@ -78,7 +80,7 @@ export async function downloadPdf(documentId, version, identity) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = filenameFrom(res, 'document.pdf')
+  a.download = filenameFrom(res, `document.${format}`)
   document.body.appendChild(a)
   a.click()
   a.remove()

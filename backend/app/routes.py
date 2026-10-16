@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from collections.abc import Iterator
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import JSONResponse
@@ -11,14 +11,20 @@ from pydantic import BaseModel, Field
 
 from . import db
 from .auth import Principal, current_principal, require_admin, require_known_role
-from .converter import Converter
-from .service import FULL_PDF, upload_version
+from .converter import XLSX_MEDIA_TYPE, Converter
+from .service import FULL_PDF, ORIGINAL, upload_version
 from .storage import ObjectNotFound, Storage, version_key
 from .validation import UploadRejected, validate_upload
 
 router = APIRouter(prefix="/api")
 
 READ_CHUNK = 1024 * 1024
+
+# Download format -> (stored file, media type, extension)
+DOWNLOAD_FORMATS = {
+    "pdf": (FULL_PDF, "application/pdf", "pdf"),
+    "xlsx": (ORIGINAL, XLSX_MEDIA_TYPE, "xlsx"),
+}
 
 
 # --- dependencies -----------------------------------------------------------
@@ -147,7 +153,9 @@ def download(
     principal: CurrentPrincipal,
     storage: Annotated[Storage, Depends(get_storage)],
     version: Annotated[int | None, Query(ge=1)] = None,
+    format: Annotated[Literal["pdf", "xlsx"], Query()] = "pdf",
 ) -> Response:
+    """Download a ready version as the converted PDF or the original .xlsx upload."""
     require_known_role(principal)
     document = _document_or_404(conn, document_id)
 
@@ -162,17 +170,18 @@ def download(
         if row["status"] != db.STATUS_READY:
             raise HTTPException(status.HTTP_409_CONFLICT, f"Version {version} is {row['status']}")
 
+    stored_name, media_type, extension = DOWNLOAD_FORMATS[format]
     try:
-        pdf = storage.get(version_key(document_id, row["version"], FULL_PDF))
+        content = storage.get(version_key(document_id, row["version"], stored_name))
     except ObjectNotFound:
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Stored PDF is missing")
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, f"Stored {extension} file is missing")
 
-    db.log_download(conn, version_id=row["id"], user=principal.user)
+    db.log_download(conn, version_id=row["id"], user=principal.user, format=format)
 
-    filename = f"{_safe_filename(document['name'])}-v{row['version']}.pdf"
+    filename = f"{_safe_filename(document['name'])}-v{row['version']}.{extension}"
     return Response(
-        content=pdf,
-        media_type="application/pdf",
+        content=content,
+        media_type=media_type,
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
             "Cache-Control": "no-store",

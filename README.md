@@ -47,7 +47,8 @@ For each `samples/*.xlsx`, the script creates a document, uploads the file, down
 
 - **a)** viewer and network-admin receive the same PDF;
 - **b)** `pdffonts` lists Overpass and does not list DejaVu;
-- **c)** the page count equals the number of visible sheets.
+- **c)** the page count equals the number of visible sheets;
+- **d)** the Excel download is byte-identical to the uploaded file.
 
 > `samples/`, `*.xlsx` and `*.pdf` are git-ignored, because sample workbooks can contain credentials. The smoke script keeps its downloads in a private temp dir that is deleted on exit.
 
@@ -85,10 +86,10 @@ backend/app/
 | Method | Path                                          | Notes                                                     |
 |--------|-----------------------------------------------|-----------------------------------------------------------|
 | GET    | `/api/documents`                              |                                                           |
-| POST   | `/api/documents`                              | `{"name": "..."}`                                         |
+| POST   | `/api/documents`                              | `{"name": "..."}`. Needs `X-Role: network-admin`          |
 | GET    | `/api/documents/{id}/versions`                |                                                           |
 | POST   | `/api/documents/{id}/versions`                | multipart `file`. 201 created, 200 unchanged, 422 invalid, 502 conversion failed |
-| GET    | `/api/documents/{id}/download[?version=N]`    | needs `X-Role` (`viewer` or `network-admin`); both get the full PDF |
+| GET    | `/api/documents/{id}/download[?version=N][&format=pdf\|xlsx]` | needs `X-Role` (`viewer` or `network-admin`). `pdf` (default) is the converted PDF, `xlsx` the original upload |
 
 ### Behaviour notes
 

@@ -7,6 +7,7 @@
 #   a) both roles receive the same PDF
 #   b) pdffonts lists Overpass and does not list DejaVu
 #   c) the PDF page count equals the number of visible sheets
+#   d) the Excel download is byte-identical to the uploaded file
 #
 # Downloaded PDFs live in a private temp dir that is deleted on exit.
 #
@@ -43,9 +44,9 @@ failures=0
 pass() { printf '  PASS  %s\n' "$1"; }
 fail() { printf '  FAIL  %s\n' "$1"; failures=$((failures + 1)); }
 
-download() { # download <doc_id> <role> <out>
+download() { # download <doc_id> <role> <out> [format]
   curl -sS -o "$3" -w '%{http_code}' -H "X-Role: $2" -H "X-User: smoke-test" \
-    "$API/documents/$1/download"
+    "$API/documents/$1/download?format=${4:-pdf}"
 }
 
 for sample in "${samples[@]}"; do
@@ -105,6 +106,14 @@ for sample in "${samples[@]}"; do
     pass "c) PDF has $pages page(s) = $sheets visible sheet(s)"
   else
     fail "c) PDF has $pages page(s) but the workbook has $sheets visible sheet(s)"
+  fi
+
+  # --- d) original Excel download ------------------------------------------------
+  code_x="$(download "$doc_id" viewer "$work/download.xlsx" xlsx)"
+  if [ "$code_x" = "200" ] && cmp -s "$sample" "$work/download.xlsx"; then
+    pass "d) Excel download is identical to the uploaded file"
+  else
+    fail "d) Excel download (HTTP $code_x) differs from the uploaded file"
   fi
 done
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createDocument, downloadPdf, listDocuments, listVersions, uploadVersion } from './api.js'
+import { createDocument, downloadFile, listDocuments, listVersions, uploadVersion } from './api.js'
 
 // TEST ONLY: role switcher standing in for real authentication.
 const ROLES = [
@@ -212,17 +212,17 @@ function UploadForm({ documentId, identity, onUploaded }) {
 
 function VersionTable({ documentId, versions, identity }) {
   const [error, setError] = useState(null)
-  const [busyVersion, setBusyVersion] = useState(null)
+  const [busy, setBusy] = useState(false)
 
-  async function download(version) {
+  async function download(version, format) {
     setError(null)
-    setBusyVersion(version ?? 'latest')
+    setBusy(true)
     try {
-      await downloadPdf(documentId, version, identity)
+      await downloadFile(documentId, version, format, identity)
     } catch (err) {
       setError(err.message)
     } finally {
-      setBusyVersion(null)
+      setBusy(false)
     }
   }
 
@@ -232,9 +232,15 @@ function VersionTable({ documentId, versions, identity }) {
     <section className="panel">
       <div className="row space-between">
         <h3>Versions</h3>
-        <button onClick={() => download(null)} disabled={!hasReady || busyVersion !== null}>
-          Download latest
-        </button>
+        <div className="row">
+          <span className="muted small">Latest version:</span>
+          <button onClick={() => download(null, 'pdf')} disabled={!hasReady || busy}>
+            Download PDF
+          </button>
+          <button onClick={() => download(null, 'xlsx')} disabled={!hasReady || busy}>
+            Download Excel
+          </button>
+        </div>
       </div>
       {error && <p className="error">{error}</p>}
       {versions.length === 0 ? (
@@ -267,13 +273,22 @@ function VersionTable({ documentId, versions, identity }) {
                     <Warnings warnings={v.warnings} />
                   </td>
                   <td>
-                    <button
-                      className="secondary"
-                      onClick={() => download(v.version)}
-                      disabled={v.status !== 'ready' || busyVersion !== null}
-                    >
-                      PDF
-                    </button>
+                    <div className="row nowrap">
+                      <button
+                        className="secondary"
+                        onClick={() => download(v.version, 'pdf')}
+                        disabled={v.status !== 'ready' || busy}
+                      >
+                        PDF
+                      </button>
+                      <button
+                        className="secondary"
+                        onClick={() => download(v.version, 'xlsx')}
+                        disabled={v.status !== 'ready' || busy}
+                      >
+                        Excel
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

@@ -163,6 +163,11 @@ button.secondary:hover:not(:disabled) {
   flex-wrap: wrap;
 }
 
+.row.nowrap {
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+
 .space-between {
   justify-content: space-between;
 }

@@ -87,9 +87,31 @@ def test_every_role_gets_the_full_pdf(client: TestClient, role) -> None:
     assert r.content.endswith(b"-v1.xlsx")  # FakeConverter echoes the filename
 
     conn = db.connect(client.settings.db_path)
-    rows = [dict(x) for x in conn.execute("SELECT user FROM download_log")]
+    rows = [dict(x) for x in conn.execute("SELECT user, format FROM download_log")]
     conn.close()
-    assert rows == [{"user": "bob"}]
+    assert rows == [{"user": "bob", "format": "pdf"}]
+
+
+@pytest.mark.parametrize("role", ["viewer", "network-admin"])
+def test_download_original_excel(client: TestClient, role) -> None:
+    doc_id = _doc_with_version(client)
+    r = client.get(f"/api/documents/{doc_id}/download?format=xlsx", headers={"X-Role": role})
+
+    assert r.status_code == 200
+    assert r.headers["content-type"] == XLSX
+    assert r.content == _wb("v1")  # byte-identical to the upload
+    assert r.headers["content-disposition"].endswith('-v1.xlsx"')
+
+    conn = db.connect(client.settings.db_path)
+    formats = [x[0] for x in conn.execute("SELECT format FROM download_log")]
+    conn.close()
+    assert formats == ["xlsx"]
+
+
+def test_unknown_download_format_rejected(client: TestClient) -> None:
+    doc_id = _doc_with_version(client)
+    r = client.get(f"/api/documents/{doc_id}/download?format=docx", headers={"X-Role": "viewer"})
+    assert r.status_code == 422
 
 
 @pytest.mark.parametrize("headers", [{}, {"X-Role": "superuser"}])

@@ -36,9 +36,20 @@ CREATE TABLE IF NOT EXISTS download_log (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     version_id     INTEGER NOT NULL REFERENCES document_versions(id) ON DELETE CASCADE,
     user           TEXT NOT NULL,
+    format         TEXT NOT NULL DEFAULT 'pdf' CHECK (format IN ('pdf', 'xlsx')),
     downloaded_at  TEXT NOT NULL
 );
 """
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Bring databases created by earlier builds up to the current schema."""
+    columns = {r["name"] for r in conn.execute("PRAGMA table_info(download_log)")}
+    if "format" not in columns:
+        conn.execute(
+            "ALTER TABLE download_log ADD COLUMN format TEXT NOT NULL DEFAULT 'pdf' "
+            "CHECK (format IN ('pdf', 'xlsx'))"
+        )
 
 
 def utcnow() -> str:
@@ -59,6 +70,7 @@ def init_db(path: Path) -> None:
     try:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.executescript(SCHEMA)
+        _migrate(conn)
         conn.commit()
     finally:
         conn.close()
@@ -190,9 +202,9 @@ def list_versions(conn: sqlite3.Connection, document_id: int) -> list[dict[str, 
 # --- download log -----------------------------------------------------------
 
 
-def log_download(conn: sqlite3.Connection, *, version_id: int, user: str) -> None:
+def log_download(conn: sqlite3.Connection, *, version_id: int, user: str, format: str) -> None:
     with conn:
         conn.execute(
-            "INSERT INTO download_log (version_id, user, downloaded_at) VALUES (?, ?, ?)",
-            (version_id, user, utcnow()),
+            "INSERT INTO download_log (version_id, user, format, downloaded_at) VALUES (?, ?, ?, ?)",
+            (version_id, user, format, utcnow()),
         )

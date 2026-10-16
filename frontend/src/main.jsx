@@ -4,6 +4,7 @@ import App from './App.jsx'
 import EditorPage from './EditorPage.jsx'
 import SheetPage from './SheetPage.jsx'
 import EventPage from './event/EventPage.jsx'
+import { DialogProvider } from './ui/Dialog.jsx'
 import './styles.css'
 
 // "/edit/<documentId>/<version>" is the full-screen Excel-style editor,
@@ -19,6 +20,6 @@ else if (eventMatch) page = <EventPage documentId={Number(eventMatch[1])} />
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    {page}
+    <DialogProvider>{page}</DialogProvider>
   </StrictMode>,
 )

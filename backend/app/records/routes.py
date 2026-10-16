@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
 from .. import db
-from ..naming import event_document_name
+from ..naming import event_document_name, short_code
 from ..validation import UploadRejected
 from ..auth import Principal, current_principal, require_admin, require_known_role
 from ..service import ORIGINAL
@@ -28,7 +28,7 @@ from .publish import changes_since_last_publish, publish
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/events/{document_id}")
-events_router = APIRouter(prefix="/api/events")  # creating and listing events
+events_router = APIRouter(prefix="/api")  # creating events, event templates
 
 RecordTypePath = Literal["wifi", "ethernet", "partner", "vlan_extension"]
 ListKindPath = Literal["building", "location", "vlan", "bandwidth"]
@@ -75,32 +75,58 @@ def _run(fn: Callable[[], T]) -> T:
         raise HTTPException(exc.status, str(exc))
 
 
-# --- new events -------------------------------------------------------------------
+# --- new events, templates ----------------------------------------------------------
+
+
+def _name(fn: Callable[[], str]) -> str:
+    try:
+        return fn()
+    except UploadRejected as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc))
 
 
 class NewEvent(BaseModel):
     event_code: str = Field(max_length=40)
-    copy_from: int | None = None
-    copy_records: bool = False
+    template_id: int | None = None
 
 
-@events_router.get("")
-def list_events(conn: Conn, principal: Reader) -> list[dict[str, Any]]:
-    """Events with requirements set up, to copy from."""
-    return [{"id": d["id"], "name": d["name"]} for d in db.list_documents(conn) if store.venues(conn, d["id"])]
-
-
-@events_router.post("", status_code=status.HTTP_201_CREATED)
+@events_router.post("/events", status_code=status.HTTP_201_CREATED)
 def create_event(body: NewEvent, conn: Conn, principal: Editor) -> dict[str, Any]:
-    """Create an event without uploading a workbook: empty, or copied from another event."""
-    try:
-        name = event_document_name(body.event_code)
-    except UploadRejected as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc))
-    doc = _run(lambda: service.create_event(conn, name, user=principal.user, copy_from=body.copy_from,
-                                            copy_records=body.copy_records))
-    log.info("%s created event %s (document %s, copied from %s)", principal.user, name, doc, body.copy_from)
+    """Create an event without uploading a workbook: empty, or from a template."""
+    name = _name(lambda: event_document_name(body.event_code))
+    doc = _run(lambda: service.create_event(conn, name, user=principal.user, template_id=body.template_id))
+    log.info("%s created event %s (document %s, template %s)", principal.user, name, doc, body.template_id)
     return db.get_document(conn, doc)  # type: ignore[return-value]
+
+
+@events_router.get("/templates")
+def list_templates(conn: Conn, principal: Reader) -> list[dict[str, Any]]:
+    """Event templates, for "Start from"."""
+    return [{"id": d["id"], "name": d["name"], "created_at": d["created_at"]}
+            for d in db.list_documents(conn, kind="template")]
+
+
+class NewTemplate(BaseModel):
+    name: str = Field(max_length=40)
+    event_id: int
+
+
+@events_router.post("/templates", status_code=status.HTTP_201_CREATED)
+def create_template(body: NewTemplate, conn: Conn, principal: Editor) -> dict[str, Any]:
+    """Save an event as a template (Ethernet points 0, no partner orders, no Wi-Fi passwords)."""
+    name = _name(lambda: short_code(body.name, "template name", "LIS"))
+    doc = _run(lambda: service.save_template(conn, name, user=principal.user, event_id=body.event_id))
+    log.info("%s saved document %s as template %s (document %s)", principal.user, body.event_id, name, doc)
+    return db.get_document(conn, doc)  # type: ignore[return-value]
+
+
+@events_router.delete("/templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_template(template_id: int, conn: Conn, principal: Editor) -> None:
+    document = db.get_document(conn, template_id)
+    if document is None or document["kind"] != "template":
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Template not found")
+    db.delete_document(conn, template_id)  # templates have no stored files
+    log.info("%s deleted template %s", principal.user, document["name"])
 
 
 # --- overview, history ---------------------------------------------------------

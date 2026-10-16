@@ -16,7 +16,8 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS documents (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     name        TEXT NOT NULL UNIQUE,
-    created_at  TEXT NOT NULL
+    created_at  TEXT NOT NULL,
+    kind        TEXT NOT NULL DEFAULT 'event' CHECK (kind IN ('event', 'template'))
 );
 
 CREATE TABLE IF NOT EXISTS document_versions (
@@ -68,6 +69,12 @@ CREATE TABLE IF NOT EXISTS download_log (
 
 def _migrate(conn: sqlite3.Connection) -> None:
     """Bring databases created by earlier builds up to the current schema."""
+    columns = {r["name"] for r in conn.execute("PRAGMA table_info(documents)")}
+    if "kind" not in columns:
+        conn.execute(
+            "ALTER TABLE documents ADD COLUMN kind TEXT NOT NULL DEFAULT 'event' "
+            "CHECK (kind IN ('event', 'template'))"
+        )
     columns = {r["name"] for r in conn.execute("PRAGMA table_info(download_log)")}
     if "format" not in columns:
         conn.execute(
@@ -117,10 +124,13 @@ def create_document(conn: sqlite3.Connection, name: str) -> dict[str, Any]:
     return get_document(conn, document_id)  # type: ignore[return-value]
 
 
-def insert_document(conn: sqlite3.Connection, name: str) -> int:
-    """Insert a document without committing, for callers that add more in the same transaction."""
+def insert_document(conn: sqlite3.Connection, name: str, kind: str = "event") -> int:
+    """Insert a document without committing, for callers that add more in the same transaction.
+
+    kind 'template': an event template, listed only under "Start from", never published.
+    """
     return conn.execute(
-        "INSERT INTO documents (name, created_at) VALUES (?, ?)", (name, utcnow())
+        "INSERT INTO documents (name, created_at, kind) VALUES (?, ?, ?)", (name, utcnow(), kind)
     ).lastrowid
 
 
@@ -134,15 +144,17 @@ def get_document_by_name(conn: sqlite3.Connection, name: str) -> dict[str, Any] 
     return dict(row) if row else None
 
 
-def list_documents(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+def list_documents(conn: sqlite3.Connection, kind: str = "event") -> list[dict[str, Any]]:
     rows = conn.execute(
         """
         SELECT d.*,
                (SELECT MAX(version) FROM document_versions v
                  WHERE v.document_id = d.id AND v.status = 'ready') AS latest_ready_version
           FROM documents d
+         WHERE d.kind = ?
          ORDER BY d.name
-        """
+        """,
+        (kind,),
     ).fetchall()
     docs = [dict(r) | {"versions": []} for r in rows]
     by_id = {d["id"]: d for d in docs}
@@ -150,7 +162,8 @@ def list_documents(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     for v in conn.execute(
         "SELECT document_id, version, status FROM document_versions ORDER BY document_id, version DESC"
     ):
-        by_id[v["document_id"]]["versions"].append({"version": v["version"], "status": v["status"]})
+        if v["document_id"] in by_id:
+            by_id[v["document_id"]]["versions"].append({"version": v["version"], "status": v["status"]})
     return docs
 
 

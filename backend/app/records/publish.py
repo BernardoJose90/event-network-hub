@@ -314,6 +314,8 @@ def publish(conn: sqlite3.Connection, storage: Storage, converter: Converter, *,
             user: str) -> tuple[dict[str, Any], str | None]:
     """Create the next version from the records. Returns (version row, failure reason or None)."""
     document = db.get_document(conn, doc)
+    if document["kind"] == "template":
+        raise service.RecordError(409, "Templates aren't published. Create an event from it and publish that.")
     if not store.has_records(conn, doc):
         raise service.RecordError(409, "There is nothing to publish yet. Import or add requirements first.")
     snap = snapshot(conn, doc)

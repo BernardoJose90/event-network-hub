@@ -495,54 +495,85 @@ def test_create_event_rules(client: TestClient, event: int) -> None:
     assert _new_event(client, "LIS 26").status_code == 422
     r = client.post("/api/events", headers=VIEWER, json={"event_code": "WEB26"})
     assert r.status_code == 403
-    assert _new_event(client, "WEB26", copy_from=9999).status_code == 404
-    assert _new_event(client, "WEB26", copy_records=True).status_code == 422
-    assert client.get("/api/documents").json()[-1]["name"].startswith("LIS26")  # nothing created
+    assert _new_event(client, "WEB26", template_id=9999).status_code == 404
+    assert _new_event(client, "WEB26", template_id=event).status_code == 404  # an event, not a template
+    assert [d["name"] for d in client.get("/api/documents").json()] == ["LIS26 | Event_Network_Requirements"]
 
 
-def test_copy_setup_only(client: TestClient, event: int) -> None:
-    doc = _new_event(client, "LIS27", copy_from=event).json()["id"]
-    src = client.get(f"/api/events/{event}/overview", headers=ADMIN).json()
-    new = client.get(f"/api/events/{doc}/overview", headers=ADMIN).json()
-    assert not new["has_records"]
-    assert [v["name"] for v in new["venues"]] == [v["name"] for v in src["venues"]]
-    assert [(g["kind"], g["name"]) for g in new["groups"]] == [(g["kind"], g["name"]) for g in src["groups"]]
-    assert [(i["kind"], i["value"]) for i in new["lists"]] == [(i["kind"], i["value"]) for i in src["lists"]]
-    assert "LIS26" in client.get(f"/api/events/{doc}/history", headers=ADMIN).json()[0]["summary"]
+def _save_template(client, event, name="LIS", headers=ADMIN):
+    return client.post("/api/templates", headers=headers, json={"name": name, "event_id": event})
 
 
-def test_copy_with_records(client: TestClient, event: int) -> None:
+def test_save_template(client: TestClient, event: int) -> None:
     wifi = _records(client, event, "wifi")
     client.post(f"/api/events/{event}/records/wifi/{wifi[0]['id']}/archive", headers=ADMIN,
                 json={"revision": wifi[0]["revision"]})
-    doc = _new_event(client, "LIS27", copy_from=event, copy_records=True).json()["id"]
+    r = _save_template(client, event, "lis")
+    assert r.status_code == 201, r.text
+    tpl = r.json()
+    assert (tpl["name"], tpl["kind"]) == ("LIS", "template")
+
+    # only "Start from" lists it; it is not a document
+    assert [t["name"] for t in client.get("/api/templates", headers=VIEWER).json()] == ["LIS"]
+    assert [d["name"] for d in client.get("/api/documents").json()] == ["LIS26 | Event_Network_Requirements"]
+
     src = client.get(f"/api/events/{event}/overview", headers=ADMIN).json()
-    new = client.get(f"/api/events/{doc}/overview", headers=ADMIN).json()
-    assert new["counts"] == src["counts"]  # active records only
-    assert new["archived"] == {}
-    assert new["totals"]["ethernet"][0]["total"] == src["totals"]["ethernet"][0]["total"]
-    assert _comparable(client, doc) == _comparable(client, event)
+    new = client.get(f"/api/events/{tpl['id']}/overview", headers=ADMIN).json()
+    assert new["document"]["kind"] == "template"
+    assert [v["name"] for v in new["venues"]] == [v["name"] for v in src["venues"]]
+    assert [(g["kind"], g["name"]) for g in new["groups"]] == [(g["kind"], g["name"]) for g in src["groups"]]
+    assert [(i["kind"], i["value"]) for i in new["lists"]] == [(i["kind"], i["value"]) for i in src["lists"]]
+    assert new["counts"] == {k: v for k, v in src["counts"].items() if k != "partner"}  # active, no partners
+    assert all(t["total"] == 0 for t in new["totals"]["ethernet"])
+    assert all(r["data"]["ports"] == 0 for r in _records(client, tpl["id"], "ethernet"))
+    assert not any(r["has_password"] for r in _records(client, tpl["id"], "wifi"))
+    assert _records(client, tpl["id"], "partner") == []
+    # other fields are kept
+    keep = lambda recs: sorted((r["data"].get("purpose"), r["data"].get("vlan")) for r in recs)
+    assert keep(_records(client, tpl["id"], "ethernet")) == keep(_records(client, event, "ethernet"))
+    assert client.post(f"/api/events/{tpl['id']}/publish", headers=ADMIN).status_code == 409
+
+
+def test_template_rules(client: TestClient, event: int) -> None:
+    assert _save_template(client, event, headers=VIEWER).status_code == 403
+    assert _save_template(client, event, "L").status_code == 422
+    assert _save_template(client, 9999).status_code == 404
+    tpl = _save_template(client, event).json()
+    assert _save_template(client, event, "Lis").status_code == 409
+    assert _save_template(client, tpl["id"], "LIS2").status_code == 404  # a template is not an event
+    assert client.delete(f"/api/templates/{event}", headers=ADMIN).status_code == 404  # an event
+    assert client.delete(f"/api/templates/{tpl['id']}", headers=VIEWER).status_code == 403
+    assert client.delete(f"/api/templates/{tpl['id']}", headers=ADMIN).status_code == 204
+    assert client.get("/api/templates", headers=ADMIN).json() == []
+
+
+def test_create_event_from_template(client: TestClient, event: int) -> None:
+    tpl = _save_template(client, event).json()
+    first = _records(client, tpl["id"], "ethernet")[0]
+    client.patch(f"/api/events/{tpl['id']}/records/ethernet/{first['id']}", headers=ADMIN,
+                 json={"revision": first["revision"], "data": {"ports": 2}})
+    r = _new_event(client, "LIS27", template_id=tpl["id"])
+    assert r.status_code == 201, r.text
+    doc = r.json()["id"]
+    assert _comparable(client, doc) == _comparable(client, tpl["id"])
+    assert client.get(f"/api/events/{doc}/overview", headers=ADMIN).json()["totals"]["ethernet"][0]["total"] == 2
 
     # VLAN extension ticks point at the new event's venues
-    names = {str(v["id"]): v["name"] for v in new["venues"]}
-    for r in _records(client, doc, "vlan_extension"):
-        assert set(r["data"]["venues"]) <= set(names)
-    src_names = {str(v["id"]): v["name"] for v in src["venues"]}
-    ticks = lambda recs, n: sorted((r["data"]["vlan"], n[k], on) for r in recs for k, on in r["data"]["venues"].items())
-    assert ticks(_records(client, doc, "vlan_extension"), names) == \
-        ticks(_records(client, event, "vlan_extension"), src_names)
+    venues = {str(v["id"]) for v in client.get(f"/api/events/{doc}/overview", headers=ADMIN).json()["venues"]}
+    assert all(set(r["data"]["venues"]) <= venues for r in _records(client, doc, "vlan_extension"))
+    assert "template LIS" in client.get(f"/api/events/{doc}/history", headers=ADMIN).json()[0]["summary"]
 
-    # the copy is independent of the original
-    first = _records(client, doc, "wifi")[0]
-    client.patch(f"/api/events/{doc}/records/wifi/{first['id']}", headers=ADMIN,
-                 json={"revision": first["revision"], "data": {"ssid": "Changed"}})
-    assert all(r["data"]["ssid"] != "Changed" for r in _records(client, event, "wifi"))
+    # independent: deleting the template keeps the event, changing the event keeps the template
+    rec = _records(client, doc, "ethernet")[0]
+    client.patch(f"/api/events/{doc}/records/ethernet/{rec['id']}", headers=ADMIN,
+                 json={"revision": rec["revision"], "data": {"purpose": "Changed"}})
+    assert all(r["data"]["purpose"] != "Changed" for r in _records(client, tpl["id"], "ethernet"))
+    client.delete(f"/api/templates/{tpl['id']}", headers=ADMIN)
+    assert len(_records(client, doc, "ethernet")) == len(_records(client, event, "ethernet"))
 
 
-def test_list_events_and_upload_into_created_event(client: TestClient, event: int) -> None:
+def test_upload_into_created_event(client: TestClient) -> None:
     created = _new_event(client, "WEB26").json()
-    assert {e["name"] for e in client.get("/api/events", headers=VIEWER).json()} == {
-        "LIS26 | Event_Network_Requirements", "WEB26 | Event_Network_Requirements"}
     r = client.post("/api/documents/upload", headers=ADMIN,
                     files={"file": ("WEB26 _ Event_Network_Requirements_V1.xlsx", records_workbook(), XLSX)})
     assert r.json()["document"]["id"] == created["id"]

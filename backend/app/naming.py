@@ -88,9 +88,14 @@ def parse_upload_name(filename: str | None) -> ParsedName:
     return ParsedName(event=event.upper(), version=version)
 
 
+def short_code(code: str | None, what: str = "event code", example: str = "LIS26") -> str:
+    """An event code or template name: 2-20 letters or digits, upper-cased; or raise UploadRejected."""
+    value = (code or "").strip()
+    if not _EVENT.match(value):
+        raise UploadRejected(f"The {what} must be 2 to 20 letters or digits, for example '{example}'.")
+    return value.upper()
+
+
 def event_document_name(code: str | None) -> str:
     """The document name for a new event code such as 'LIS26', or raise UploadRejected."""
-    event = (code or "").strip()
-    if not _EVENT.match(event):
-        raise UploadRejected("The event code must be 2 to 20 letters or digits, for example 'LIS26'.")
-    return ParsedName(event=event.upper(), version=1).document_name
+    return ParsedName(event=short_code(code), version=1).document_name

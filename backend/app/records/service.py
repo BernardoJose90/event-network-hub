@@ -424,7 +424,7 @@ def apply_import(conn: sqlite3.Connection, doc: int, result, *, user: str, sourc
     return {"counts": counts, "warnings": warnings}
 
 
-# --- new events ----------------------------------------------------------------
+# --- new events and templates ---------------------------------------------------
 
 # The sections every event workbook has used, for events started empty.
 DEFAULT_GROUPS = {
@@ -435,56 +435,93 @@ DEFAULT_GROUPS = {
 }
 
 
-def create_event(conn: sqlite3.Connection, name: str, *, user: str, copy_from: int | None = None,
-                 copy_records: bool = False) -> int:
-    """Create an event document without a workbook, in one transaction.
+def _template_data(record: dict[str, Any]) -> dict[str, Any] | None:
+    """A record as kept in a template: no partner orders, 0 Ethernet points, no Wi-Fi passwords."""
+    if record["type"] == "partner":
+        return None
+    data = dict(record["data"])
+    if record["type"] == "ethernet":
+        data["ports"] = 0
+    for field in SECRET_FIELDS.get(record["type"], ()):
+        data.pop(field, None)
+    return data
 
-    Empty: one default venue and the usual Wi-Fi groups and Ethernet sections.
-    copy_from: the venues, groups, sections and lists of that event, plus its active
-    records when copy_records is set. Returns the new document id.
-    """
-    from ..db import get_document, get_document_by_name
-    from .importer import DEFAULT_VENUE
+
+def _copy_event(conn: sqlite3.Connection, source: int, target: int, *, user: str, as_template: bool) -> int:
+    """Copy venues, groups, lists and active records from source into target (inside a transaction)."""
+    venue_ids = {v["id"]: store.insert_venue(conn, target, v["name"]) for v in store.venues(conn, source)}
+    group_ids = {g["id"]: store.insert_group(conn, target, g["kind"], g["name"]) for g in store.groups(conn, source)}
+    for item in store.lists(conn, source):
+        store.insert_list_value(conn, target, item["kind"], item["value"], flagged=item["flagged"])
+    copied = 0
+    for r in store.records(conn, source):  # active records only
+        data = _template_data(r) if as_template else dict(r["data"])
+        if data is None:
+            continue
+        if r["type"] == "vlan_extension":
+            data["venues"] = {str(venue_ids[int(v)]): on for v, on in data.get("venues", {}).items()
+                              if int(v) in venue_ids}
+        store.insert_record(conn, doc=target, record_type=r["type"], venue_id=venue_ids.get(r["venue_id"]),
+                            group_id=group_ids.get(r["group_id"]), sort=r["sort"], data=data, user=user)
+        copied += 1
+    return copied
+
+
+def _source(conn: sqlite3.Connection, doc: int, kind: str) -> dict[str, Any]:
+    from ..db import get_document
+
+    source = get_document(conn, doc)
+    if source is None or source["kind"] != kind:
+        raise RecordError(404, f"{'Template' if kind == 'template' else 'Event'} not found")
+    return source
+
+
+def _unused(conn: sqlite3.Connection, name: str) -> None:
+    from ..db import get_document_by_name
 
     if get_document_by_name(conn, name) is not None:
         raise RecordError(409, f"'{name}' already exists")
-    source = None
-    if copy_from is not None:
-        source = get_document(conn, copy_from)
-        if source is None:
-            raise RecordError(404, "The event to copy from was not found")
-        if not store.venues(conn, copy_from):
-            raise RecordError(422, f"'{source['name']}' has no requirements to copy")
-    elif copy_records:
-        raise RecordError(422, "Choose an event to copy the requirements from")
 
+
+def create_event(conn: sqlite3.Connection, name: str, *, user: str, template_id: int | None = None) -> int:
+    """Create an event document without a workbook, in one transaction.
+
+    Empty: one default venue and the usual Wi-Fi groups and Ethernet sections.
+    template_id: everything in that template. Returns the new document id.
+    """
+    from ..db import insert_document
+    from .importer import DEFAULT_VENUE
+
+    _unused(conn, name)
+    template = _source(conn, template_id, "template") if template_id is not None else None
     with conn:
-        from ..db import insert_document
-
         doc = insert_document(conn, name)
-        if source is None:
+        if template is None:
             store.insert_venue(conn, doc, DEFAULT_VENUE)
             for kind, names in DEFAULT_GROUPS.items():
                 for group in names:
                     store.insert_group(conn, doc, kind, group)
             summary = "Created the event (empty)"
         else:
-            venue_ids = {v["id"]: store.insert_venue(conn, doc, v["name"]) for v in store.venues(conn, copy_from)}
-            group_ids = {g["id"]: store.insert_group(conn, doc, g["kind"], g["name"])
-                         for g in store.groups(conn, copy_from)}
-            for item in store.lists(conn, copy_from):
-                store.insert_list_value(conn, doc, item["kind"], item["value"], flagged=item["flagged"])
-            copied = 0
-            if copy_records:
-                for r in store.records(conn, copy_from):  # active records only
-                    data = dict(r["data"])
-                    if r["type"] == "vlan_extension":
-                        data["venues"] = {str(venue_ids[int(v)]): on for v, on in data.get("venues", {}).items()
-                                          if int(v) in venue_ids}
-                    store.insert_record(conn, doc=doc, record_type=r["type"], venue_id=venue_ids.get(r["venue_id"]),
-                                        group_id=group_ids.get(r["group_id"]), sort=r["sort"], data=data, user=user)
-                    copied += 1
-            summary = f"Created the event from {source['name']}" + (f" with {copied} requirement(s)" if copy_records
-                                                                    else " (setup only)")
+            copied = _copy_event(conn, template["id"], doc, user=user, as_template=False)
+            summary = f"Created the event from template {template['name']} ({copied} requirement(s))"
         store.log(conn, doc=doc, entity="event", action="create", user=user, summary=summary)
+    return doc
+
+
+def save_template(conn: sqlite3.Connection, name: str, *, user: str, event_id: int) -> int:
+    """Save an event as a template: setup, Wi-Fi, Ethernet (0 points) and VLAN extensions;
+    no partner orders and no Wi-Fi passwords. Returns the template's document id."""
+    from ..db import insert_document
+
+    event = _source(conn, event_id, "event")
+    if not store.venues(conn, event_id):
+        raise RecordError(422, f"'{event['name']}' has no requirements to save as a template")
+    _unused(conn, name)
+    with conn:
+        doc = insert_document(conn, name, kind="template")
+        copied = _copy_event(conn, event_id, doc, user=user, as_template=True)
+        store.log(conn, doc=doc, entity="event", action="create", user=user,
+                  summary=f"Created the template from {event['name']} ({copied} requirement(s); Ethernet points "
+                          "set to 0, partner orders and Wi-Fi passwords left out)")
     return doc

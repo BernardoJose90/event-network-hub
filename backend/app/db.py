@@ -107,7 +107,14 @@ def list_documents(conn: sqlite3.Connection) -> list[dict[str, Any]]:
          ORDER BY d.name
         """
     ).fetchall()
-    return [dict(r) for r in rows]
+    docs = [dict(r) | {"versions": []} for r in rows]
+    by_id = {d["id"]: d for d in docs}
+    # One query for every document's versions, newest first, for the sidebar.
+    for v in conn.execute(
+        "SELECT document_id, version, status FROM document_versions ORDER BY document_id, version DESC"
+    ):
+        by_id[v["document_id"]]["versions"].append({"version": v["version"], "status": v["status"]})
+    return docs
 
 
 def delete_document(conn: sqlite3.Connection, document_id: int) -> None:

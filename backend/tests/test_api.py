@@ -77,6 +77,26 @@ def test_new_version_updates_existing_document(client: TestClient) -> None:
     assert latest.headers["x-document-version"] == "2"
 
 
+def test_document_list_includes_every_version(client: TestClient) -> None:
+    _upload(client, filename="LIS26 _ Event_Network_Requirements_V1.xlsx")
+    _upload(client, filename="LIS26 _ Event_Network_Requirements_V2.xlsx")
+    client.app.state.converter.fail = True
+    _upload(client, filename="LIS26 _ Event_Network_Requirements_V3.xlsx")
+    client.app.state.converter.fail = False
+    _upload(client, filename="LIS27 _ Event_Network_Requirements_V1.xlsx")
+
+    docs = client.get("/api/documents").json()
+
+    assert [(d["name"], d["latest_ready_version"], d["versions"]) for d in docs] == [
+        ("LIS26 | Event_Network_Requirements", 2, [
+            {"version": 3, "status": "failed"},
+            {"version": 2, "status": "ready"},
+            {"version": 1, "status": "ready"},
+        ]),
+        ("LIS27 | Event_Network_Requirements", 1, [{"version": 1, "status": "ready"}]),
+    ]
+
+
 def test_same_version_twice_is_rejected(client: TestClient) -> None:
     doc_id = _doc_with_version(client)
     r = _upload(client, data=_wb("different contents"))

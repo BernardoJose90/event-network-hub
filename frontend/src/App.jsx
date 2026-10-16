@@ -155,7 +155,7 @@ function UploadForm({ identity, onCreated }) {
   )
 }
 
-function DocumentList({ documents, selectedId, onSelect, onCreated, identity }) {
+function DocumentList({ documents, selectedId, viewing, onSelect, onViewVersion, onCreated, identity }) {
   return (
     <aside className="panel sidebar">
       <h2>Documents</h2>
@@ -169,9 +169,29 @@ function DocumentList({ documents, selectedId, onSelect, onCreated, identity }) 
             >
               <span>{d.name}</span>
               <span className="muted small">
-                {d.latest_ready_version ? `V${d.latest_ready_version}` : 'no versions'}
+                {d.versions.length} version{d.versions.length === 1 ? '' : 's'}
               </span>
             </button>
+            {d.versions.length > 0 && (
+              <ul className="version-list">
+                {d.versions.map((v) => (
+                  <li key={v.version}>
+                    <button
+                      className={`version-item ${v.status} ${
+                        viewing?.documentId === d.id && viewing?.version === v.version ? 'selected' : ''
+                      }`}
+                      onClick={() => onViewVersion(d, v.version)}
+                      disabled={v.status !== 'ready'}
+                      title={v.status === 'ready' ? `View V${v.version}` : `V${v.version} is ${v.status}`}
+                    >
+                      V{v.version}
+                      {v.version === d.latest_ready_version && <span className="small muted"> · latest</span>}
+                      {v.status !== 'ready' && <span className="small"> · {v.status}</span>}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
           </li>
         ))}
         {documents.length === 0 && <li className="muted">No documents yet.</li>}
@@ -360,7 +380,7 @@ export default function App() {
         const url = URL.createObjectURL(file.blob)
         setPreview((p) => {
           if (p?.url) URL.revokeObjectURL(p.url)
-          return { url, title: `${documentName} · V${file.version}` }
+          return { url, title: `${documentName} · V${file.version}`, documentId, version: Number(file.version) }
         })
       } catch (err) {
         setError(err.message)
@@ -407,7 +427,12 @@ export default function App() {
           identity={identity}
           documents={documents}
           selectedId={selectedId}
+          viewing={preview}
           onSelect={setSelectedId}
+          onViewVersion={(doc, version) => {
+            setSelectedId(doc.id)
+            viewPdf(doc.id, doc.name, version)
+          }}
           onCreated={(doc) => {
             refreshDocuments()
             // Selecting a different document reloads its versions; when the upload

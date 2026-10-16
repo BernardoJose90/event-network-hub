@@ -239,8 +239,57 @@ button.secondary:hover:not(:disabled) {
   margin-bottom: 4px;
 }
 
+/* Name on the first line, version count below, so long names get the full width. */
+.doc-item {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.doc-item > span:first-child {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
 .doc-item:hover:not(:disabled) {
   background: var(--bg);
+}
+
+.version-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0 0 0 14px;
+  border-left: 2px solid var(--border);
+  margin-left: 12px;
+}
+
+.version-item {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid transparent;
+  padding: 3px 8px;
+  font-size: 0.9rem;
+}
+
+.version-item:hover:not(:disabled) {
+  background: var(--info-bg);
+}
+
+.version-item.selected {
+  background: var(--info-bg);
+  border-color: var(--accent);
+}
+
+.version-item:disabled {
+  color: var(--muted);
+  opacity: 1;
+}
+
+.version-item.failed {
+  color: var(--error);
 }
 
 .doc-item.selected {

@@ -3,8 +3,8 @@ import { createDocument, downloadPdf, listDocuments, listVersions, uploadVersion
 
 // TEST ONLY: role switcher standing in for real authentication.
 const ROLES = [
-  { value: 'viewer', label: 'Viewer (redacted PDF)' },
-  { value: 'network-admin', label: 'Network admin (full PDF)' },
+  { value: 'viewer', label: 'Viewer' },
+  { value: 'network-admin', label: 'Network admin' },
 ]
 
 function formatTime(iso) {
@@ -172,9 +172,6 @@ function UploadForm({ documentId, identity, onUploaded }) {
       {result && (
         <div className={`notice ${tone}`}>
           <p>{result.message}</p>
-          {result.outcome === 'created' && result.redacted_cells > 0 && (
-            <p className="small">{result.redacted_cells} sensitive cell(s) redacted in the viewer copy.</p>
-          )}
           {result.version.warnings.length > 0 && (
             <>
               <p className="small">This upload contains formula errors:</p>
@@ -190,7 +187,6 @@ function UploadForm({ documentId, identity, onUploaded }) {
 function VersionTable({ documentId, versions, identity }) {
   const [error, setError] = useState(null)
   const [busyVersion, setBusyVersion] = useState(null)
-  const isAdmin = identity.role === 'network-admin'
 
   async function download(version) {
     setError(null)
@@ -211,7 +207,7 @@ function VersionTable({ documentId, versions, identity }) {
       <div className="row space-between">
         <h3>Versions</h3>
         <button onClick={() => download(null)} disabled={!hasReady || busyVersion !== null}>
-          Download latest ({isAdmin ? 'full' : 'redacted'})
+          Download latest
         </button>
       </div>
       {error && <p className="error">{error}</p>}
@@ -250,7 +246,7 @@ function VersionTable({ documentId, versions, identity }) {
                       onClick={() => download(v.version)}
                       disabled={v.status !== 'ready' || busyVersion !== null}
                     >
-                      {isAdmin ? 'Full PDF' : 'Redacted PDF'}
+                      PDF
                     </button>
                   </td>
                 </tr>

@@ -1,4 +1,4 @@
-"""Upload pipeline: dedup, version allocation, redaction, conversion, storage."""
+"""Upload pipeline: dedup, version allocation, conversion, storage."""
 
 from __future__ import annotations
 
@@ -11,13 +11,12 @@ from typing import Any
 from . import db
 from .converter import ConversionError, Converter
 from .storage import Storage, version_key
-from .xlsx import find_formula_errors, redact_workbook
+from .xlsx import find_formula_errors
 
 log = logging.getLogger(__name__)
 
 ORIGINAL = "original.xlsx"
 FULL_PDF = "full.pdf"
-REDACTED_PDF = "redacted.pdf"
 
 MAX_VERSION_ALLOCATION_ATTEMPTS = 5
 
@@ -31,7 +30,6 @@ class UploadResult:
     outcome: str  # "created" | "unchanged" | "failed"
     version: dict[str, Any]
     message: str
-    redacted_cells: int = 0
 
 
 def sha256_hex(data: bytes) -> str:
@@ -103,7 +101,6 @@ def upload_version(
         )
 
     warnings = find_formula_errors(data)
-    redacted_xlsx, redacted_cells = redact_workbook(data)
 
     version = allocate_version(
         conn, document_id=document_id, sha256=digest, uploaded_by=uploaded_by, warnings=warnings
@@ -111,11 +108,8 @@ def upload_version(
     n = version["version"]
     try:
         storage.put(version_key(document_id, n, ORIGINAL), data)
-        base = f"{document['name']}-v{n}"
-        full_pdf = converter.xlsx_to_pdf(data, filename=f"{base}.xlsx")
-        redacted_pdf = converter.xlsx_to_pdf(redacted_xlsx, filename=f"{base}-redacted.xlsx")
-        storage.put(version_key(document_id, n, FULL_PDF), full_pdf)
-        storage.put(version_key(document_id, n, REDACTED_PDF), redacted_pdf)
+        pdf = converter.xlsx_to_pdf(data, filename=f"{document['name']}-v{n}.xlsx")
+        storage.put(version_key(document_id, n, FULL_PDF), pdf)
     except Exception as exc:
         reason = str(exc) if isinstance(exc, ConversionError) else "Internal error while processing the file"
         log.exception("processing document %s version %s failed", document_id, n)
@@ -131,5 +125,4 @@ def upload_version(
         outcome="created",
         version=db.get_version_by_id(conn, version["id"]),  # type: ignore[arg-type]
         message=f"Version {n} created.",
-        redacted_cells=redacted_cells,
     )

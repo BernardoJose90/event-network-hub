@@ -1,8 +1,8 @@
 """Application settings and domain constants.
 
 Runtime settings come from environment variables (see .env.example). Domain
-constants that define behaviour (sensitive headers, formula errors) live here
-so there is exactly one place to change them.
+constants that define behaviour (formula errors) live here so there is
+exactly one place to change them.
 """
 
 from __future__ import annotations
@@ -10,15 +10,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-
-# Header texts (compared trimmed and case-insensitively) whose column values
-# must be replaced in the redacted copy.
-SENSITIVE_HEADERS: frozenset[str] = frozenset({"password value"})
-
-# Only the first N rows of each sheet are searched for sensitive headers.
-HEADER_SEARCH_ROWS = 5
-
-REDACTED_PLACEHOLDER = "REDACTED"
 
 # Spreadsheet error values surfaced to users as warnings.
 FORMULA_ERRORS: frozenset[str] = frozenset({"#REF!", "#NAME?", "#DIV/0!", "#VALUE!", "#N/A"})

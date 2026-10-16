@@ -36,7 +36,6 @@ CREATE TABLE IF NOT EXISTS download_log (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     version_id     INTEGER NOT NULL REFERENCES document_versions(id) ON DELETE CASCADE,
     user           TEXT NOT NULL,
-    redacted       INTEGER NOT NULL CHECK (redacted IN (0, 1)),
     downloaded_at  TEXT NOT NULL
 );
 """
@@ -191,9 +190,9 @@ def list_versions(conn: sqlite3.Connection, document_id: int) -> list[dict[str, 
 # --- download log -----------------------------------------------------------
 
 
-def log_download(conn: sqlite3.Connection, *, version_id: int, user: str, redacted: bool) -> None:
+def log_download(conn: sqlite3.Connection, *, version_id: int, user: str) -> None:
     with conn:
         conn.execute(
-            "INSERT INTO download_log (version_id, user, redacted, downloaded_at) VALUES (?, ?, ?, ?)",
-            (version_id, user, int(redacted), utcnow()),
+            "INSERT INTO download_log (version_id, user, downloaded_at) VALUES (?, ?, ?)",
+            (version_id, user, utcnow()),
         )

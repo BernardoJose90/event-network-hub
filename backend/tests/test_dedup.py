@@ -32,7 +32,7 @@ def test_first_upload_creates_version_one(conn, storage, converter, document) ->
     v = result.version
     assert (v["version"], v["status"], v["uploaded_by"]) == (1, "ready", "tester")
     assert v["sha256"] == hashlib.sha256(data).hexdigest()
-    for name in ("original.xlsx", "full.pdf", "redacted.pdf"):
+    for name in ("original.xlsx", "full.pdf"):
         assert storage.get(version_key(document["id"], 1, name))
     assert storage.get(version_key(document["id"], 1, "original.xlsx")) == data
 

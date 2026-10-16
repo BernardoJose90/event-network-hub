@@ -67,23 +67,19 @@ def test_upload_unchanged_returns_200(client: TestClient) -> None:
     assert r.json()["outcome"] == "unchanged"
 
 
-@pytest.mark.parametrize(
-    ("role", "expected_suffix", "redacted"),
-    [("viewer", b"-redacted.xlsx", True), ("network-admin", b"-v1.xlsx", False)],
-)
-def test_download_by_role(client: TestClient, role, expected_suffix, redacted) -> None:
+@pytest.mark.parametrize("role", ["viewer", "network-admin"])
+def test_every_role_gets_the_full_pdf(client: TestClient, role) -> None:
     doc_id = _doc_with_version(client)
     r = client.get(f"/api/documents/{doc_id}/download", headers={"X-Role": role, "X-User": "bob"})
 
     assert r.status_code == 200
     assert r.headers["content-type"] == "application/pdf"
-    assert r.content.endswith(expected_suffix)  # FakeConverter echoes the filename
-    assert r.headers["x-redacted"] == str(redacted).lower()
+    assert r.content.endswith(b"-v1.xlsx")  # FakeConverter echoes the filename
 
     conn = db.connect(client.settings.db_path)
-    rows = [dict(x) for x in conn.execute("SELECT user, redacted FROM download_log")]
+    rows = [dict(x) for x in conn.execute("SELECT user FROM download_log")]
     conn.close()
-    assert rows == [{"user": "bob", "redacted": int(redacted)}]
+    assert rows == [{"user": "bob"}]
 
 
 @pytest.mark.parametrize("headers", [{}, {"X-Role": "superuser"}])

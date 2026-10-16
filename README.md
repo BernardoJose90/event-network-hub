@@ -1,6 +1,6 @@
 # portal-pdf-test
 
-A small test harness that proves one feature: **upload an Excel workbook and download it as a PDF that looks like the spreadsheet**, with one page per sheet. Viewers get a redacted copy; network admins get the full one.
+A small test harness that proves one feature: **upload an Excel workbook and download it as a PDF that looks like the spreadsheet**, with one page per sheet. Viewers and network admins both get the same, complete PDF; viewers are trusted, so nothing is redacted.
 
 It is built to production standards but kept deliberately small, so the code can move into the production app (Python backend, React frontend, EKS).
 
@@ -34,22 +34,22 @@ docker compose run --rm --build tests
 cd backend && python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt && .venv/bin/pytest
 ```
 
-These cover upload validation, sha256 duplicate detection, version-number race retry, redaction, formula error detection and the role-based download API.
+These cover upload validation, sha256 duplicate detection, version-number race retry, formula error detection and the download API.
 
-**Smoke test** (needs the stack running, plus `jq` and poppler's `pdftotext`, `pdffonts` and `pdfinfo`, e.g. `brew install poppler jq`):
+**Smoke test** (needs the stack running, plus `jq` and poppler's `pdffonts` and `pdfinfo`, e.g. `brew install poppler jq`):
 
 ```bash
 mkdir -p samples && cp /path/to/your/workbook.xlsx samples/
 scripts/smoke.sh
 ```
 
-For each `samples/*.xlsx`, the script creates a document, uploads the file, downloads both PDFs and prints PASS/FAIL for each check:
+For each `samples/*.xlsx`, the script creates a document, uploads the file, downloads the PDF as each role and prints PASS/FAIL for each check:
 
-- **a)** the redacted PDF contains no value from the password column, plus a sanity check that the full PDF does;
+- **a)** viewer and network-admin receive the same PDF;
 - **b)** `pdffonts` lists Overpass and does not list DejaVu;
 - **c)** the page count equals the number of visible sheets.
 
-> `samples/`, `*.xlsx` and `*.pdf` are git-ignored, because sample workbooks contain real credentials. The smoke script never prints password values: matches are masked, and its temp files are private and deleted on exit.
+> `samples/`, `*.xlsx` and `*.pdf` are git-ignored, because sample workbooks can contain credentials. The smoke script keeps its downloads in a private temp dir that is deleted on exit.
 
 ## Architecture
 
@@ -60,19 +60,18 @@ On upload, the backend:
 1. validates the file;
 2. skips files identical to the latest version, compared by sha256;
 3. records formula-error warnings;
-4. builds a redacted copy of the workbook with openpyxl;
-5. sends both copies to Gotenberg's LibreOffice route (`POST /forms/libreoffice/convert`, `singlePageSheets=true`);
-6. stores `original.xlsx`, `full.pdf` and `redacted.pdf`.
+4. sends the workbook to Gotenberg's LibreOffice route (`POST /forms/libreoffice/convert`, `singlePageSheets=true`);
+5. stores `original.xlsx` and `full.pdf`.
 
-Files go through a small `Storage` interface (`put`/`get`; local volume today). Metadata is in SQLite: `documents`, `document_versions` (unique on document and version, with conflicting inserts retried) and `download_log`. Downloads serve the latest `ready` version, or `?version=N`, choosing the redacted or full PDF by role, and every download is logged.
+Files go through a small `Storage` interface (`put`/`get`; local volume today). Metadata is in SQLite: `documents`, `document_versions` (unique on document and version, with conflicting inserts retried) and `download_log`. Downloads serve the latest `ready` version, or `?version=N`, to any known role, and every download is logged.
 
 Gotenberg runs a custom image based on `gotenberg/gotenberg:8.37.0`. It adds Lato, Roboto, Carlito, Caladea and Overpass 3.0.5; Overpass is downloaded from Red Hat's GitHub release and checked against a pinned sha256. Gotenberg is not published to the host.
 
 ```
 backend/app/
-  config.py      settings + SENSITIVE_HEADERS / FORMULA_ERRORS constants
+  config.py      settings + FORMULA_ERRORS constant
   validation.py  upload validation
-  xlsx.py        redaction + formula error scan (openpyxl)
+  xlsx.py        formula error scan + sheet count (openpyxl)
   converter.py   Gotenberg client
   service.py     upload pipeline (dedup, version allocation, convert, store)
   storage.py     Storage protocol + LocalStorage
@@ -89,14 +88,14 @@ backend/app/
 | POST   | `/api/documents`                              | `{"name": "..."}`                                         |
 | GET    | `/api/documents/{id}/versions`                |                                                           |
 | POST   | `/api/documents/{id}/versions`                | multipart `file`. 201 created, 200 unchanged, 422 invalid, 502 conversion failed |
-| GET    | `/api/documents/{id}/download[?version=N]`    | needs `X-Role`. `viewer` gets redacted, `network-admin` gets full |
+| GET    | `/api/documents/{id}/download[?version=N]`    | needs `X-Role` (`viewer` or `network-admin`); both get the full PDF |
 
 ### Behaviour notes
 
 - **TEST ONLY identity.** `X-Role` and `X-User` are trusted as sent. A missing or unknown role gets 403.
 - **Re-uploading after a failure.** Duplicate detection ignores `failed` versions, so re-uploading the same file retries a failed conversion.
-- **What redaction covers.** It replaces non-empty cells below a "Password Value" header (trimmed, case-insensitive) found in the first 5 rows of each sheet. Values elsewhere in the workbook are not touched: comments, other columns, hidden sheets.
-- **Redacted copy fidelity.** The redacted copy is re-saved by openpyxl, which drops images and charts, so the redacted PDF can differ visually from the full one.
+- **No redaction.** Viewers are trusted, so every role sees the workbook as-is, passwords included. The role header is kept so real authorization can be added later.
+- **Clipped text.** Text wider than its column is cut off in the PDF, exactly as Excel prints it. Widen the column in the source workbook if a value must be readable in full.
 
 ## What changes for production
 

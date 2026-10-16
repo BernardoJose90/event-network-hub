@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from . import db
 from .auth import Principal, current_principal, require_known_role
 from .converter import Converter
-from .service import FULL_PDF, REDACTED_PDF, upload_version
+from .service import FULL_PDF, upload_version
 from .storage import ObjectNotFound, Storage, version_key
 from .validation import UploadRejected, validate_upload
 
@@ -131,7 +131,6 @@ def upload(
             "outcome": result.outcome,
             "message": result.message,
             "version": result.version,
-            "redacted_cells": result.redacted_cells,
         },
     )
 
@@ -162,17 +161,14 @@ def download(
         if row["status"] != db.STATUS_READY:
             raise HTTPException(status.HTTP_409_CONFLICT, f"Version {version} is {row['status']}")
 
-    redacted = not principal.sees_unredacted
-    key = version_key(document_id, row["version"], REDACTED_PDF if redacted else FULL_PDF)
     try:
-        pdf = storage.get(key)
+        pdf = storage.get(version_key(document_id, row["version"], FULL_PDF))
     except ObjectNotFound:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Stored PDF is missing")
 
-    db.log_download(conn, version_id=row["id"], user=principal.user, redacted=redacted)
+    db.log_download(conn, version_id=row["id"], user=principal.user)
 
-    suffix = "-redacted" if redacted else ""
-    filename = f"{_safe_filename(document['name'])}-v{row['version']}{suffix}.pdf"
+    filename = f"{_safe_filename(document['name'])}-v{row['version']}.pdf"
     return Response(
         content=pdf,
         media_type="application/pdf",
@@ -180,6 +176,5 @@ def download(
             "Content-Disposition": f'attachment; filename="{filename}"',
             "Cache-Control": "no-store",
             "X-Document-Version": str(row["version"]),
-            "X-Redacted": "true" if redacted else "false",
         },
     )

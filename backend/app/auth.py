@@ -27,10 +27,6 @@ class Principal:
     user: str
     role: str | None
 
-    @property
-    def sees_unredacted(self) -> bool:
-        return self.role == ROLE_NETWORK_ADMIN
-
 
 def current_principal(
     x_user: Annotated[str | None, Header()] = None,

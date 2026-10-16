@@ -96,8 +96,7 @@ export async function fetchFile(documentId, version, format, identity) {
   }
 }
 
-export async function downloadFile(documentId, version, format, identity) {
-  const { blob, filename } = await fetchFile(documentId, version, format, identity)
+function saveBlob(blob, filename) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -106,6 +105,11 @@ export async function downloadFile(documentId, version, format, identity) {
   a.click()
   a.remove()
   URL.revokeObjectURL(url)
+}
+
+export async function downloadFile(documentId, version, format, identity) {
+  const { blob, filename } = await fetchFile(documentId, version, format, identity)
+  saveBlob(blob, filename)
 }
 
 // Admin only: open a version in the in-browser editor (Collabora Online).
@@ -117,4 +121,50 @@ export async function startEdit(documentId, version, identity) {
       headers: identityHeaders(identity),
     }),
   )
+}
+
+// --- Live sheet (admin only) -------------------------------------------------
+
+async function failed(res) {
+  const err = new Error(await errorMessage(res))
+  err.status = res.status
+  return err
+}
+
+// Resolves with the live sheet, or null if the document doesn't have one yet.
+export async function getSheet(documentId, identity) {
+  const res = await fetch(`/api/documents/${documentId}/sheet`, { headers: identityHeaders(identity) })
+  if (res.status === 404) return null
+  if (!res.ok) throw await failed(res)
+  return res.json()
+}
+
+// Create the live sheet from the latest ready version, or start it again.
+export async function startSheet(documentId, identity) {
+  const res = await fetch(`/api/documents/${documentId}/sheet`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...identityHeaders(identity) },
+    body: '{}',
+  })
+  if (!res.ok) throw await failed(res)
+  return res.json()
+}
+
+// Rejects with err.status === 409 when someone else saved in the meantime.
+export async function saveSheet(documentId, data, revision, identity) {
+  const res = await fetch(`/api/documents/${documentId}/sheet`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...identityHeaders(identity) },
+    body: JSON.stringify({ data, revision }),
+  })
+  if (!res.ok) throw await failed(res)
+  return res.json()
+}
+
+export async function downloadSheet(documentId, format, identity) {
+  const res = await fetch(`/api/documents/${documentId}/sheet/download?format=${format}`, {
+    headers: identityHeaders(identity),
+  })
+  if (!res.ok) throw await failed(res)
+  saveBlob(await res.blob(), filenameFrom(res, `live-sheet.${format}`))
 }

@@ -199,9 +199,14 @@ function DocumentHeader({ document, identity, onDeleted }) {
       <div className="row space-between">
         <h2>{document.name}</h2>
         {identity.role === 'network-admin' && (
-          <button className="danger" onClick={remove} disabled={busy}>
-            {busy ? 'Deleting…' : 'Delete document'}
-          </button>
+          <div className="row">
+            <button onClick={() => window.location.assign(`/sheet/${document.id}`)} title="Edit the content in the app">
+              Open live sheet
+            </button>
+            <button className="danger" onClick={remove} disabled={busy}>
+              {busy ? 'Deleting…' : 'Delete document'}
+            </button>
+          </div>
         )}
       </div>
       {error && <p className="error">{error}</p>}

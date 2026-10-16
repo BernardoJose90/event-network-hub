@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useId, useState } from 'react'
+import { useDialog } from '../ui/Dialog.jsx'
 import { TITLES } from './columns.js'
 
 // --- Overview ----------------------------------------------------------------
@@ -6,6 +7,7 @@ import { TITLES } from './columns.js'
 export function Overview({ overview, api, isAdmin, notify, onChanged, onPublish, goTo }) {
   const [changes, setChanges] = useState([])
   const [busy, setBusy] = useState(false)
+  const dialog = useDialog()
 
   useEffect(() => {
     if (!overview.has_records) return
@@ -13,9 +15,12 @@ export function Overview({ overview, api, isAdmin, notify, onChanged, onPublish,
   }, [api, overview, notify])
 
   async function importLatest(replace) {
-    if (replace && !window.confirm(
-      `Replace all requirements with the contents of V${overview.latest_version}? Current edits that weren't published will be lost. The history is kept.`,
-    )) return
+    if (replace && !(await dialog.confirm({
+      title: `Replace everything with V${overview.latest_version}?`,
+      body: "All requirements are replaced with the contents of that workbook. Edits that weren't published are lost; the history is kept.",
+      confirmLabel: 'Replace requirements',
+      danger: true,
+    }))) return
     setBusy(true)
     try {
       const result = await api.importVersion(replace)
@@ -188,7 +193,7 @@ function EditableItem({ label, flagged, isAdmin, onRename, onDelete, onAccept })
   if (editing) {
     return (
       <li className="list-item">
-        <input autoFocus defaultValue={label}
+        <input autoFocus defaultValue={label} aria-label={`Rename ${label}`}
           onKeyDown={(e) => {
             if (e.key === 'Enter') { setEditing(false); if (e.currentTarget.value.trim() !== label) onRename(e.currentTarget.value) }
             if (e.key === 'Escape') setEditing(false)
@@ -199,33 +204,44 @@ function EditableItem({ label, flagged, isAdmin, onRename, onDelete, onAccept })
   }
   return (
     <li className="list-item">
-      <span className={isAdmin ? 'editable' : undefined} onClick={() => isAdmin && setEditing(true)}
-        title={isAdmin ? 'Click to rename' : undefined}>{label}</span>
+      {isAdmin ? (
+        <button type="button" className="list-label" onClick={() => setEditing(true)} title="Rename"
+          aria-label={`${label}. Rename`}>{label}</button>
+      ) : <span>{label}</span>}
       {flagged && <span className="flag" title="Added by the import because records used it">review</span>}
-      {isAdmin && flagged && <button className="link" onClick={onAccept}>Keep</button>}
-      {isAdmin && <button className="icon" title="Remove" onClick={onDelete}>×</button>}
+      {isAdmin && flagged && <button className="link" onClick={onAccept} aria-label={`Keep ${label}`}>Keep</button>}
+      {isAdmin && (
+        <button className="icon" title="Remove" aria-label={`Remove ${label}`} onClick={onDelete}>×</button>
+      )}
     </li>
   )
 }
 
 function ListBox({ title, items, isAdmin, onAdd, help }) {
   const [value, setValue] = useState('')
+  const inputId = useId()
   return (
-    <div className="panel list-box">
+    <section className="panel list-box" aria-label={title}>
       <h3>{title} <span className="muted small">{items.length}</span></h3>
       {help && <p className="muted small">{help}</p>}
       {isAdmin && (
         <form className="row" onSubmit={(e) => { e.preventDefault(); if (value.trim()) { onAdd(value.trim()); setValue('') } }}>
-          <input value={value} onChange={(e) => setValue(e.target.value)} placeholder={`Add to ${title.toLowerCase()}`} maxLength={200} />
+          <label htmlFor={inputId} className="visually-hidden">Add to {title.toLowerCase()}</label>
+          <input id={inputId} value={value} onChange={(e) => setValue(e.target.value)} placeholder={`Add to ${title.toLowerCase()}`} maxLength={200} />
           <button type="submit" disabled={!value.trim()}>Add</button>
         </form>
       )}
       <ul className="list-items">{items}</ul>
-    </div>
+    </section>
   )
 }
 
 export function ListsPanel({ api, overview, isAdmin, notify, onChanged }) {
+  const dialog = useDialog()
+  const confirmRemove = (name, what) => dialog.confirm({
+    title: `Remove ${name}?`, body: `It is removed from ${what}. Values still used by requirements can't be removed.`,
+    confirmLabel: 'Remove', danger: true,
+  })
   const run = async (fn, message) => {
     try {
       await fn()
@@ -241,13 +257,13 @@ export function ListsPanel({ api, overview, isAdmin, notify, onChanged }) {
   const item = (i) => (
     <EditableItem key={i.id} label={i.value} flagged={i.flagged} isAdmin={isAdmin}
       onRename={(v) => run(() => api.renameListValue(i.id, v), `Renamed to '${v}' everywhere it is used`)}
-      onDelete={() => window.confirm(`Remove '${i.value}' from the list?`) && run(() => api.deleteListValue(i.id))}
+      onDelete={async () => (await confirmRemove(i.value, 'the list')) && run(() => api.deleteListValue(i.id))}
       onAccept={() => run(() => api.acceptListValue(i.id))} />
   )
   const named = (x, rename, remove) => (
     <EditableItem key={x.id} label={x.name} isAdmin={isAdmin}
       onRename={(v) => run(() => rename(x.id, v))}
-      onDelete={() => window.confirm(`Remove '${x.name}'?`) && run(() => remove(x.id))} />
+      onDelete={async () => (await confirmRemove(x.name, 'this event')) && run(() => remove(x.id))} />
   )
   return (
     <div className="lists-grid">
@@ -294,14 +310,21 @@ export function HistoryPanel({ api, notify }) {
   return (
     <div className="panel">
       <div className="row">
-        <select value={entity} onChange={(e) => setEntity(e.target.value)}>
-          {Object.entries(ENTITY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-        </select>
-        <input value={user} onChange={(e) => setUser(e.target.value)} placeholder="Filter by person" />
+        <label className="inline-label">
+          Show
+          <select value={entity} onChange={(e) => setEntity(e.target.value)}>
+            {Object.entries(ENTITY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </label>
+        <label className="inline-label">
+          Person
+          <input value={user} onChange={(e) => setUser(e.target.value)} placeholder="Any" />
+        </label>
         <span className="muted small">{entries.length} entr{entries.length === 1 ? 'y' : 'ies'}</span>
       </div>
       <table className="rec-table history">
-        <thead><tr><th style={{ width: 140 }}>When</th><th style={{ width: 120 }}>Who</th><th>What</th><th style={{ width: 260 }}>Change</th></tr></thead>
+        <caption className="visually-hidden">Change history, newest first</caption>
+        <thead><tr><th scope="col" style={{ width: 140 }}>When</th><th scope="col" style={{ width: 120 }}>Who</th><th scope="col">What</th><th scope="col" style={{ width: 260 }}>Change</th></tr></thead>
         <tbody>
           {entries.map((e) => (
             <tr key={e.id} className={e.action === 'reveal' ? 'muted' : undefined}>

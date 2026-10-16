@@ -6,9 +6,13 @@
   --pink: #cb1977;
   --pink-hover: #b80e5a;
   --pink-soft: #f9e3ef;
+  --pink-text: #b80e5a; /* pink text on light backgrounds (5.3:1 on --pink-soft) */
   --teal: #008484;
   --teal-soft: #e0f0f0;
-  --gradient: linear-gradient(90deg, #de0e7b, #6b4aa4, #00aca8);
+  --teal-text: #006d6d; /* teal text and links (5.7:1 on --bg) */
+  --focus: #006d6d;
+  --control-border: #8a8a8a; /* 3:1 against white (WCAG 1.4.11) */
+  --gradient: linear-gradient(90deg, #cb1977, #6b4aa4, #008484); /* ends darkened for 4.5:1 white text */
   --bg: #f6f6f7;
   --panel: #ffffff;
   --text: #131313;
@@ -18,11 +22,11 @@
   --accent-hover: var(--pink-hover);
   --accent-soft: var(--pink-soft);
   --ok-bg: #e3f3e8;
-  --ok: #19873d;
+  --ok: #146c31;
   --info-bg: var(--teal-soft);
-  --info: var(--teal);
+  --info: var(--teal-text);
   --error-bg: #fbe7eb;
-  --error: #d5113b;
+  --error: #b00d33;
   --danger: #d5113b;
   --warn: #a15c07;
   --radius: 16px;
@@ -1367,4 +1371,467 @@ tr.rec-group.wifi td {
 
 .archived-events .doc-item {
   opacity: 0.75;
+}
+
+/* --- Production foundations (WCAG 2.2 AA, WAI-ARIA APG, GOV.UK patterns) -------- */
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  margin: -1px !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  clip: rect(0 0 0 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+/* Skip link (WCAG 2.4.1): first thing in the tab order, visible on focus. */
+.skip-link {
+  position: absolute;
+  left: 12px;
+  top: -100px;
+  z-index: 100;
+  padding: 10px 16px;
+  border-radius: 2rem;
+  background: #fff;
+  color: var(--navy);
+  font-weight: 700;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+}
+
+.skip-link:focus {
+  top: 8px;
+}
+
+/* One visible focus style everywhere (2.4.7), at least 3:1 against its surroundings (1.4.11). */
+:focus-visible,
+input:focus,
+select:focus,
+button:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.topbar :focus-visible,
+.sheet-bar :focus-visible,
+.editor-bar :focus-visible {
+  outline-color: #fff;
+}
+
+main:focus,
+.view-title:focus {
+  outline: none;
+}
+
+/* Minimum target size 24×24 CSS px (2.5.8). */
+button,
+a.button,
+summary,
+select,
+input:not([type='checkbox']):not([type='radio']) {
+  min-height: 28px;
+}
+
+button.icon,
+.icon-button {
+  min-width: 28px;
+}
+
+button.link,
+a.link {
+  min-height: 24px;
+  color: var(--teal-text);
+}
+
+summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+input,
+select {
+  border-color: var(--control-border);
+}
+
+/* Links styled as buttons */
+a.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: #fff;
+  text-decoration: none;
+}
+
+a.button:hover {
+  background: var(--accent-hover);
+}
+
+a.button.secondary {
+  background: #fff;
+  color: var(--navy);
+  border-color: var(--navy);
+  padding: 5px 12px;
+}
+
+a.button.secondary:hover {
+  background: var(--navy);
+  color: #fff;
+}
+
+.sheet-bar a.button.secondary {
+  background: transparent;
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+.sheet-bar a.button.secondary:hover {
+  background: #fff;
+  color: var(--navy);
+}
+
+a.link {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+button.primary-cta {
+  background-image: var(--gradient);
+  border-color: transparent;
+}
+
+button.primary-cta:hover:not(:disabled) {
+  background-image: linear-gradient(rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.2)), var(--gradient);
+}
+
+button.danger-solid {
+  background: var(--error);
+  border-color: var(--error);
+  color: #fff;
+}
+
+button.danger-solid:hover:not(:disabled) {
+  background: #8e0a29;
+}
+
+/* Text colours that meet 4.5:1 on their backgrounds (1.4.3). */
+.event-nav button.active,
+.version-item.selected,
+.tag {
+  color: var(--pink-text);
+}
+
+.doc-item.selected {
+  border-color: var(--pink-text);
+}
+
+.status.ready {
+  color: var(--ok);
+}
+
+.notice.info,
+.notice.info strong {
+  color: var(--teal-text);
+}
+
+/* Numbers line up in columns. */
+.num,
+.rec-total,
+.nav-count,
+.ov-card strong,
+.ov-table td {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Page and view headings */
+.sheet-bar .sheet-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.view-title {
+  font-size: 1.35rem;
+  margin: 0 0 14px;
+}
+
+/* Status messages (toast-like, but in the page flow so nothing is covered: 2.4.11) */
+.status-messages:empty,
+.status-messages > div:empty {
+  display: none;
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 12px 16px 0;
+  padding: 10px 12px;
+  border: 1px solid currentColor;
+  border-left-width: 5px;
+}
+
+.notice-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.toast-text {
+  flex: 1;
+}
+
+.toast-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.toast-actions button.link {
+  color: inherit;
+  font-weight: 700;
+}
+
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  color: inherit;
+}
+
+.icon-button:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.event-notice.banner {
+  margin: 12px 16px 0;
+}
+
+/* Dialogs (native <dialog>, WAI-ARIA APG modal / alert dialog) */
+dialog.dialog {
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  padding: 24px;
+  border: 0;
+  border-radius: var(--radius);
+  box-shadow: 0 24px 64px rgba(12, 20, 57, 0.35);
+  color: var(--text);
+}
+
+dialog.dialog::backdrop {
+  background: rgba(12, 20, 57, 0.55);
+}
+
+.dialog-title {
+  margin: 0 0 8px;
+  font-size: 1.2rem;
+}
+
+.dialog-body p {
+  margin: 0 0 10px;
+}
+
+.dialog-list {
+  margin: 0 0 10px;
+  padding-left: 20px;
+  max-height: 200px;
+  overflow: auto;
+  font-size: 0.9rem;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.field-label {
+  font-weight: 600;
+}
+
+.field-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.field-error {
+  margin: 0;
+  color: var(--error);
+  font-weight: 600;
+}
+
+.field.has-error input {
+  border: 2px solid var(--error);
+}
+
+.field input {
+  padding: 8px 10px;
+}
+
+/* Record grid */
+.grid-hint {
+  margin: -2px 0 8px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.rec-table td[data-nav]:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: -3px;
+}
+
+.rec-table tbody tr:not(.rec-group):hover td {
+  background: #fafafa;
+}
+
+.rec-table tr.rec-group th {
+  background: var(--teal);
+  color: #fff;
+  font-weight: 700;
+  text-align: left;
+  position: static;
+  font-size: 0.88rem;
+}
+
+.rec-table tr.rec-group :focus-visible {
+  outline-color: #fff;
+}
+
+.empty-cell {
+  padding: 16px 8px;
+  text-align: center;
+}
+
+.list-label {
+  min-height: 24px;
+  padding: 0 2px;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  color: var(--text);
+  font-weight: 400;
+  text-align: left;
+  cursor: text;
+}
+
+.list-label:hover:not(:disabled) {
+  background: var(--teal-soft);
+}
+
+.inline-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* Loading skeletons */
+.skeleton,
+.skeleton-block {
+  display: block;
+  height: 14px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #eee 25%, #f6f6f6 37%, #eee 63%);
+  background-size: 400% 100%;
+  animation: skeleton 1.4s ease infinite;
+}
+
+.skeleton-block {
+  height: 120px;
+  max-width: 640px;
+  margin: 24px 16px;
+}
+
+.skeleton-row td {
+  padding: 10px 8px;
+}
+
+@keyframes skeleton {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+
+/* Respect reduced-motion preferences. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Small screens: the section menu becomes a horizontal, scrollable row. */
+@media (max-width: 900px) {
+  .event-body {
+    flex-direction: column;
+  }
+
+  .event-nav {
+    width: auto;
+    flex-direction: row;
+    overflow-x: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .event-nav button {
+    flex-shrink: 0;
+    gap: 8px;
+  }
+
+  .sheet-bar {
+    gap: 8px;
+  }
+}
+
+/* Windows high-contrast / forced colours: keep focus and selection visible. */
+@media (forced-colors: active) {
+  .event-nav button.active,
+  .venue-tabs button.active,
+  .doc-item.selected {
+    outline: 2px solid CanvasText;
+  }
+}
+
+/* "+ Add" on section rows: solid, 5.7:1 text */
+tr.rec-group .add {
+  background: #fff;
+  color: var(--teal-text);
+  border-color: #fff;
+  font-weight: 600;
+  min-height: 24px;
+}
+
+tr.rec-group .add:hover:not(:disabled) {
+  background: var(--teal-soft);
 }

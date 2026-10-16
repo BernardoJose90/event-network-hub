@@ -13,6 +13,7 @@ import {
   uploadDocument,
 } from './api.js'
 import { ROLES, loadIdentity, saveIdentity } from './identity.js'
+import { useDialog } from './ui/Dialog.jsx'
 
 function formatTime(iso) {
   return new Date(iso).toLocaleString()
@@ -131,7 +132,7 @@ function UploadForm({ identity, onCreated }) {
         _ or - between words; &ldquo;Event Network Matrix [V1]&rdquo; also works). A new V number adds a version to that event; each V number can be
         uploaded once.
       </p>
-      {error && <p className="error">{error}</p>}
+      {error && <p className="error" role="alert">{error}</p>}
       {result && <UploadResult result={result} />}
     </form>
   )
@@ -189,16 +190,22 @@ function NewEventForm({ identity, templates }) {
         <button type="submit" disabled={busy || !code.trim()}>{busy ? 'Creating…' : 'Create'}</button>
         <button type="button" className="secondary" onClick={() => { setOpen(false); setError(null) }}>Cancel</button>
       </div>
-      {error && <p className="error">{error}</p>}
+      {error && <p className="error" role="alert">{error}</p>}
     </form>
   )
 }
 
 function TemplateList({ identity, templates, onChanged }) {
   const [error, setError] = useState(null)
+  const dialog = useDialog()
 
   async function remove(t) {
-    if (!window.confirm(`Delete the template "${t.name}"?\n\nEvents already created from it are not affected.`)) return
+    if (!(await dialog.confirm({
+      title: `Delete the template ${t.name}?`,
+      body: 'Events already created from it are not affected.',
+      confirmLabel: 'Delete template',
+      danger: true,
+    }))) return
     setError(null)
     try {
       await deleteTemplate(t.id, identity)
@@ -214,15 +221,13 @@ function TemplateList({ identity, templates, onChanged }) {
       <ul className="template-list">
         {templates.map((t) => (
           <li key={t.id} className="row space-between nowrap">
-            <button className="link" onClick={() => window.location.assign(`/event/${t.id}`)} title="View and edit the template">
-              {t.name}
-            </button>
-            <button className="link danger-link" onClick={() => remove(t)}>Delete</button>
+            <a className="link" href={`/event/${t.id}`} title="View and edit the template">{t.name}</a>
+            <button className="link danger-link" onClick={() => remove(t)} aria-label={`Delete template ${t.name}`}>Delete</button>
           </li>
         ))}
         {templates.length === 0 && <li className="muted small">None yet. Save an event as a template on its requirements page.</li>}
       </ul>
-      {error && <p className="error">{error}</p>}
+      {error && <p className="error" role="alert">{error}</p>}
     </details>
   )
 }
@@ -306,11 +311,14 @@ function DocumentHeader({ document, identity, onDeleted, onChanged }) {
   const [error, setError] = useState(null)
   const isAdmin = identity.role === 'network-admin'
   const archived = !!document.archived_at
+  const dialog = useDialog()
 
   async function setArchived(archive) {
-    if (archive && !window.confirm(
-      `Archive "${document.name}"?\n\nIt moves to Archived and becomes read-only. Nothing is deleted, and you can restore it at any time.`,
-    )) return
+    if (archive && !(await dialog.confirm({
+      title: `Archive ${document.name}?`,
+      body: 'It moves to Archived and becomes read-only. Nothing is deleted, and you can restore it at any time.',
+      confirmLabel: 'Archive event',
+    }))) return
     setBusy(true)
     setError(null)
     try {
@@ -324,9 +332,12 @@ function DocumentHeader({ document, identity, onDeleted, onChanged }) {
   }
 
   async function remove() {
-    const ok = window.confirm(
-      `Delete "${document.name}"?\n\nThis permanently removes the event's requirements, every version, its PDFs and Excel files, and its download history.`,
-    )
+    const ok = await dialog.confirm({
+      title: `Delete ${document.name} permanently?`,
+      body: "This removes the event's requirements, every version, its PDFs and Excel files, and its download history. It can't be undone.",
+      confirmLabel: 'Delete permanently',
+      danger: true,
+    })
     if (!ok) return
     setBusy(true)
     setError(null)
@@ -344,10 +355,10 @@ function DocumentHeader({ document, identity, onDeleted, onChanged }) {
       <div className="row space-between">
         <h2>{document.name}</h2>
         <div className="row">
-          <button onClick={() => window.location.assign(`/event/${document.id}`)}
+          <a className="button" href={`/event/${document.id}`}
             title={archived ? 'View the requirements (read-only)' : 'View and edit the requirements'}>
             Open requirements
-          </button>
+          </a>
           {isAdmin && archived && (
             <>
               <button className="secondary" onClick={() => setArchived(false)} disabled={busy}>Restore</button>
@@ -380,7 +391,7 @@ function DocumentHeader({ document, identity, onDeleted, onChanged }) {
           downloaded{isAdmin ? '; restore it to make changes, or delete it permanently' : ''}.
         </p>
       )}
-      {error && <p className="error">{error}</p>}
+      {error && <p className="error" role="alert">{error}</p>}
     </div>
   )
 }
@@ -427,7 +438,7 @@ function VersionTable({ documentId, versions, identity, readOnly, onView, onEdit
           </button>
         </div>
       </div>
-      {error && <p className="error">{error}</p>}
+      {error && <p className="error" role="alert">{error}</p>}
       {versions.length === 0 ? (
         <p className="muted">No versions yet. Publishing the requirements creates V1.</p>
       ) : (
@@ -440,7 +451,7 @@ function VersionTable({ documentId, versions, identity, readOnly, onView, onEdit
                 <th>Uploaded at</th>
                 <th>Status</th>
                 <th>Warnings</th>
-                <th></th>
+                <th><span className="visually-hidden">Actions</span></th>
               </tr>
             </thead>
             <tbody>
@@ -608,10 +619,15 @@ export default function App() {
 
   const selected = documents.find((d) => d.id === selectedId)
 
+  useEffect(() => {
+    document.title = `${selected ? `${selected.name.split(' | ')[0]} · ` : ''}Events · Event Network Hub`
+  }, [selected])
+
   return (
     <>
+      <a className="skip-link" href="#main">Skip to main content</a>
       <IdentityBar identity={identity} onChange={setIdentity} />
-      <main className="layout">
+      <div className="layout">
         <DocumentList
           identity={identity}
           documents={documents}
@@ -630,8 +646,8 @@ export default function App() {
             else setSelectedId(doc.id)
           }}
         />
-        <div className="content">
-          {error && <p className="error">{error}</p>}
+        <main id="main" className="content" tabIndex={-1}>
+          {error && <p className="error" role="alert">{error}</p>}
           {selected ? (
             <>
               <DocumentHeader
@@ -661,8 +677,8 @@ export default function App() {
                 : 'Select an event to get started.'}
             </p>
           )}
-        </div>
-      </main>
+        </main>
+      </div>
     </>
   )
 }

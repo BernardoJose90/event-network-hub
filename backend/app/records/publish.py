@@ -56,12 +56,8 @@ def snapshot(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
     venue_name = {v["id"]: v["name"] for v in venues}
     records = []
     for r in store.records(conn, doc):
-        rec = {"id": r["id"], "type": r["type"], "venue": venue_name.get(r["venue_id"]),
-               "group": group_name.get(r["group_id"]), "data": r["data"]}
-        if r["type"] == "vlan_extension":  # stored by venue id; reports and Excel use names
-            rec["venue_ticks"] = {venue_name[int(k)]: on for k, on in r["data"].get("venues", {}).items()
-                                  if k.isdigit() and int(k) in venue_name}
-        records.append(rec)
+        records.append({"id": r["id"], "type": r["type"], "venue": venue_name.get(r["venue_id"]),
+                        "group": group_name.get(r["group_id"]), "data": r["data"]})
     return {
         "venues": [v["name"] for v in venues],
         "groups": {kind: [g["name"] for g in groups if g["kind"] == kind] for kind in ("wifi", "ethernet")},
@@ -167,12 +163,6 @@ def build_workbook(snap: dict, changes: list[dict], *, version: int) -> bytes:
         _body(ws, i, [_display(f, data.get(f)) for f in PARTNER_FIELDS])
     _dropdown(ws, '"Yes,No,TBC"', 11, 2, max(2, len(_rows(snap, "partner")) + 20))
 
-    ws = wb.create_sheet("Extending Vlans")
-    _header(ws, ["Vlan name", *snap["venues"]], [24] + [16] * len(snap["venues"]))
-    for i, rec in enumerate([r for r in snap["records"] if r["type"] == "vlan_extension"], start=2):
-        ticks = rec.get("venue_ticks", {})
-        _body(ws, i, [rec["data"].get("vlan"), *[bool(ticks.get(v, False)) for v in snap["venues"]]])
-
     ws = wb.create_sheet("Changes - Log")
     _header(ws, ["When", "Who", "Change"], [20, 18, 100])
     for i, entry in enumerate(changes, start=2):
@@ -217,7 +207,6 @@ tr.group td { background: #1d1c1d; color: #fff; font-weight: 700; }
 tr.section td { background: #666; color: #fff; font-weight: 700; }
 tr.total td { background: #222; color: #fff; font-weight: 700; }
 td.num { text-align: right; }
-td.tick, table.matrix th:not(:first-child) { text-align: center; }
 .muted { color: #777; }
 .changes li { margin: 1pt 0; }
 """
@@ -246,8 +235,7 @@ def build_report(snap: dict, changes: list[dict], *, title: str, version: int, u
     parts = [f"""<div class="cover"><h1>{_e(title)}</h1>
         <p class="meta">Network requirements · Version {version}</p>
         <p class="meta">Published by {_e(user)} on {_e(when)}</p>
-        <table class="summary">{summary}<tr><th>All venues</th><td colspan="3">{count('partner')} partner orders ·
-        {count('vlan_extension')} VLAN extensions</td></tr></table></div>"""]
+        <table class="summary">{summary}<tr><th>All venues</th><td colspan="3">{count('partner')} partner orders</td></tr></table></div>"""]
 
     for venue in snap["venues"]:
         rows = []
@@ -284,18 +272,10 @@ def build_report(snap: dict, changes: list[dict], *, title: str, version: int, u
     parts.append("<section><h2>Partner custom orders</h2>"
                  + _table([LABELS["partner"][f] for f in PARTNER_FIELDS], PARTNER_WIDTHS, partner_rows) + "</section>")
 
-    vlan_rows = "".join(
-        f"<tr><td>{_e(r['data'].get('vlan'))}</td>"
-        + "".join(f'<td class="tick">{"Yes" if r.get("venue_ticks", {}).get(v) else ""}</td>' for v in snap["venues"])
-        + "</tr>"
-        for r in snap["records"] if r["type"] == "vlan_extension"
-    ) or f'<tr><td colspan="{len(snap["venues"]) + 1}" class="muted">No VLAN extensions</td></tr>'
     change_items = "".join(
         f"<li>{_e(c['at'].replace('T', ' ')[:16])} · {_e(c['user'])} · {_e(c['summary'])}</li>" for c in changes[:300]
     ) or '<li class="muted">No changes recorded since the previous version.</li>'
-    parts.append("<section><h2>VLAN extensions</h2>"
-                 + _table(["VLAN", *snap["venues"]], [24] + [12] * len(snap["venues"]), vlan_rows, "matrix")
-                 + f'<h3>Changes since the previous version</h3><ul class="changes">{change_items}</ul></section>')
+    parts.append(f'<section><h2>Changes since the previous version</h2><ul class="changes">{change_items}</ul></section>')
 
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{_e(title)} V{version}</title>'
             f"<style>{REPORT_CSS}</style></head><body>{''.join(parts)}</body></html>")

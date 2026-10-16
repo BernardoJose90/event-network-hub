@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
 import { TITLES } from './columns.js'
-import { usePendingDeletes } from './pendingDeletes.js'
 
 // --- Overview ----------------------------------------------------------------
 
@@ -44,7 +43,7 @@ export function Overview({ overview, api, isAdmin, notify, onChanged, onPublish,
                 : 'A network admin is adding the requirements.'}
             </p>
             <div className="row">
-              {['wifi', 'ethernet', 'partner', 'vlan_extension', 'lists'].map((key) => (
+              {['wifi', 'ethernet', 'partner', 'lists'].map((key) => (
                 <button key={key} className="secondary" onClick={() => goTo(key)}>{TITLES[key] || 'Setup'}</button>
               ))}
             </div>
@@ -91,7 +90,7 @@ export function Overview({ overview, api, isAdmin, notify, onChanged, onPublish,
             <p><strong>{t.total}</strong> <span className="small">Ethernet points</span></p>
           </div>
         ))}
-        {['wifi', 'ethernet', 'partner', 'vlan_extension'].filter((t) => !(isTemplate && t === 'partner')).map((type) => (
+        {['wifi', 'ethernet', 'partner'].filter((t) => !(isTemplate && t === 'partner')).map((type) => (
           <button key={type} className="panel ov-card link-card" onClick={() => goTo(type)}>
             <h3>{TITLES[type]}</h3>
             {type === 'ethernet' ? (
@@ -182,87 +181,6 @@ export function Overview({ overview, api, isAdmin, notify, onChanged, onPublish,
   )
 }
 
-// --- VLAN extensions ------------------------------------------------------------
-
-export function VlanMatrix({ api, overview, isAdmin, notify, onChanged }) {
-  const [rows, setRows] = useState([])
-  const vlans = overview.lists.filter((i) => i.kind === 'vlan').map((i) => i.value)
-
-  const load = useCallback(() => {
-    api.records('vlan_extension').then(setRows).catch((err) => notify(err.message, 'error'))
-  }, [api, notify])
-  useEffect(load, [load])
-
-  async function save(row, data, message) {
-    try {
-      const updated = await api.update('vlan_extension', row.id, row.revision, data)
-      setRows((rs) => rs.map((r) => (r.id === row.id ? updated : r)))
-      if (message) notify(message, 'ok')
-      onChanged()
-    } catch (err) {
-      notify(err.message, 'error', err.status === 409 ? load : undefined)
-    }
-  }
-
-  async function add() {
-    try {
-      const created = await api.create('vlan_extension', { data: { venues: {} } })
-      setRows((rs) => [...rs, created])
-      onChanged()
-    } catch (err) {
-      notify(err.message, 'error')
-    }
-  }
-
-  const pending = usePendingDeletes(api, 'vlan_extension', notify, onChanged, load)
-
-  function remove(row) {
-    if (!window.confirm(`Delete the VLAN extension ${row.data.vlan || ''}?`.replace(' ?', '?'))) return
-    setRows((rs) => rs.filter((r) => r.id !== row.id))
-    pending.schedule(row, `Deleted VLAN extension ${row.data.vlan || ''}`.trim())
-  }
-
-  return (
-    <div className="panel">
-      <table className="rec-table matrix">
-        <thead>
-          <tr>
-            <th>VLAN</th>
-            {overview.venues.map((v) => <th key={v.id} className="center">{v.name}</th>)}
-            {isAdmin && <th />}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.filter((r) => !pending.isPending(r.id)).map((row) => (
-            <tr key={row.id}>
-              <td>
-                {isAdmin ? (
-                  <select value={row.data.vlan || ''} onChange={(e) => save(row, { vlan: e.target.value || null })}>
-                    <option value="">—</option>
-                    {[...new Set([row.data.vlan, ...vlans].filter(Boolean))].map((v) => <option key={v}>{v}</option>)}
-                  </select>
-                ) : (
-                  row.data.vlan
-                )}
-              </td>
-              {overview.venues.map((v) => (
-                <td key={v.id} className="center">
-                  <input type="checkbox" disabled={!isAdmin} checked={!!row.data.venues?.[v.id]}
-                    aria-label={`${row.data.vlan || 'VLAN'} at ${v.name}`}
-                    onChange={(e) => save(row, { venues: { ...row.data.venues, [v.id]: e.target.checked } })} />
-                </td>
-              ))}
-              {isAdmin && <td className="rec-actions"><button className="danger" onClick={() => remove(row)}>Delete</button></td>}
-            </tr>
-          ))}
-          {rows.length === 0 && <tr><td colSpan={overview.venues.length + 2} className="muted">No VLAN extensions.</td></tr>}
-        </tbody>
-      </table>
-      {isAdmin && <button className="secondary rec-add-bottom" onClick={add}>+ Add VLAN</button>}
-    </div>
-  )
-}
-
 // --- Lists, venues, sections ------------------------------------------------------
 
 function EditableItem({ label, flagged, isAdmin, onRename, onDelete, onAccept }) {
@@ -337,8 +255,6 @@ export function ListsPanel({ api, overview, isAdmin, notify, onChanged }) {
         items={overview.venues.map((v) => named(v, api.renameVenue, api.deleteVenue))} />
       <ListBox title="Ethernet sections" isAdmin={isAdmin} onAdd={(v) => run(() => api.addGroup('ethernet', v))}
         items={overview.groups.filter((g) => g.kind === 'ethernet').map((g) => named(g, api.renameGroup, api.deleteGroup))} />
-      <ListBox title="Wi-Fi groups" isAdmin={isAdmin} onAdd={(v) => run(() => api.addGroup('wifi', v))}
-        items={overview.groups.filter((g) => g.kind === 'wifi').map((g) => named(g, api.renameGroup, api.deleteGroup))} />
       {lists.map(([kind, title]) => (
         <ListBox key={kind} title={title} isAdmin={isAdmin} onAdd={(v) => run(() => api.addListValue(kind, v))}
           help={kind === 'vlan' ? 'Renaming a VLAN updates every record that uses it.' : undefined}

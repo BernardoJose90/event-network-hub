@@ -43,7 +43,7 @@ def _not_archived(request: Request, document_id: int) -> None:
 router = APIRouter(prefix="/api/events/{document_id}", dependencies=[Depends(_not_archived)])
 events_router = APIRouter(prefix="/api")  # creating events, event templates
 
-RecordTypePath = Literal["wifi", "ethernet", "partner", "vlan_extension"]
+RecordTypePath = Literal["wifi", "ethernet", "partner"]
 ListKindPath = Literal["building", "location", "vlan", "bandwidth"]
 GroupKindPath = Literal["wifi", "ethernet"]
 T = TypeVar("T")

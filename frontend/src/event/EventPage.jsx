@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { loadIdentity } from '../identity.js'
 import { eventApi } from './api.js'
 import { TITLES } from './columns.js'
-import { HistoryPanel, ListsPanel, Overview, VlanMatrix } from './panels.jsx'
+import { HistoryPanel, ListsPanel, Overview } from './panels.jsx'
 import RecordTable from './RecordTable.jsx'
 
 // Requirements page, /event/<documentId>: the event's network requirements as
@@ -13,7 +13,6 @@ const VIEWS = [
   ['wifi', TITLES.wifi],
   ['ethernet', TITLES.ethernet],
   ['partner', TITLES.partner],
-  ['vlan_extension', TITLES.vlan_extension],
   ['lists', 'Setup'],
   ['history', 'History'],
 ]
@@ -86,7 +85,7 @@ export default function EventPage({ documentId }) {
   async function saveAsTemplate() {
     const suggested = overview.document.name.split(' | ')[0].replace(/\d+$/, '')
     const name = window.prompt(
-      'Template name (e.g. LIS). The template keeps the venues, sections, lists, Wi-Fi networks, Ethernet items and VLAN extensions, with Ethernet points set to 0, no partner orders and no Wi-Fi passwords.',
+      'Template name (e.g. LIS). The template keeps the venues, sections, lists, Wi-Fi networks and Ethernet items, with Ethernet points set to 0 and notes empty; partner sections, partner orders and Wi-Fi passwords are left out.',
       suggested,
     )
     if (!name) return
@@ -175,7 +174,6 @@ export default function EventPage({ documentId }) {
         <main className="event-main">
           {view === 'overview' && <Overview {...props} onPublish={publish} goTo={goTo} />}
           {['wifi', 'ethernet', 'partner'].includes(view) && <RecordTable key={view} type={view} {...props} />}
-          {view === 'vlan_extension' && <VlanMatrix {...props} />}
           {view === 'lists' && <ListsPanel {...props} />}
           {view === 'history' && <HistoryPanel {...props} />}
         </main>

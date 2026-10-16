@@ -117,7 +117,7 @@ def init_db(path: Path) -> None:
         records_store.init(conn)
         from .records import service as records_service
 
-        records_service.purge_archived_records(conn)
+        records_service.purge_retired_records(conn)
         conn.commit()
     finally:
         conn.close()

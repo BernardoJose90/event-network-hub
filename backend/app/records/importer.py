@@ -2,7 +2,8 @@
 
 Recognised sheets (names matched case-insensitively):
   "<venue> - Wi-Fi Req", "<venue> Ethernet Req", "Partners Custom Orders",
-  "Extending Vlans", "Changes - Log" (kept as a read-only legacy log), "Setup".
+  "Changes - Log" (kept as a read-only legacy log), "Setup". "Extending Vlans" is skipped
+  (VLAN extensions are no longer tracked).
 Group/section rows are recognised by their dark fill; data rows are the rest.
 """
 
@@ -221,28 +222,6 @@ def _partners(ws: Worksheet, result: ImportResult) -> None:
             result.records.append(ImportedRecord("partner", data))
 
 
-def _vlan_extensions(ws: Worksheet, result: ImportResult, venues: list[str]) -> None:
-    columns: dict[int, str] = {}
-    vlan_col = None
-    for cell in ws[1]:
-        header = _text(cell.value)
-        if not header:
-            continue
-        if "vlan" in header.lower():
-            vlan_col = cell.column
-            continue
-        venue = next((v for v in venues if v.lower().startswith(header.lower()) or header.lower() in v.lower()), None)
-        if venue:
-            columns[cell.column] = venue
-        else:
-            result.warnings.append(f"{ws.title}: column '{header}' doesn't match a venue; not imported")
-    for row in ws.iter_rows(min_row=2):
-        vlan = _text(row[vlan_col - 1].value) if vlan_col else None
-        ticks = {venue: row[col - 1].value is True for col, venue in columns.items()}
-        if vlan or any(ticks.values()):
-            result.records.append(ImportedRecord("vlan_extension", {"vlan": vlan, "venues": ticks}))
-
-
 def _setup(ws: Worksheet, result: ImportResult) -> None:
     rules = [("building", "building"), ("hall", "location"), ("location", "location"),
              ("bandwidth", "bandwidth"), ("vlan", "vlan")]
@@ -279,7 +258,7 @@ def import_workbook(data: bytes) -> ImportResult:
     def venue_of(m: re.Match) -> str:
         return m.group("venue").strip(" -") or DEFAULT_VENUE
 
-    # Venues first (in sheet order), so the VLAN matrix can refer to them.
+    # Venues first, in sheet order.
     for ws in sheets:
         m = WIFI_SHEET.match(ws.title.strip()) or ETHERNET_SHEET.match(ws.title.strip())
         if m:
@@ -294,7 +273,7 @@ def import_workbook(data: bytes) -> ImportResult:
         elif "partner" in title.lower() and "order" in title.lower():
             _partners(ws, result)
         elif "vlan" in title.lower() and "extend" in title.lower():
-            _vlan_extensions(ws, result, result.venues)
+            result.warnings.append(f"Sheet '{ws.title}' skipped: VLAN extensions are no longer tracked")
         elif "setup" in title.lower() or "setting" in title.lower():
             _setup(ws, result)
         elif "change" in title.lower() and "log" in title.lower():

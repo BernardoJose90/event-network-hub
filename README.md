@@ -1,6 +1,6 @@
 # Event Network Hub
 
-Web Summit's event network requirements in one place: Wi-Fi networks, Ethernet requirements, partner orders and VLAN extensions, kept as structured records per event. Events start empty or from a template (LIS, QATAR, RIO, VAN), and **Publish** creates a numbered version as an Excel workbook and a PDF report. It started as a test harness for one feature, uploading an Excel workbook and downloading it as a PDF that looks like the spreadsheet, and that path is still available under Legacy. Viewers and network admins both see the same complete content; viewers are trusted, so nothing is redacted.
+Web Summit's event network requirements in one place: Wi-Fi networks, Ethernet requirements and partner orders, kept as structured records per event. Events start empty or from a template (LIS, QATAR, RIO, VAN), and **Publish** creates a numbered version as an Excel workbook and a PDF report. It started as a test harness for one feature, uploading an Excel workbook and downloading it as a PDF that looks like the spreadsheet, and that path is still available under Legacy. Viewers and network admins both see the same complete content; viewers are trusted, so nothing is redacted.
 
 (Internal names such as the Docker Compose project `portal-pdf-test` are unchanged, because renaming the project would point the app at a new, empty data volume.)
 
@@ -123,8 +123,7 @@ backend/app/
   - **Delete** removes an item after a confirmation, with **Undo** for 6 seconds (the delete is only sent when that time is up, or straight away when you leave the page). History keeps the deleted values, except passwords, and published versions keep their snapshot.
   - Wi-Fi passwords are masked until **Reveal**, and every reveal is logged.
   - Wi-Fi **Band** is a dropdown: "5 GHz & 6 GHz" or "5 GHz". Other spellings ("5Ghz", "5 ghz") are normalised; an older value outside the options (e.g. "6 GHz") is kept until someone changes it.
-- **VLAN extensions:** a tick matrix per venue.
-- **Setup:** venues, Ethernet sections, Wi-Fi groups, VLANs, locations, buildings, bandwidths. A value in use can't be removed, and renaming a value updates every record that uses it.
+- **Setup:** venues, Ethernet sections, VLANs, locations, buildings, bandwidths. (Wi-Fi groups such as Core Networks and Partners come with the event or template and aren't edited here.) A value in use can't be removed, and renaming a value updates every record that uses it.
 - **History:** every change is recorded automatically (who, when, old → new), so nobody keeps a change log by hand. Password values are never logged. An imported workbook's old "Changes - Log" appears here as legacy entries.
 
 **Archiving events.** **Archive event** on the Events page moves an event under **Archived** in the sidebar (visible to everyone). An archived event is read-only for all roles: no edits, imports, publishing, uploads or editor sessions until a network admin clicks **Restore**. Its versions can still be viewed and downloaded, and it can still be saved as a template. **Delete event** is only offered for archived events, so deleting is always a deliberate second step; the API refuses to delete an event that isn't archived. Templates aren't archived; they're deleted directly.
@@ -135,7 +134,7 @@ Viewers see the same pages read-only. Editing and publishing are for network adm
 - **Empty:** one venue ("Main venue"), the usual Wi-Fi groups and Ethernet sections, and empty lists; or
 - **a template** (e.g. LIS, QATAR, RIO, VAN): the new event gets a copy of everything in it. Later changes to the template don't affect events already created.
 
-**Templates** are made with **Save as template** on an event's requirements page. A template keeps the event's venues, sections, lists, Wi-Fi networks, Ethernet items and VLAN extensions, with **every Ethernet point set to 0**, **Ethernet notes empty**, **no partner orders** and **no Wi-Fi passwords**. In a template, Ethernet points and notes can't be changed (they're set on the event). Templates are stored in the app (documents with `kind = 'template'`), not in `samples/`. They aren't in the Events list, have no versions and can't be published. Admins open or delete them under **Templates** in the sidebar, and edit them on the same requirements page.
+**Templates** are made with **Save as template** on an event's requirements page. A template keeps the event's venues, sections, lists, Wi-Fi networks and Ethernet items, with **every Ethernet point set to 0**, **Ethernet notes empty**, **no Wi-Fi passwords**, **no partner orders**, and **nothing in partner sections** (the Wi-Fi "Partners" group and Ethernet sections with "partner" in the name, such as PARTNER MEETING ROOMS or STANDARD PARTNER/STARTUP STANDS; the section headings are kept). In a template, Ethernet points and notes can't be changed (they're set on the event). Templates are stored in the app (documents with `kind = 'template'`), not in `samples/`. They aren't in the Events list, have no versions and can't be published. Admins open or delete them under **Templates** in the sidebar, and edit them on the same requirements page.
 
 The event has no versions until the first **Publish**, which creates V1. Uploading a workbook for the same event code later adds a version to the same document.
 
@@ -143,7 +142,7 @@ For an existing workbook, use **Legacy: upload a workbook** in the sidebar, then
 - per-venue sheets (`<Venue> - Wi-Fi Req`, `<Venue> Ethernet Req`), e.g. LIS25;
 - single-venue sheets (`Wi-Fi Requirements`, `Ethernet Requirements`), e.g. VAN26; these go into "Main venue", which you can rename under Lists.
 
-The importer also reads Partners Custom Orders, Extending Vlans, the Setup or settings lists, and the old Changes - Log. Anything it can't place is reported as an import note: unrecognised sheets, columns with no matching field, and non-numeric points such as "TBC".
+The importer also reads Partners Custom Orders, the Setup or settings lists, and the old Changes - Log. An "Extending Vlans" sheet is skipped with a note, because VLAN extensions are no longer tracked. Anything it can't place is reported as an import note: unrecognised sheets, columns with no matching field, and non-numeric points such as "TBC".
 
 **Publishing** creates the next version:
 - an **Excel file in the familiar workbook layout**, with real `SUM` totals and dropdowns, which re-imports to the same records;
@@ -160,7 +159,7 @@ Code: `backend/app/records/` (models, store, service, importer, publish, routes)
 | DELETE | `/api/templates/{id}` | admin; events created from it are kept |
 | GET | `/api/events/{id}/overview` | totals, counts, lists, unpublished changes |
 | POST | `/api/events/{id}/import` | `{replace}`; from the latest ready version |
-| GET/POST | `/api/events/{id}/records/{type}` | type: `wifi`, `ethernet`, `partner`, `vlan_extension` |
+| GET/POST | `/api/events/{id}/records/{type}` | type: `wifi`, `ethernet`, `partner` |
 | PATCH/DELETE | `/api/events/{id}/records/{type}/{rid}` | revision checked |
 | POST | `/api/events/{id}/records/{type}/{rid}/move` | |
 | POST | `/api/events/{id}/records/wifi/{rid}/reveal` | logged |

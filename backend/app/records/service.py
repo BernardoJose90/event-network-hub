@@ -220,18 +220,23 @@ def move_record(conn: sqlite3.Connection, doc: int, record_type: str, record_id:
     return store.get_record(conn, doc, record_id)  # type: ignore[return-value]
 
 
-def purge_archived_records(conn: sqlite3.Connection) -> int:
-    """Delete records archived before item archiving was removed, logging what they held."""
-    rows = list(conn.execute("SELECT id, document_id, type, data, archived_by FROM records WHERE archived_at IS NOT NULL"))
+def purge_retired_records(conn: sqlite3.Connection) -> int:
+    """Delete records of retired features, logging what they held (runs at start-up):
+    archived records (archiving items was replaced by deleting) and VLAN extensions
+    (no longer tracked)."""
+    rows = list(conn.execute(
+        "SELECT id, document_id, type, data, archived_by FROM records "
+        "WHERE archived_at IS NOT NULL OR type = 'vlan_extension'"))
     with conn:
         for row in rows:
             data = json.loads(row["data"])
             shown = {k: v for k, v in data.items() if k not in SECRET_FIELDS.get(row["type"], ())}
+            why = ("VLAN extensions are no longer tracked" if row["type"] == "vlan_extension"
+                   else "it was archived; archiving items was replaced by deleting")
             conn.execute("DELETE FROM records WHERE id = ?", (row["id"],))
             store.log(conn, doc=row["document_id"], entity=row["type"], record_id=row["id"], action="delete",
                       user=row["archived_by"] or "system", old=shown,
-                      summary=f"Deleted {_describe(row['type'], data)} (it was archived; archiving items was "
-                              "replaced by deleting)")
+                      summary=f"Deleted {_describe(row['type'], data)} ({why})")
     return len(rows)
 
 
@@ -414,8 +419,6 @@ def apply_import(conn: sqlite3.Connection, doc: int, result, *, user: str, sourc
             except ValidationError:
                 skipped += 1
                 continue
-            if rec.type == "vlan_extension":
-                data["venues"] = {str(venue_ids[v]): on for v, on in rec.data.get("venues", {}).items() if v in venue_ids}
             sort += 1
             store.insert_record(
                 conn, doc=doc, record_type=rec.type,
@@ -450,9 +453,14 @@ DEFAULT_GROUPS = {
 }
 
 
+def is_partner_section(name: str | None) -> bool:
+    """Wi-Fi 'Partners' and Ethernet 'PARTNER …' sections, which templates keep empty."""
+    return bool(name) and "partner" in name.lower()
+
+
 def _template_data(record: dict[str, Any]) -> dict[str, Any] | None:
     """A record as kept in a template: no partner orders, Ethernet points 0 and notes empty,
-    no Wi-Fi passwords."""
+    no Wi-Fi passwords. (Items in partner sections are left out by _copy_event.)"""
     if record["type"] == "partner":
         return None
     data = dict(record["data"])
@@ -470,14 +478,14 @@ def _copy_event(conn: sqlite3.Connection, source: int, target: int, *, user: str
     group_ids = {g["id"]: store.insert_group(conn, target, g["kind"], g["name"]) for g in store.groups(conn, source)}
     for item in store.lists(conn, source):
         store.insert_list_value(conn, target, item["kind"], item["value"], flagged=item["flagged"])
+    group_names = {g["id"]: g["name"] for g in store.groups(conn, source)}
     copied = 0
-    for r in store.records(conn, source):  # active records only
+    for r in store.records(conn, source):
+        if as_template and is_partner_section(group_names.get(r["group_id"])):
+            continue  # partner networks and stands differ per event
         data = _template_data(r) if as_template else dict(r["data"])
         if data is None:
             continue
-        if r["type"] == "vlan_extension":
-            data["venues"] = {str(venue_ids[int(v)]): on for v, on in data.get("venues", {}).items()
-                              if int(v) in venue_ids}
         store.insert_record(conn, doc=target, record_type=r["type"], venue_id=venue_ids.get(r["venue_id"]),
                             group_id=group_ids.get(r["group_id"]), sort=r["sort"], data=data, user=user)
         copied += 1
@@ -540,5 +548,6 @@ def save_template(conn: sqlite3.Connection, name: str, *, user: str, event_id: i
         copied = _copy_event(conn, event_id, doc, user=user, as_template=True)
         store.log(conn, doc=doc, entity="event", action="create", user=user,
                   summary=f"Created the template from {event['name']} ({copied} requirement(s); Ethernet points "
-                          "set to 0, Ethernet notes, partner orders and Wi-Fi passwords left out)")
+                          "set to 0; Ethernet notes, partner sections, partner orders and Wi-Fi passwords "
+                          "left out)")
     return doc

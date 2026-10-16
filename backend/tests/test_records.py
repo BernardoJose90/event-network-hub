@@ -40,7 +40,7 @@ def test_record_counts_and_placement(imported) -> None:
     assert counts[("ethernet", "Altice Arena", "INTERNAL WORKSPACES")] == 4  # incl. the empty-points Bag Drop row
     assert counts[("ethernet", "Altice Arena", "Stages")] == 2
     assert counts[("partner", None, None)] == 3
-    assert counts[("vlan_extension", None, None)] == 2  # the empty row is skipped
+    assert counts[("vlan_extension", None, None)] == 0  # VLAN extensions are no longer tracked
 
 
 def test_values_are_normalised(imported) -> None:
@@ -53,8 +53,6 @@ def test_values_are_normalised(imported) -> None:
     assert eth.data["bandwidth_ns"] == "50 Mbps" and eth.data["bandwidth_ew"] == "1 Gbps"
     ibm = next(r for r in imported.records if r.type == "partner" and r.data["partner"] == "IBM")
     assert (ibm.data["purchased"], ibm.data["bandwidth_mbps"], ibm.data["pavilion"]) == ("yes", 60, "1")
-    vlan = next(r for r in imported.records if r.type == "vlan_extension")
-    assert vlan.data == {"vlan": "Operational_Prod", "venues": {"FIL 1-5": True, "Altice Arena": True}}
 
 
 def test_warnings_and_lists(imported) -> None:
@@ -105,16 +103,13 @@ def _find(client, doc, rtype, **match):
 
 def test_import_result_and_overview(client: TestClient, event: int) -> None:
     ov = client.get(f"/api/events/{event}/overview", headers=VIEWER).json()
-    assert ov["has_records"] and ov["counts"] == {"wifi": 4, "ethernet": 7, "partner": 3, "vlan_extension": 2}
+    assert ov["has_records"] and ov["counts"] == {"wifi": 4, "ethernet": 7, "partner": 3}
     assert ov["flagged_list_values"] == 2
     altice = ov["totals"]["ethernet"][0]
     assert altice["venue"] == "Altice Arena"
     assert [(s["section"], s["ports"]) for s in altice["sections"]] == [
         ("INTERNAL WORKSPACES", 111), ("PARTNER MASTERCLASSES", 0), ("Stages", 13)]
     assert altice["total"] == 124
-    ext = _records(client, event, "vlan_extension")[0]["data"]
-    venue_ids = {v["name"]: str(v["id"]) for v in ov["venues"]}
-    assert ext["venues"] == {venue_ids["FIL 1-5"]: True, venue_ids["Altice Arena"]: True}
     legacy = client.get(f"/api/events/{event}/history?entity=legacy", headers=VIEWER).json()
     assert len(legacy) == 2
 
@@ -284,7 +279,7 @@ def _comparable(client, doc) -> Counter:
     venues = {v["id"]: v["name"] for v in ov["venues"]}
     groups = {g["id"]: g["name"] for g in ov["groups"]}
     out = Counter()
-    for rtype in ("wifi", "ethernet", "partner", "vlan_extension"):
+    for rtype in ("wifi", "ethernet", "partner"):
         for r in _records(client, doc, rtype):
             data = dict(r["data"])
             if rtype == "vlan_extension":
@@ -400,17 +395,25 @@ def test_records_archived_before_the_change_are_deleted_at_start_up(client: Test
     assert "FoodTrucks / Bar" in entry["old"] and "it was archived" in entry["summary"]
 
 
-def test_vlan_extension_ticks_are_logged_by_venue_name(client: TestClient, event: int) -> None:
-    ov = client.get(f"/api/events/{event}/overview", headers=ADMIN).json()
-    fil = next(str(v["id"]) for v in ov["venues"] if v["name"] == "FIL 1-5")
-    ext = _records(client, event, "vlan_extension")[0]
-    venues = dict(ext["data"]["venues"]) | {fil: False}
-    client.patch(f"/api/events/{event}/records/vlan_extension/{ext['id']}", headers=ADMIN,
-                 json={"revision": ext["revision"], "data": {"venues": venues}})
+def test_vlan_extensions_are_retired(client: TestClient, event: int) -> None:
+    assert client.get(f"/api/events/{event}/records/vlan_extension", headers=ADMIN).status_code == 422
+    r = client.post(f"/api/events/{event}/records/vlan_extension", headers=ADMIN, json={"data": {}})
+    assert r.status_code == 422
+    # rows from before are deleted at start-up, with their values kept in the history
+    conn = db.connect(client.settings.db_path)
+    with conn:
+        conn.execute("INSERT INTO records (document_id, type, sort, data, updated_by, updated_at) "
+                     "VALUES (?, 'vlan_extension', 1, '{\"vlan\": \"General\"}', 'bob', '2026-01-01')", (event,))
+    conn.close()
+    db.init_db(client.settings.db_path)
+    conn = db.connect(client.settings.db_path)
+    assert conn.execute("SELECT COUNT(*) FROM records WHERE type = 'vlan_extension'").fetchone()[0] == 0
+    conn.close()
     entry = client.get(f"/api/events/{event}/history?entity=vlan_extension", headers=ADMIN).json()[0]
-    assert (entry["summary"], entry["field"], entry["old"], entry["new"]) == (
-        "Unticked FIL 1-5 for VLAN extension 'Operational_Prod'", "venue:FIL 1-5", "yes", "no")
-
+    assert entry["action"] == "delete" and "no longer tracked" in entry["summary"] and "General" in entry["old"]
+    # the published workbook and report have no VLAN extensions
+    client.post(f"/api/events/{event}/publish", headers=ADMIN)
+    assert "VLAN extension" not in client.app.state.converter.html.split("Changes since")[0]
 
 def _single_venue_workbook() -> bytes:
     import io
@@ -516,7 +519,15 @@ def test_save_template(client: TestClient, event: int) -> None:
     assert [v["name"] for v in new["venues"]] == [v["name"] for v in src["venues"]]
     assert [(g["kind"], g["name"]) for g in new["groups"]] == [(g["kind"], g["name"]) for g in src["groups"]]
     assert [(i["kind"], i["value"]) for i in new["lists"]] == [(i["kind"], i["value"]) for i in src["lists"]]
-    assert new["counts"] == {k: v for k, v in src["counts"].items() if k != "partner"}  # no partners
+    # no partner orders, and nothing in partner sections (Wi-Fi "Partners", Ethernet "PARTNER …")
+    src_groups = {g["id"]: g["name"] for g in src["groups"]}
+    expected = Counter(r["type"] for t in ("wifi", "ethernet") for r in _records(client, event, t)
+                       if "partner" not in src_groups[r["group_id"]].lower())
+    assert new["counts"] == dict(expected)
+    new_groups = {g["id"]: g["name"] for g in new["groups"]}
+    assert not any("partner" in new_groups[r["group_id"]].lower()
+                   for t in ("wifi", "ethernet") for r in _records(client, tpl["id"], t))
+    assert any(g["name"] == "Partners" for g in new["groups"])  # the section itself is kept
     assert all(t["total"] == 0 for t in new["totals"]["ethernet"])
     assert all(r["data"]["ports"] == 0 for r in _records(client, tpl["id"], "ethernet"))
     assert not any(r["has_password"] for r in _records(client, tpl["id"], "wifi"))
@@ -551,9 +562,6 @@ def test_create_event_from_template(client: TestClient, event: int) -> None:
     assert _comparable(client, doc) == _comparable(client, tpl["id"])
     assert any(r["data"].get("purpose") == "Edited in template" for r in _records(client, doc, "ethernet"))
 
-    # VLAN extension ticks point at the new event's venues
-    venues = {str(v["id"]) for v in client.get(f"/api/events/{doc}/overview", headers=ADMIN).json()["venues"]}
-    assert all(set(r["data"]["venues"]) <= venues for r in _records(client, doc, "vlan_extension"))
     assert "template LIS" in client.get(f"/api/events/{doc}/history", headers=ADMIN).json()[0]["summary"]
 
     # independent: deleting the template keeps the event, changing the event keeps the template

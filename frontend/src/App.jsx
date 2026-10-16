@@ -181,7 +181,7 @@ function NewEventForm({ identity, templates }) {
       )}
       <p className="muted small">
         {templateId
-          ? 'Copies the template: venues, sections, lists, Wi-Fi networks, Ethernet items and VLAN extensions.'
+          ? 'Copies the template: venues, sections, lists, Wi-Fi networks and Ethernet items.'
           : 'Add venues, sections and list values on the requirements page.'}{' '}
         Publishing creates V1.
       </p>

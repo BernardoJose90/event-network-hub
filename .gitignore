@@ -1,0 +1,30 @@
+# Sample spreadsheets contain real credentials: never commit them or anything derived from them.
+samples/
+*.xlsx
+*.xlsm
+*.xls
+*.pdf
+
+# Secrets / local config
+.env
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+
+# Local data
+data/
+*.sqlite3
+*.db
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/

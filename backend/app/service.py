@@ -10,6 +10,7 @@ from typing import Any
 
 from . import db
 from .converter import ConversionError, Converter
+from .pdf_prep import prepare_for_pdf
 from .storage import Storage, version_key
 from .xlsx import find_formula_errors
 
@@ -108,7 +109,7 @@ def upload_version(
     n = version["version"]
     try:
         storage.put(version_key(document_id, n, ORIGINAL), data)
-        pdf = converter.xlsx_to_pdf(data, filename=f"{document['name']}-v{n}.xlsx")
+        pdf = converter.xlsx_to_pdf(prepare_for_pdf(data), filename=f"{document['name']}-v{n}.xlsx")
         storage.put(version_key(document_id, n, FULL_PDF), pdf)
     except Exception as exc:
         reason = str(exc) if isinstance(exc, ConversionError) else "Internal error while processing the file"

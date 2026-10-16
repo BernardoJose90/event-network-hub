@@ -179,6 +179,9 @@ function NewEventForm({ identity }) {
           ))}
         </select>
       </label>
+      {events.length === 0 && (
+        <p className="muted small">No other events to copy from yet. Once events exist, they appear here as &ldquo;Copy of …&rdquo;.</p>
+      )}
       {copyFrom && (
         <label className="check">
           <input type="checkbox" checked={copyRecords} onChange={(e) => setCopyRecords(e.target.checked)} />

@@ -18,6 +18,7 @@ Then open <http://localhost:5173>.
 |-----------|--------------------------------|---------------------------------------------|
 | frontend  | `127.0.0.1:5173`               | Vite dev server; proxies `/api` to backend  |
 | backend   | `127.0.0.1:8000`               | FastAPI; data in the `appdata` volume       |
+| collabora | `127.0.0.1:9980`               | In-browser spreadsheet editor (Collabora Online, CODE edition); the browser loads it directly |
 | gotenberg | not published                  | Reachable only from the backend             |
 
 Configuration defaults live in `docker-compose.yml`; copy `.env.example` to `.env` to override them. Nothing in the repo is a secret.
@@ -50,7 +51,8 @@ For each `samples/*.xlsx`, the script uploads the file, downloads the PDF as eac
 - **c)** the page count equals the number of visible sheets;
 - **d)** the Excel download is byte-identical to the uploaded file;
 - **e)** uploading the same version number again is rejected;
-- **f)** deleting the document works and removes its files. This also cleans up, so smoke runs leave no documents behind.
+- **f)** the in-browser editor opens: Collabora's page loads and it can read the file through WOPI;
+- **g)** deleting the document works and removes its files. This also cleans up, so smoke runs leave no documents behind.
 
 The smoke test uploads your file under a throwaway `SMOKE<n>` event code, so it never touches your real documents.
 
@@ -104,6 +106,24 @@ backend/app/
 - **Formula errors may look different in the PDF.** LibreOffice recalculates formulas, so a broken formula such as `sum(#REF!)`, saved as `#REF!`, can appear as `#NAME?`. Both are errors in the source workbook and are listed as upload warnings.
 - **Clipped text.** Text wider than its column is cut off in the PDF, exactly as Excel prints it. Widen the column in the source workbook if a value must be readable in full.
 
+## Editing in the browser
+
+Network admins can click **Edit** on any ready version. The workbook opens in **Collabora Online**, a LibreOffice-based office suite, embedded in the page, with every sheet, the formatting, formulas and an Excel-style toolbar. **Saving creates a new version** numbered after the newest one, e.g. V6 becomes V7. It's marked "edited from V6", converted to PDF like any upload, and the opened version stays unchanged. Later saves in the same session, including autosaves, update that same new version, so one editing session produces one version. **Close editor** saves unsaved changes first.
+
+How it fits together, using the standard WOPI protocol:
+
+1. The page calls `POST /api/documents/{id}/versions/{n}/edit`. The backend records an edit session and signs a short-lived access token (HMAC; it names the session, the user and an expiry). It returns the editor URL, found from Collabora's `/hosting/discovery`.
+2. The page POSTs the token into an iframe pointing at Collabora (`localhost:9980`).
+3. Collabora calls the backend's WOPI endpoints on the compose network (`http://backend:8000/wopi/files/{session}`): `CheckFileInfo`, `GetFile` and `PutFile`. `PutFile` runs `service.save_edit`. Collabora only accepts that WOPI host (`aliasgroup1`), and only our page may frame it.
+4. Access tokens are masked in the access logs.
+
+| Method | Path | Notes |
+|--------|------|-------|
+| POST | `/api/documents/{id}/versions/{n}/edit` | Needs `X-Role: network-admin`. Returns `editor_url`, `access_token`, `access_token_ttl` |
+| GET  | `/wopi/files/{session}` | WOPI CheckFileInfo (called by Collabora) |
+| GET  | `/wopi/files/{session}/contents` | WOPI GetFile |
+| POST | `/wopi/files/{session}/contents` | WOPI PutFile; saves as the session's new version |
+
 ## What changes for production
 
 - **Storage: S3 with presigned URLs.** Add an `S3Storage` implementing `put`/`get`, plus a `presign(key)` method. Downloads return a short-lived presigned GET URL, after the authorization check and the `download_log` write, instead of streaming bytes through the API. Use bucket encryption (SSE-KMS), block all public access, and add a lifecycle policy for old versions.
@@ -118,6 +138,13 @@ backend/app/
   - Structured JSON logs with request IDs.
 - **Database.** Move from SQLite to Postgres (RDS) with migrations (Alembic). The unique-constraint-and-retry logic carries over unchanged.
 - **Conversion off the request path.** Run uploads as a queued job (for example SQS plus a worker), so the API returns immediately with status `processing`. Gotenberg becomes an internal-only Deployment, scaled horizontally, with a NetworkPolicy that allows only the backend or worker to reach it.
+- **Spreadsheet editor (Collabora).**
+  - Licensing: CODE is the development edition, for testing and small teams. Production needs a Collabora Online subscription and its enterprise image.
+  - Transport: serve it over HTTPS behind the ingress, set `server_name` to its public hostname, restrict `aliasgroup1` to the backend's internal service and set `frame_ancestors` to the portal's origin.
+  - Secrets: set `WOPI_TOKEN_SECRET` from the secret store. Locally a random one is generated per start, which ends open editor sessions.
+  - Authentication: issue editor tokens from the real authenticated user.
+  - Integrity: validate Collabora's WOPI proof-key signatures (`X-WOPI-Proof`). The local container has no proof key and the backend doesn't check them yet.
+  - Scaling: Collabora pins each document to one instance, so use sticky routing by WOPISrc when running more than one.
 - **Hardening.**
   - Enforce the upload size limit at the ingress.
   - Run containers with a read-only root filesystem and drop all capabilities.

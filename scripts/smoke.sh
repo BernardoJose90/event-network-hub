@@ -9,11 +9,12 @@
 #   c) the PDF page count equals the number of visible sheets
 #   d) the Excel download is byte-identical to the uploaded file
 #   e) uploading the same version number twice is rejected
-#   f) deleting the document works and removes its files (this also cleans up)
+#   f) the in-browser editor opens (Collabora page loads and can read the file)
+#   g) deleting the document works and removes its files (this also cleans up)
 #
 # Downloaded PDFs live in a private temp dir that is deleted on exit.
 #
-# Requires: curl, jq, docker, pdffonts/pdfinfo (poppler-utils).
+# Requires: curl, jq, python3, docker, pdffonts/pdfinfo (poppler-utils).
 
 set -euo pipefail
 
@@ -128,14 +129,35 @@ for sample in "${samples[@]}"; do
     fail "e) uploading V1 again returned HTTP $code_dup (expected 409)"
   fi
 
-  # --- f) delete (also cleans up the smoke document) ---------------------------
+  # --- f) in-browser editor ---------------------------------------------------------
+  code_ed="$(curl -sS -o "$work/edit.json" -w '%{http_code}' -X POST -H "X-Role: network-admin" \
+    -H "X-User: smoke-test" "$API/documents/$doc_id/versions/$version/edit")"
+  if [ "$code_ed" = "200" ]; then
+    editor_url="$(jq -r '.editor_url' "$work/edit.json")"
+    token="$(jq -r '.access_token' "$work/edit.json")"
+    wopi_src="$(python3 -c 'import sys, urllib.parse as u; print(u.parse_qs(u.urlparse(sys.argv[1]).query)["WOPISrc"][0])' "$editor_url")"
+    code_page="$(curl -sS -o /dev/null -w '%{http_code}' "${editor_url%%\?*}")"
+    # CheckFileInfo as Collabora would call it, from inside the compose network.
+    wopi_name="$(docker compose -f "$ROOT/docker-compose.yml" exec -T backend python -c \
+      'import sys, httpx; print(httpx.get(sys.argv[1], params={"access_token": sys.argv[2]}).json().get("BaseFileName", ""))' \
+      "$wopi_src" "$token" 2>/dev/null || true)"
+    if [ "$code_page" = "200" ] && [ -n "$wopi_name" ]; then
+      pass "f) editor opens: Collabora page loads and can read '$wopi_name'"
+    else
+      fail "f) editor page HTTP $code_page, WOPI file name '${wopi_name}'"
+    fi
+  else
+    fail "f) starting an edit session returned HTTP $code_ed"
+  fi
+
+  # --- g) delete (also cleans up the smoke document) ---------------------------
   code_del="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE -H "X-Role: network-admin" \
     "$API/documents/$doc_id")"
   code_after="$(download "$doc_id" network-admin "$work/after.pdf")"
   if [ "$code_del" = "204" ] && [ "$code_after" = "404" ]; then
-    pass "f) document deleted; its files are no longer downloadable"
+    pass "g) document deleted; its files are no longer downloadable"
   else
-    fail "f) delete returned HTTP $code_del, download afterwards HTTP $code_after (expected 204, 404)"
+    fail "g) delete returned HTTP $code_del, download afterwards HTTP $code_after (expected 204, 404)"
   fi
 done
 

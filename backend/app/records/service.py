@@ -145,7 +145,19 @@ def update_record(conn: sqlite3.Connection, doc: int, record_type: str, record_i
     with conn:
         if not store.update_record(conn, record_id=record_id, expected_revision=revision, user=user, data=data):
             raise _conflict(store.get_record(conn, doc, record_id) or record)
+        venue_names = {str(v["id"]): v["name"] for v in store.venues(conn, doc)}
         for field in sorted(changed):
+            if field == "venues":  # VLAN extension ticks: one readable entry per venue
+                before, after = record["data"].get("venues", {}), data.get("venues", {})
+                for venue_id in sorted(set(before) | set(after)):
+                    was, now = bool(before.get(venue_id)), bool(after.get(venue_id))
+                    if was == now:
+                        continue
+                    name = venue_names.get(venue_id, "a removed venue")
+                    store.log(conn, doc=doc, entity=record_type, record_id=record_id, action="update", user=user,
+                              field=f"venue:{name}", old="yes" if was else "no", new="yes" if now else "no",
+                              summary=f"{'Ticked' if now else 'Unticked'} {name} for {_describe(record_type, data)}")
+                continue
             label = LABELS[record_type].get(field, field)
             hidden = field in secrets
             store.log(conn, doc=doc, entity=record_type, record_id=record_id, action="update", user=user,

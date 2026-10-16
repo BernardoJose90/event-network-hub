@@ -401,3 +401,16 @@ def test_archived_records_still_block_list_and_section_deletes(client: TestClien
     lists = client.get(f"/api/events/{event}/overview", headers=ADMIN).json()["lists"]
     catering = next(i for i in lists if i["value"] == "Operational_Catering")
     assert client.delete(f"/api/events/{event}/lists/item/{catering['id']}", headers=ADMIN).status_code == 409
+
+
+
+def test_vlan_extension_ticks_are_logged_by_venue_name(client: TestClient, event: int) -> None:
+    ov = client.get(f"/api/events/{event}/overview", headers=ADMIN).json()
+    fil = next(str(v["id"]) for v in ov["venues"] if v["name"] == "FIL 1-5")
+    ext = _records(client, event, "vlan_extension")[0]
+    venues = dict(ext["data"]["venues"]) | {fil: False}
+    client.patch(f"/api/events/{event}/records/vlan_extension/{ext['id']}", headers=ADMIN,
+                 json={"revision": ext["revision"], "data": {"venues": venues}})
+    entry = client.get(f"/api/events/{event}/history?entity=vlan_extension", headers=ADMIN).json()[0]
+    assert (entry["summary"], entry["field"], entry["old"], entry["new"]) == (
+        "Unticked FIL 1-5 for VLAN extension 'Operational_Prod'", "venue:FIL 1-5", "yes", "no")

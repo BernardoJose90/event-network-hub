@@ -422,3 +422,69 @@ def apply_import(conn: sqlite3.Connection, doc: int, result, *, user: str, sourc
     for rec in store.records(conn, doc):
         counts[rec["type"]] = counts.get(rec["type"], 0) + 1
     return {"counts": counts, "warnings": warnings}
+
+
+# --- new events ----------------------------------------------------------------
+
+# The sections every event workbook has used, for events started empty.
+DEFAULT_GROUPS = {
+    "wifi": ("Core Networks", "Lounges", "Security Zones", "Partners"),
+    "ethernet": ("INTERNAL WORKSPACES", "PARTNER MASTERCLASSES", "PARTNER MEETING ROOMS", "Stages",
+                 "Registration Areas", "LOUNGES", "STANDARD PARTNER STANDS", "STARTUP STANDS", "Other Areas",
+                 "Media Areas"),
+}
+
+
+def create_event(conn: sqlite3.Connection, name: str, *, user: str, copy_from: int | None = None,
+                 copy_records: bool = False) -> int:
+    """Create an event document without a workbook, in one transaction.
+
+    Empty: one default venue and the usual Wi-Fi groups and Ethernet sections.
+    copy_from: the venues, groups, sections and lists of that event, plus its active
+    records when copy_records is set. Returns the new document id.
+    """
+    from ..db import get_document, get_document_by_name
+    from .importer import DEFAULT_VENUE
+
+    if get_document_by_name(conn, name) is not None:
+        raise RecordError(409, f"'{name}' already exists")
+    source = None
+    if copy_from is not None:
+        source = get_document(conn, copy_from)
+        if source is None:
+            raise RecordError(404, "The event to copy from was not found")
+        if not store.venues(conn, copy_from):
+            raise RecordError(422, f"'{source['name']}' has no requirements to copy")
+    elif copy_records:
+        raise RecordError(422, "Choose an event to copy the requirements from")
+
+    with conn:
+        from ..db import insert_document
+
+        doc = insert_document(conn, name)
+        if source is None:
+            store.insert_venue(conn, doc, DEFAULT_VENUE)
+            for kind, names in DEFAULT_GROUPS.items():
+                for group in names:
+                    store.insert_group(conn, doc, kind, group)
+            summary = "Created the event (empty)"
+        else:
+            venue_ids = {v["id"]: store.insert_venue(conn, doc, v["name"]) for v in store.venues(conn, copy_from)}
+            group_ids = {g["id"]: store.insert_group(conn, doc, g["kind"], g["name"])
+                         for g in store.groups(conn, copy_from)}
+            for item in store.lists(conn, copy_from):
+                store.insert_list_value(conn, doc, item["kind"], item["value"], flagged=item["flagged"])
+            copied = 0
+            if copy_records:
+                for r in store.records(conn, copy_from):  # active records only
+                    data = dict(r["data"])
+                    if r["type"] == "vlan_extension":
+                        data["venues"] = {str(venue_ids[int(v)]): on for v, on in data.get("venues", {}).items()
+                                          if int(v) in venue_ids}
+                    store.insert_record(conn, doc=doc, record_type=r["type"], venue_id=venue_ids.get(r["venue_id"]),
+                                        group_id=group_ids.get(r["group_id"]), sort=r["sort"], data=data, user=user)
+                    copied += 1
+            summary = f"Created the event from {source['name']}" + (f" with {copied} requirement(s)" if copy_records
+                                                                    else " (setup only)")
+        store.log(conn, doc=doc, entity="event", action="create", user=user, summary=summary)
+    return doc

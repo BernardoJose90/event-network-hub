@@ -455,3 +455,94 @@ def test_single_venue_workbook_layout() -> None:
     assert result.lists["location"] == ["West Second Floor"] and result.lists["vlan"] == ["General"]
     note = next(w for w in result.warnings if "columns not imported" in w)
     assert note == "Ethernet Requirements: columns not imported (no matching field): Type, CCTV, #Production"
+
+
+# --- new events without a workbook --------------------------------------------------
+
+
+def _new_event(client, code, **body):
+    return client.post("/api/events", headers=ADMIN, json={"event_code": code, **body})
+
+
+def test_create_empty_event_and_publish_v1(client: TestClient) -> None:
+    r = _new_event(client, "web26")
+    assert r.status_code == 201, r.text
+    doc = r.json()
+    assert doc["name"] == "WEB26 | Event_Network_Requirements"
+    ov = client.get(f"/api/events/{doc['id']}/overview", headers=VIEWER).json()
+    assert not ov["has_records"]
+    assert [v["name"] for v in ov["venues"]] == ["Main venue"]
+    assert [g["name"] for g in ov["groups"] if g["kind"] == "wifi"] == ["Core Networks", "Lounges",
+                                                                       "Security Zones", "Partners"]
+    assert len([g for g in ov["groups"] if g["kind"] == "ethernet"]) == 10
+    assert client.get(f"/api/documents/{doc['id']}/versions").json() == []
+    assert client.post(f"/api/events/{doc['id']}/publish", headers=ADMIN).status_code == 409  # nothing yet
+
+    core = next(g for g in ov["groups"] if g["kind"] == "wifi")
+    r = client.post(f"/api/events/{doc['id']}/records/wifi", headers=ADMIN,
+                    json={"venue_id": ov["venues"][0]["id"], "group_id": core["id"], "data": {"ssid": "WS_Staff"}})
+    assert r.status_code == 201, r.text
+    r = client.post(f"/api/events/{doc['id']}/publish", headers=ADMIN)
+    assert r.status_code == 201, r.text
+    versions = client.get(f"/api/documents/{doc['id']}/versions").json()
+    assert [(v["version"], v["status"]) for v in versions] == [(1, "ready")]
+
+
+def test_create_event_rules(client: TestClient, event: int) -> None:
+    assert _new_event(client, "LIS26").status_code == 409  # the uploaded fixture's event
+    assert _new_event(client, "lis26").status_code == 409
+    assert _new_event(client, "L").status_code == 422
+    assert _new_event(client, "LIS 26").status_code == 422
+    r = client.post("/api/events", headers=VIEWER, json={"event_code": "WEB26"})
+    assert r.status_code == 403
+    assert _new_event(client, "WEB26", copy_from=9999).status_code == 404
+    assert _new_event(client, "WEB26", copy_records=True).status_code == 422
+    assert client.get("/api/documents").json()[-1]["name"].startswith("LIS26")  # nothing created
+
+
+def test_copy_setup_only(client: TestClient, event: int) -> None:
+    doc = _new_event(client, "LIS27", copy_from=event).json()["id"]
+    src = client.get(f"/api/events/{event}/overview", headers=ADMIN).json()
+    new = client.get(f"/api/events/{doc}/overview", headers=ADMIN).json()
+    assert not new["has_records"]
+    assert [v["name"] for v in new["venues"]] == [v["name"] for v in src["venues"]]
+    assert [(g["kind"], g["name"]) for g in new["groups"]] == [(g["kind"], g["name"]) for g in src["groups"]]
+    assert [(i["kind"], i["value"]) for i in new["lists"]] == [(i["kind"], i["value"]) for i in src["lists"]]
+    assert "LIS26" in client.get(f"/api/events/{doc}/history", headers=ADMIN).json()[0]["summary"]
+
+
+def test_copy_with_records(client: TestClient, event: int) -> None:
+    wifi = _records(client, event, "wifi")
+    client.post(f"/api/events/{event}/records/wifi/{wifi[0]['id']}/archive", headers=ADMIN,
+                json={"revision": wifi[0]["revision"]})
+    doc = _new_event(client, "LIS27", copy_from=event, copy_records=True).json()["id"]
+    src = client.get(f"/api/events/{event}/overview", headers=ADMIN).json()
+    new = client.get(f"/api/events/{doc}/overview", headers=ADMIN).json()
+    assert new["counts"] == src["counts"]  # active records only
+    assert new["archived"] == {}
+    assert new["totals"]["ethernet"][0]["total"] == src["totals"]["ethernet"][0]["total"]
+    assert _comparable(client, doc) == _comparable(client, event)
+
+    # VLAN extension ticks point at the new event's venues
+    names = {str(v["id"]): v["name"] for v in new["venues"]}
+    for r in _records(client, doc, "vlan_extension"):
+        assert set(r["data"]["venues"]) <= set(names)
+    src_names = {str(v["id"]): v["name"] for v in src["venues"]}
+    ticks = lambda recs, n: sorted((r["data"]["vlan"], n[k], on) for r in recs for k, on in r["data"]["venues"].items())
+    assert ticks(_records(client, doc, "vlan_extension"), names) == \
+        ticks(_records(client, event, "vlan_extension"), src_names)
+
+    # the copy is independent of the original
+    first = _records(client, doc, "wifi")[0]
+    client.patch(f"/api/events/{doc}/records/wifi/{first['id']}", headers=ADMIN,
+                 json={"revision": first["revision"], "data": {"ssid": "Changed"}})
+    assert all(r["data"]["ssid"] != "Changed" for r in _records(client, event, "wifi"))
+
+
+def test_list_events_and_upload_into_created_event(client: TestClient, event: int) -> None:
+    created = _new_event(client, "WEB26").json()
+    assert {e["name"] for e in client.get("/api/events", headers=VIEWER).json()} == {
+        "LIS26 | Event_Network_Requirements", "WEB26 | Event_Network_Requirements"}
+    r = client.post("/api/documents/upload", headers=ADMIN,
+                    files={"file": ("WEB26 _ Event_Network_Requirements_V1.xlsx", records_workbook(), XLSX)})
+    assert r.json()["document"]["id"] == created["id"]

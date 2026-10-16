@@ -15,6 +15,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
 from .. import db
+from ..naming import event_document_name
+from ..validation import UploadRejected
 from ..auth import Principal, current_principal, require_admin, require_known_role
 from ..service import ORIGINAL
 from ..storage import ObjectNotFound, version_key
@@ -26,6 +28,7 @@ from .publish import changes_since_last_publish, publish
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/events/{document_id}")
+events_router = APIRouter(prefix="/api/events")  # creating and listing events
 
 RecordTypePath = Literal["wifi", "ethernet", "partner", "vlan_extension"]
 ListKindPath = Literal["building", "location", "vlan", "bandwidth"]
@@ -70,6 +73,34 @@ def _run(fn: Callable[[], T]) -> T:
         return fn()
     except service.RecordError as exc:
         raise HTTPException(exc.status, str(exc))
+
+
+# --- new events -------------------------------------------------------------------
+
+
+class NewEvent(BaseModel):
+    event_code: str = Field(max_length=40)
+    copy_from: int | None = None
+    copy_records: bool = False
+
+
+@events_router.get("")
+def list_events(conn: Conn, principal: Reader) -> list[dict[str, Any]]:
+    """Events with requirements set up, to copy from."""
+    return [{"id": d["id"], "name": d["name"]} for d in db.list_documents(conn) if store.venues(conn, d["id"])]
+
+
+@events_router.post("", status_code=status.HTTP_201_CREATED)
+def create_event(body: NewEvent, conn: Conn, principal: Editor) -> dict[str, Any]:
+    """Create an event without uploading a workbook: empty, or copied from another event."""
+    try:
+        name = event_document_name(body.event_code)
+    except UploadRejected as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc))
+    doc = _run(lambda: service.create_event(conn, name, user=principal.user, copy_from=body.copy_from,
+                                            copy_records=body.copy_records))
+    log.info("%s created event %s (document %s, copied from %s)", principal.user, name, doc, body.copy_from)
+    return db.get_document(conn, doc)  # type: ignore[return-value]
 
 
 # --- overview, history ---------------------------------------------------------

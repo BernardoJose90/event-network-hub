@@ -76,3 +76,11 @@ def parse_upload_name(filename: str | None) -> ParsedName:
         raise UploadRejected("The version number must be 1 or higher.")
 
     return ParsedName(event=event.upper(), version=version)
+
+
+def event_document_name(code: str | None) -> str:
+    """The document name for a new event code such as 'LIS26', or raise UploadRejected."""
+    event = (code or "").strip()
+    if not _EVENT.match(event):
+        raise UploadRejected("The event code must be 2 to 20 letters or digits, for example 'LIS26'.")
+    return ParsedName(event=event.upper(), version=1).document_name

@@ -113,10 +113,15 @@ def init_db(path: Path) -> None:
 
 def create_document(conn: sqlite3.Connection, name: str) -> dict[str, Any]:
     with conn:
-        cur = conn.execute(
-            "INSERT INTO documents (name, created_at) VALUES (?, ?)", (name, utcnow())
-        )
-    return get_document(conn, cur.lastrowid)  # type: ignore[return-value]
+        document_id = insert_document(conn, name)
+    return get_document(conn, document_id)  # type: ignore[return-value]
+
+
+def insert_document(conn: sqlite3.Connection, name: str) -> int:
+    """Insert a document without committing, for callers that add more in the same transaction."""
+    return conn.execute(
+        "INSERT INTO documents (name, created_at) VALUES (?, ?)", (name, utcnow())
+    ).lastrowid
 
 
 def get_document(conn: sqlite3.Connection, document_id: int) -> dict[str, Any] | None:

@@ -551,12 +551,12 @@ def test_create_event_from_template(client: TestClient, event: int) -> None:
     tpl = _save_template(client, event).json()
     first = _records(client, tpl["id"], "ethernet")[0]
     client.patch(f"/api/events/{tpl['id']}/records/ethernet/{first['id']}", headers=ADMIN,
-                 json={"revision": first["revision"], "data": {"ports": 2}})
+                 json={"revision": first["revision"], "data": {"purpose": "Edited in template"}})
     r = _new_event(client, "LIS27", template_id=tpl["id"])
     assert r.status_code == 201, r.text
     doc = r.json()["id"]
     assert _comparable(client, doc) == _comparable(client, tpl["id"])
-    assert client.get(f"/api/events/{doc}/overview", headers=ADMIN).json()["totals"]["ethernet"][0]["total"] == 2
+    assert any(r["data"].get("purpose") == "Edited in template" for r in _records(client, doc, "ethernet"))
 
     # VLAN extension ticks point at the new event's venues
     venues = {str(v["id"]) for v in client.get(f"/api/events/{doc}/overview", headers=ADMIN).json()["venues"]}
@@ -577,3 +577,60 @@ def test_upload_into_created_event(client: TestClient) -> None:
     r = client.post("/api/documents/upload", headers=ADMIN,
                     files={"file": ("WEB26 _ Event_Network_Requirements_V1.xlsx", records_workbook(), XLSX)})
     assert r.json()["document"]["id"] == created["id"]
+
+
+# --- band dropdown, template locks --------------------------------------------------
+
+
+def test_band_spellings_are_normalised() -> None:
+    from app.records.models import normalise_band
+
+    assert normalise_band("5Ghz") == "5 GHz"
+    assert normalise_band("5 ghz") == "5 GHz"
+    assert normalise_band("5GHz & 6GHz") == "5 GHz & 6 GHz"
+    assert normalise_band("6 Ghz") == "6 GHz"
+    assert normalise_band("2.4 GHz") == "2.4 GHz"
+
+
+def test_band_must_be_an_option(client: TestClient, event: int) -> None:
+    rec = _records(client, event, "wifi")[0]
+    url = f"/api/events/{event}/records/wifi/{rec['id']}"
+    r = client.patch(url, headers=ADMIN, json={"revision": rec["revision"], "data": {"band": "2.4 GHz"}})
+    assert r.status_code == 422 and "5 GHz & 6 GHz or 5 GHz" in r.text
+    r = client.patch(url, headers=ADMIN, json={"revision": rec["revision"], "data": {"band": "5GHz & 6GHz"}})
+    assert r.status_code == 200 and r.json()["data"]["band"] == "5 GHz & 6 GHz"
+    # an older value outside the options doesn't block editing other fields
+    conn = db.connect(client.settings.db_path)
+    with conn:
+        conn.execute("UPDATE records SET data = json_set(data, '$.band', '6 GHz') WHERE id = ?", (rec["id"],))
+    conn.close()
+    rec = next(r for r in _records(client, event, "wifi") if r["id"] == rec["id"])
+    r = client.patch(url, headers=ADMIN, json={"revision": rec["revision"], "data": {"ssid": "Renamed"}})
+    assert r.status_code == 200 and r.json()["data"]["band"] == "6 GHz"
+
+
+def test_templates_keep_points_at_zero_and_notes_empty(client: TestClient, event: int) -> None:
+    assert any(r["data"].get("notes") for r in _records(client, event, "ethernet"))
+    tpl = _save_template(client, event).json()["id"]
+    recs = _records(client, tpl, "ethernet")
+    assert all(r["data"]["ports"] == 0 and "notes" not in r["data"] for r in recs)
+    url = f"/api/events/{tpl}/records/ethernet/{recs[0]['id']}"
+    rev = recs[0]["revision"]
+    assert client.patch(url, headers=ADMIN, json={"revision": rev, "data": {"ports": 3}}).status_code == 422
+    assert client.patch(url, headers=ADMIN, json={"revision": rev, "data": {"notes": "x"}}).status_code == 422
+    r = client.patch(url, headers=ADMIN, json={"revision": rev, "data": {"purpose": "Desk"}})
+    assert r.status_code == 200 and r.json()["data"]["ports"] == 0
+    ov = client.get(f"/api/events/{tpl}/overview", headers=ADMIN).json()
+    section = next(g for g in ov["groups"] if g["kind"] == "ethernet")
+    r = client.post(f"/api/events/{tpl}/records/ethernet", headers=ADMIN,
+                    json={"venue_id": ov["venues"][0]["id"], "group_id": section["id"], "data": {"purpose": "New"}})
+    assert r.status_code == 201 and r.json()["data"]["ports"] == 0
+    r = client.post(f"/api/events/{tpl}/records/ethernet", headers=ADMIN,
+                    json={"venue_id": ov["venues"][0]["id"], "group_id": section["id"], "data": {"ports": 4}})
+    assert r.status_code == 422
+    # events made from the template can set points and notes
+    doc = _new_event(client, "LIS27", template_id=tpl).json()["id"]
+    rec = _records(client, doc, "ethernet")[0]
+    r = client.patch(f"/api/events/{doc}/records/ethernet/{rec['id']}", headers=ADMIN,
+                     json={"revision": rec["revision"], "data": {"ports": 3, "notes": "two desks"}})
+    assert r.status_code == 200

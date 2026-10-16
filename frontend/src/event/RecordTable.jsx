@@ -200,6 +200,7 @@ export default function RecordTable({ type, api, overview, isAdmin, notify, onCh
 
   const visible = records.filter((r) => (!groupKind || archivedMode || r.venue_id === venueId) && matches(r, search))
   const canEdit = isAdmin && !archivedMode
+  const isTemplate = overview.document.kind === 'template'
   const totalCol = columns.find((c) => c.total)
   const sum = (rows) => rows.reduce((t, r) => t + (Number(r.data[totalCol?.field]) || 0), 0)
 
@@ -215,6 +216,7 @@ export default function RecordTable({ type, api, overview, isAdmin, notify, onCh
       )
     }
     let content = show(col, record.data[col.field])
+    const editable = canEdit && !(isTemplate && col.templateLocked)
     if (col.kind === 'secret') {
       const shown = revealed[record.id]
       content = record.has_password ? (
@@ -227,9 +229,9 @@ export default function RecordTable({ type, api, overview, isAdmin, notify, onCh
       ) : ''
     }
     return (
-      <td key={col.field} className={`rec-cell${col.kind === 'number' ? ' num' : ''}${canEdit ? ' editable' : ''}`}
-        onClick={() => canEdit && setEditing({ id: record.id, field: col.field })}
-        title={canEdit ? 'Click to edit' : undefined}>
+      <td key={col.field} className={`rec-cell${col.kind === 'number' ? ' num' : ''}${editable ? ' editable' : ''}`}
+        onClick={() => editable && setEditing({ id: record.id, field: col.field })}
+        title={editable ? 'Click to edit' : isTemplate && col.templateLocked && canEdit ? 'Always empty or 0 in templates; set it on the event' : undefined}>
         {content}
       </td>
     )

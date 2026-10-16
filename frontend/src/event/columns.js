@@ -1,5 +1,6 @@
 // Column definitions for each record type. kind:
 //   text | number | choice (fixed options) | list (event list kinds) | secret (Wi-Fi password)
+// Older values outside a choice's options (e.g. Band '6 GHz') stay until changed.
 
 export const COLUMNS = {
   wifi: [
@@ -9,7 +10,7 @@ export const COLUMNS = {
     { field: 'password_required', label: 'Password?', kind: 'choice', options: ['yes', 'no', 'open network'], width: 110 },
     { field: 'broadcast', label: 'Broadcast?', kind: 'choice', options: ['yes', 'no'], width: 95 },
     { field: 'vlan', label: 'VLAN', kind: 'list', lists: ['vlan'], width: 170 },
-    { field: 'band', label: 'Band', kind: 'text', width: 110 },
+    { field: 'band', label: 'Band', kind: 'choice', options: ['5 GHz & 6 GHz', '5 GHz'], width: 120 },
     { field: 'password', label: 'Password value', kind: 'secret', width: 170 },
     { field: 'purpose', label: 'Purpose', kind: 'text', width: 230 },
   ],
@@ -21,8 +22,9 @@ export const COLUMNS = {
     { field: 'bandwidth_ns', label: 'Bandwidth N–S', kind: 'text', width: 105 },
     { field: 'bandwidth_ew', label: 'Bandwidth E–W', kind: 'text', width: 105 },
     { field: 'capacity', label: 'Capacity', kind: 'text', width: 80 },
-    { field: 'ports', label: 'Ethernet points', kind: 'number', width: 90, total: true },
-    { field: 'notes', label: 'Notes', kind: 'text', width: 300 },
+    // templateLocked: always 0 / empty in templates (set on the event instead)
+    { field: 'ports', label: 'Ethernet points', kind: 'number', width: 90, total: true, templateLocked: true },
+    { field: 'notes', label: 'Notes', kind: 'text', width: 300, templateLocked: true },
   ],
   partner: [
     { field: 'partner', label: 'Partner & Exhibitor', kind: 'text', width: 230 },

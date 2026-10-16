@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from . import store
 from .models import (
-    GROUP_KIND, LABELS, LIST_FIELDS, SECRET_FIELDS, TYPE_LABELS, VENUE_TYPES, validate_data,
+    BAND_OPTIONS, GROUP_KIND, LABELS, LIST_FIELDS, SECRET_FIELDS, TYPE_LABELS, VENUE_TYPES, validate_data,
 )
 
 
@@ -58,6 +58,29 @@ def _check_lists(conn: sqlite3.Connection, doc: int, record_type: str, data: dic
             raise RecordError(422, f"'{value}' is not in the {names} list. Add it under Lists first.")
 
 
+def _is_template(conn: sqlite3.Connection, doc: int) -> bool:
+    row = conn.execute("SELECT kind FROM documents WHERE id = ?", (doc,)).fetchone()
+    return row is not None and row["kind"] == "template"
+
+
+def _check_rules(conn: sqlite3.Connection, doc: int, record_type: str, data: dict[str, Any],
+                 fields: set[str] | None = None) -> None:
+    """Field rules beyond the schema, for new values only (fields=None: all fields).
+
+    Band: one of BAND_OPTIONS. Templates: Ethernet points stay 0 and notes stay empty.
+    """
+    def changing(field: str) -> bool:
+        return fields is None or field in fields
+
+    if record_type == "wifi" and changing("band") and data.get("band") not in (None, *BAND_OPTIONS):
+        raise RecordError(422, f"Band must be {' or '.join(BAND_OPTIONS)}")
+    if record_type == "ethernet" and _is_template(conn, doc):
+        if changing("ports") and data.get("ports") not in (None, 0):
+            raise RecordError(422, "Templates always have 0 Ethernet points. Set the points on the event.")
+        if changing("notes") and data.get("notes"):
+            raise RecordError(422, "Notes stay empty in templates. Add notes on the event.")
+
+
 def _validate(record_type: str, data: dict[str, Any]) -> dict[str, Any]:
     try:
         return validate_data(record_type, data)
@@ -101,6 +124,9 @@ def create_record(conn: sqlite3.Connection, doc: int, record_type: str, *, venue
     data = _validate(record_type, data)
     _place(conn, doc, record_type, venue_id, group_id)
     _check_lists(conn, doc, record_type, data)
+    _check_rules(conn, doc, record_type, data)
+    if record_type == "ethernet" and _is_template(conn, doc):
+        data["ports"] = 0
     with conn:
         sort = _sort_before(conn, doc, record_type, venue_id, group_id, before_id)
         record_id = store.insert_record(conn, doc=doc, record_type=record_type, venue_id=venue_id,
@@ -141,6 +167,7 @@ def update_record(conn: sqlite3.Connection, doc: int, record_type: str, record_i
     if not changed:
         return record
     _check_lists(conn, doc, record_type, data, changed)
+    _check_rules(conn, doc, record_type, data, changed & set(changes))  # only what the user sent
     secrets = SECRET_FIELDS.get(record_type, frozenset())
     with conn:
         if not store.update_record(conn, record_id=record_id, expected_revision=revision, user=user, data=data):
@@ -436,12 +463,14 @@ DEFAULT_GROUPS = {
 
 
 def _template_data(record: dict[str, Any]) -> dict[str, Any] | None:
-    """A record as kept in a template: no partner orders, 0 Ethernet points, no Wi-Fi passwords."""
+    """A record as kept in a template: no partner orders, Ethernet points 0 and notes empty,
+    no Wi-Fi passwords."""
     if record["type"] == "partner":
         return None
     data = dict(record["data"])
     if record["type"] == "ethernet":
         data["ports"] = 0
+        data.pop("notes", None)
     for field in SECRET_FIELDS.get(record["type"], ()):
         data.pop(field, None)
     return data
@@ -523,5 +552,5 @@ def save_template(conn: sqlite3.Connection, name: str, *, user: str, event_id: i
         copied = _copy_event(conn, event_id, doc, user=user, as_template=True)
         store.log(conn, doc=doc, entity="event", action="create", user=user,
                   summary=f"Created the template from {event['name']} ({copied} requirement(s); Ethernet points "
-                          "set to 0, partner orders and Wi-Fi passwords left out)")
+                          "set to 0, Ethernet notes, partner orders and Wi-Fi passwords left out)")
     return doc

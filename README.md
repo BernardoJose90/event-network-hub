@@ -119,6 +119,7 @@ backend/app/
   - **+ Add** per section, move up and down, search.
   - **Archive** hides an item from lists, totals and published versions. Archived items can be restored, or deleted permanently.
   - Wi-Fi passwords are masked until **Reveal**, and every reveal is logged.
+  - Wi-Fi **Band** is a dropdown: "5 GHz & 6 GHz" or "5 GHz". Other spellings ("5Ghz", "5 ghz") are normalised; an older value outside the options (e.g. "6 GHz") is kept until someone changes it.
 - **VLAN extensions:** a tick matrix per venue.
 - **Lists:** venues, Ethernet sections, Wi-Fi groups, VLANs, locations, buildings, bandwidths. A value in use can't be removed, and renaming a value updates every record that uses it.
 - **History:** every change is recorded automatically (who, when, old → new), so nobody keeps a change log by hand. Password values are never logged. An imported workbook's old "Changes - Log" appears here as legacy entries.
@@ -129,7 +130,7 @@ Viewers see the same pages read-only. Editing and publishing are for network adm
 - **Empty:** one venue ("Main venue"), the usual Wi-Fi groups and Ethernet sections, and empty lists; or
 - **a template** (e.g. LIS, QATAR, RIO, VAN): the new event gets a copy of everything in it. Later changes to the template don't affect events already created.
 
-**Templates** are made with **Save as template** on an event's requirements page. A template keeps the event's venues, sections, lists, Wi-Fi networks, Ethernet items and VLAN extensions, with **every Ethernet point set to 0**, **no partner orders** and **no Wi-Fi passwords**. Templates are stored in the app (documents with `kind = 'template'`), not in `samples/`. They aren't in the documents list, have no versions and can't be published. Admins open or delete them under **Templates** in the sidebar, and edit them on the same requirements page.
+**Templates** are made with **Save as template** on an event's requirements page. A template keeps the event's venues, sections, lists, Wi-Fi networks, Ethernet items and VLAN extensions, with **every Ethernet point set to 0**, **Ethernet notes empty**, **no partner orders** and **no Wi-Fi passwords**. In a template, Ethernet points and notes can't be changed (they're set on the event). Templates are stored in the app (documents with `kind = 'template'`), not in `samples/`. They aren't in the documents list, have no versions and can't be published. Admins open or delete them under **Templates** in the sidebar, and edit them on the same requirements page.
 
 The event has no versions until the first **Publish**, which creates V1. Uploading a workbook for the same event code later adds a version to the same document.
 

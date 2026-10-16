@@ -7,6 +7,7 @@ checked against the event's managed lists in service.py.
 
 from __future__ import annotations
 
+import re
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -23,6 +24,18 @@ GroupKind = Literal["wifi", "ethernet"]
 # Which record types live inside a venue and a group (section).
 VENUE_TYPES = frozenset({"wifi", "ethernet"})
 GROUP_KIND = {"wifi": "wifi", "ethernet": "ethernet"}
+
+
+# Wi-Fi band dropdown. Older values outside these (e.g. "6 GHz") are kept until changed.
+BAND_OPTIONS = ("5 GHz & 6 GHz", "5 GHz")
+_BAND_SPELLINGS = {"5ghz": "5 GHz", "6ghz": "6 GHz", "5ghz&6ghz": "5 GHz & 6 GHz", "6ghz&5ghz": "5 GHz & 6 GHz"}
+
+
+def normalise_band(value: str | None) -> str | None:
+    """'5Ghz', '5 ghz' -> '5 GHz'; '5GHz & 6GHz' -> '5 GHz & 6 GHz'; anything else unchanged."""
+    if not value:
+        return value
+    return _BAND_SPELLINGS.get(re.sub(r"\s+", "", value).lower().replace("and", "&"), value)
 
 
 class _Data(BaseModel):
@@ -44,9 +57,14 @@ class WifiData(_Data):
     password_required: Literal["yes", "no", "open network"] | None = None
     broadcast: Literal["yes", "no"] | None = None
     vlan: Text = None  # from the VLAN list
-    band: Text = None
+    band: Text = None  # BAND_OPTIONS for new values; checked in service.py
     password: Text = None  # never returned by list endpoints; see /reveal
     purpose: Text = None
+
+    @field_validator("band")
+    @classmethod
+    def _band_spelling(cls, v: str | None) -> str | None:
+        return normalise_band(v)
 
 
 class EthernetData(_Data):

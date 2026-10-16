@@ -146,7 +146,11 @@ export default function EventPage({ documentId }) {
             <button key={key} className={view === key ? 'active' : ''} onClick={() => goTo(key)}
               disabled={!overview.has_records && overview.venues.length === 0 && key !== 'overview' && key !== 'history'}>
               {label}
-              {key in (overview.counts || {}) && <span className="nav-count">{overview.counts[key]}</span>}
+              {key === 'ethernet' ? (
+                <span className="nav-count" title="Ethernet points">{overview.totals.ethernet.reduce((sum, t) => sum + t.total, 0)}</span>
+              ) : (
+                key in (overview.counts || {}) && <span className="nav-count">{overview.counts[key]}</span>
+              )}
               {key === 'lists' && overview.flagged_list_values > 0 && <span className="nav-flag">{overview.flagged_list_values}</span>}
             </button>
           ))}

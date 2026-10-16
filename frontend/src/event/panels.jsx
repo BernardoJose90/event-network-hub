@@ -80,6 +80,7 @@ export function Overview({ overview, api, isAdmin, notify, onChanged, onPublish,
   const isTemplate = overview.document.kind === 'template'
   const sections = overview.totals.ethernet[0]?.sections.map((s) => s.section) || []
   const count = (type) => overview.counts[type] || 0
+  const totalPoints = overview.totals.ethernet.reduce((sum, t) => sum + t.total, 0)
   return (
     <div className="ov">
       <div className="ov-cards">
@@ -92,7 +93,15 @@ export function Overview({ overview, api, isAdmin, notify, onChanged, onPublish,
         {['wifi', 'ethernet', 'partner', 'vlan_extension'].filter((t) => !(isTemplate && t === 'partner')).map((type) => (
           <button key={type} className="panel ov-card link-card" onClick={() => goTo(type)}>
             <h3>{TITLES[type]}</h3>
-            <p><strong>{count(type)}</strong>{overview.archived?.[type] ? <span className="muted"> · {overview.archived[type]} archived</span> : null}</p>
+            {type === 'ethernet' ? (
+              <p>
+                <strong>{totalPoints}</strong> points
+                <span className="muted small"> · {count(type)} item{count(type) === 1 ? '' : 's'}</span>
+                {overview.archived?.[type] ? <span className="muted small"> · {overview.archived[type]} archived</span> : null}
+              </p>
+            ) : (
+              <p><strong>{count(type)}</strong>{overview.archived?.[type] ? <span className="muted"> · {overview.archived[type]} archived</span> : null}</p>
+            )}
           </button>
         ))}
       </div>

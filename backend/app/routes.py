@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from . import db
-from .auth import Principal, current_principal, require_known_role
+from .auth import Principal, current_principal, require_admin, require_known_role
 from .converter import Converter
 from .service import FULL_PDF, upload_version
 from .storage import ObjectNotFound, Storage, version_key
@@ -69,7 +69,8 @@ def list_documents(conn: Conn) -> list[dict[str, Any]]:
 
 
 @router.post("/documents", status_code=status.HTTP_201_CREATED)
-def create_document(body: DocumentCreate, conn: Conn) -> dict[str, Any]:
+def create_document(body: DocumentCreate, conn: Conn, principal: CurrentPrincipal) -> dict[str, Any]:
+    require_admin(principal)
     name = body.name.strip()
     if not name:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Name must not be blank")

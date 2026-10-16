@@ -64,7 +64,7 @@ function IdentityBar({ identity, onChange }) {
   )
 }
 
-function DocumentList({ documents, selectedId, onSelect, onCreated }) {
+function DocumentList({ documents, selectedId, onSelect, onCreated, identity }) {
   const [name, setName] = useState('')
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -74,7 +74,7 @@ function DocumentList({ documents, selectedId, onSelect, onCreated }) {
     setBusy(true)
     setError(null)
     try {
-      const doc = await createDocument(name.trim())
+      const doc = await createDocument(name.trim(), identity)
       setName('')
       onCreated(doc)
     } catch (err) {
@@ -87,19 +87,23 @@ function DocumentList({ documents, selectedId, onSelect, onCreated }) {
   return (
     <aside className="panel sidebar">
       <h2>Documents</h2>
-      <form onSubmit={submit} className="stack">
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="New document name"
-          maxLength={200}
-          required
-        />
-        <button type="submit" disabled={busy || !name.trim()}>
-          Create document
-        </button>
-        {error && <p className="error">{error}</p>}
-      </form>
+      {identity.role === 'network-admin' ? (
+        <form onSubmit={submit} className="stack">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="New document name"
+            maxLength={200}
+            required
+          />
+          <button type="submit" disabled={busy || !name.trim()}>
+            Create document
+          </button>
+          {error && <p className="error">{error}</p>}
+        </form>
+      ) : (
+        <p className="muted small">Only network admins can create documents.</p>
+      )}
       <ul className="doc-list">
         {documents.map((d) => (
           <li key={d.id}>
@@ -299,6 +303,7 @@ export default function App() {
       <IdentityBar identity={identity} onChange={setIdentity} />
       <main className="layout">
         <DocumentList
+          identity={identity}
           documents={documents}
           selectedId={selectedId}
           onSelect={setSelectedId}

@@ -45,3 +45,11 @@ def require_known_role(principal: Principal) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"X-Role must be one of: {', '.join(sorted(KNOWN_ROLES))}",
         )
+
+
+def require_admin(principal: Principal) -> None:
+    if principal.role != ROLE_NETWORK_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only network admins can create documents",
+        )

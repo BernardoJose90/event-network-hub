@@ -56,7 +56,7 @@ for sample in "${samples[@]}"; do
 
   # --- create document + upload ----------------------------------------------
   name="smoke ${base%.xlsx} $(date -u +%Y%m%dT%H%M%SZ)-$$"
-  doc_id="$(curl -fsS -X POST -H 'Content-Type: application/json' \
+  doc_id="$(curl -fsS -X POST -H 'Content-Type: application/json' -H 'X-Role: network-admin' \
     -d "$(jq -n --arg n "$name" '{name: $n}')" "$API/documents" | jq -r '.id')"
 
   code="$(curl -sS -o "$work/upload.json" -w '%{http_code}' -H "X-User: smoke-test" \

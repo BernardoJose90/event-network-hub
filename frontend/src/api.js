@@ -31,11 +31,11 @@ export async function listDocuments() {
   return json(await fetch('/api/documents'))
 }
 
-export async function createDocument(name) {
+export async function createDocument(name, identity) {
   return json(
     await fetch('/api/documents', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...identityHeaders(identity) },
       body: JSON.stringify({ name }),
     }),
   )

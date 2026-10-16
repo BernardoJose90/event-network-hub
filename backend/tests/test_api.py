@@ -35,8 +35,11 @@ def _wb(text: str) -> bytes:
     return xlsx_bytes(build)
 
 
+ADMIN = {"X-Role": "network-admin"}
+
+
 def _doc_with_version(client: TestClient) -> int:
-    doc = client.post("/api/documents", json={"name": "LIS25 Network Requirements"}).json()
+    doc = client.post("/api/documents", json={"name": "LIS25 Network Requirements"}, headers=ADMIN).json()
     r = client.post(
         f"/api/documents/{doc['id']}/versions",
         files={"file": ("lis25.xlsx", _wb("v1"), XLSX)},
@@ -47,12 +50,19 @@ def _doc_with_version(client: TestClient) -> int:
 
 
 def test_duplicate_document_name_conflicts(client: TestClient) -> None:
-    assert client.post("/api/documents", json={"name": "A"}).status_code == 201
-    assert client.post("/api/documents", json={"name": "A"}).status_code == 409
+    assert client.post("/api/documents", json={"name": "A"}, headers=ADMIN).status_code == 201
+    assert client.post("/api/documents", json={"name": "A"}, headers=ADMIN).status_code == 409
+
+
+@pytest.mark.parametrize("headers", [{}, {"X-Role": "viewer"}, {"X-Role": "superuser"}])
+def test_only_admin_can_create_documents(client: TestClient, headers) -> None:
+    r = client.post("/api/documents", json={"name": "A"}, headers=headers)
+    assert r.status_code == 403
+    assert client.get("/api/documents").json() == []
 
 
 def test_upload_rejects_xlsm(client: TestClient) -> None:
-    doc = client.post("/api/documents", json={"name": "A"}).json()
+    doc = client.post("/api/documents", json={"name": "A"}, headers=ADMIN).json()
     r = client.post(f"/api/documents/{doc['id']}/versions",
                     files={"file": ("x.xlsm", _wb("v1"), XLSX)})
     assert r.status_code == 422

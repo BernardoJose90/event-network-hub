@@ -1,0 +1,199 @@
+"""SQLite persistence. All SQL lives in this module."""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+STATUS_PROCESSING = "processing"
+STATUS_READY = "ready"
+STATUS_FAILED = "failed"
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS documents (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL UNIQUE,
+    created_at  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS document_versions (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id  INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    version      INTEGER NOT NULL,
+    sha256       TEXT NOT NULL,
+    uploaded_by  TEXT NOT NULL,
+    uploaded_at  TEXT NOT NULL,
+    status       TEXT NOT NULL CHECK (status IN ('processing', 'ready', 'failed')),
+    warnings     TEXT NOT NULL DEFAULT '[]',
+    error        TEXT,
+    UNIQUE (document_id, version)
+);
+
+CREATE TABLE IF NOT EXISTS download_log (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    version_id     INTEGER NOT NULL REFERENCES document_versions(id) ON DELETE CASCADE,
+    user           TEXT NOT NULL,
+    redacted       INTEGER NOT NULL CHECK (redacted IN (0, 1)),
+    downloaded_at  TEXT NOT NULL
+);
+"""
+
+
+def utcnow() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def connect(path: Path) -> sqlite3.Connection:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path, timeout=30, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 30000")
+    return conn
+
+
+def init_db(path: Path) -> None:
+    conn = connect(path)
+    try:
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.executescript(SCHEMA)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# --- documents --------------------------------------------------------------
+
+
+def create_document(conn: sqlite3.Connection, name: str) -> dict[str, Any]:
+    with conn:
+        cur = conn.execute(
+            "INSERT INTO documents (name, created_at) VALUES (?, ?)", (name, utcnow())
+        )
+    return get_document(conn, cur.lastrowid)  # type: ignore[return-value]
+
+
+def get_document(conn: sqlite3.Connection, document_id: int) -> dict[str, Any] | None:
+    row = conn.execute("SELECT * FROM documents WHERE id = ?", (document_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_documents(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT d.*,
+               (SELECT MAX(version) FROM document_versions v
+                 WHERE v.document_id = d.id AND v.status = 'ready') AS latest_ready_version
+          FROM documents d
+         ORDER BY d.name
+        """
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# --- versions ---------------------------------------------------------------
+
+
+def _version(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    out = dict(row)
+    out["warnings"] = json.loads(out["warnings"])
+    return out
+
+
+def next_version_number(conn: sqlite3.Connection, document_id: int) -> int:
+    row = conn.execute(
+        "SELECT COALESCE(MAX(version), 0) + 1 FROM document_versions WHERE document_id = ?",
+        (document_id,),
+    ).fetchone()
+    return int(row[0])
+
+
+def insert_version(
+    conn: sqlite3.Connection,
+    *,
+    document_id: int,
+    version: int,
+    sha256: str,
+    uploaded_by: str,
+    warnings: list[dict[str, str]],
+) -> dict[str, Any]:
+    """Insert a version row in 'processing' state.
+
+    Raises sqlite3.IntegrityError if ``version`` is already taken for this document.
+    """
+    with conn:
+        cur = conn.execute(
+            """
+            INSERT INTO document_versions
+                (document_id, version, sha256, uploaded_by, uploaded_at, status, warnings)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (document_id, version, sha256, uploaded_by, utcnow(), STATUS_PROCESSING,
+             json.dumps(warnings)),
+        )
+    return get_version_by_id(conn, cur.lastrowid)  # type: ignore[return-value]
+
+
+def set_version_status(
+    conn: sqlite3.Connection, version_id: int, status: str, error: str | None = None
+) -> None:
+    with conn:
+        conn.execute(
+            "UPDATE document_versions SET status = ?, error = ? WHERE id = ?",
+            (status, error, version_id),
+        )
+
+
+def get_version_by_id(conn: sqlite3.Connection, version_id: int) -> dict[str, Any] | None:
+    return _version(
+        conn.execute("SELECT * FROM document_versions WHERE id = ?", (version_id,)).fetchone()
+    )
+
+
+def get_version(conn: sqlite3.Connection, document_id: int, version: int) -> dict[str, Any] | None:
+    return _version(
+        conn.execute(
+            "SELECT * FROM document_versions WHERE document_id = ? AND version = ?",
+            (document_id, version),
+        ).fetchone()
+    )
+
+
+def latest_version(
+    conn: sqlite3.Connection, document_id: int, *, statuses: tuple[str, ...]
+) -> dict[str, Any] | None:
+    placeholders = ",".join("?" for _ in statuses)
+    return _version(
+        conn.execute(
+            f"""
+            SELECT * FROM document_versions
+             WHERE document_id = ? AND status IN ({placeholders})
+             ORDER BY version DESC LIMIT 1
+            """,
+            (document_id, *statuses),
+        ).fetchone()
+    )
+
+
+def list_versions(conn: sqlite3.Connection, document_id: int) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        "SELECT * FROM document_versions WHERE document_id = ? ORDER BY version DESC",
+        (document_id,),
+    ).fetchall()
+    return [_version(r) for r in rows]  # type: ignore[misc]
+
+
+# --- download log -----------------------------------------------------------
+
+
+def log_download(conn: sqlite3.Connection, *, version_id: int, user: str, redacted: bool) -> None:
+    with conn:
+        conn.execute(
+            "INSERT INTO download_log (version_id, user, redacted, downloaded_at) VALUES (?, ?, ?, ?)",
+            (version_id, user, int(redacted), utcnow()),
+        )

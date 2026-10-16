@@ -63,5 +63,6 @@ export function eventApi(documentId, identity) {
     },
     changes: () => call('GET', `${base}/changes`, identity),
     publish: () => call('POST', `${base}/publish`, identity),
+    saveAsTemplate: (name) => call('POST', '/api/templates', identity, { name, event_id: Number(documentId) }),
   }
 }

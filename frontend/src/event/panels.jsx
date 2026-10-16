@@ -77,6 +77,7 @@ export function Overview({ overview, api, isAdmin, notify, onChanged, onPublish,
     )
   }
 
+  const isTemplate = overview.document.kind === 'template'
   const sections = overview.totals.ethernet[0]?.sections.map((s) => s.section) || []
   const count = (type) => overview.counts[type] || 0
   return (
@@ -88,7 +89,7 @@ export function Overview({ overview, api, isAdmin, notify, onChanged, onPublish,
             <p><strong>{t.total}</strong> Ethernet points</p>
           </div>
         ))}
-        {['wifi', 'ethernet', 'partner', 'vlan_extension'].map((type) => (
+        {['wifi', 'ethernet', 'partner', 'vlan_extension'].filter((t) => !(isTemplate && t === 'partner')).map((type) => (
           <button key={type} className="panel ov-card link-card" onClick={() => goTo(type)}>
             <h3>{TITLES[type]}</h3>
             <p><strong>{count(type)}</strong>{overview.archived?.[type] ? <span className="muted"> · {overview.archived[type]} archived</span> : null}</p>
@@ -127,6 +128,16 @@ export function Overview({ overview, api, isAdmin, notify, onChanged, onPublish,
         </table>
       </div>
 
+      {isTemplate ? (
+        <div className="panel">
+          <h3>Template</h3>
+          <p className="muted small">
+            New events can start from this template (&ldquo;+ New event&rdquo; → Start from). They get a copy of everything
+            here; later changes to the template don&apos;t affect events already created. Templates have no partner
+            orders and aren&apos;t published.
+          </p>
+        </div>
+      ) : (
       <div className="panel">
         <div className="row space-between">
           <h3>
@@ -149,6 +160,7 @@ export function Overview({ overview, api, isAdmin, notify, onChanged, onPublish,
           <p className="muted small">Everything is published.</p>
         )}
       </div>
+      )}
 
       {isAdmin && overview.latest_version && (
         <details className="ov-danger">

@@ -81,7 +81,23 @@ export default function EventPage({ documentId }) {
     }
   }
 
-  const back = () => window.location.assign(`/?doc=${documentId}`)
+  async function saveAsTemplate() {
+    const suggested = overview.document.name.split(' | ')[0].replace(/\d+$/, '')
+    const name = window.prompt(
+      'Template name (e.g. LIS). The template keeps the venues, sections, lists, Wi-Fi networks, Ethernet items and VLAN extensions, with Ethernet points set to 0, no partner orders and no Wi-Fi passwords.',
+      suggested,
+    )
+    if (!name) return
+    try {
+      const tpl = await api.saveAsTemplate(name.trim())
+      notify(`Saved as template ${tpl.name}. It's now in "Start from" for new events.`, 'ok')
+    } catch (err) {
+      notify(err.message, 'error')
+    }
+  }
+
+  const isTemplate = overview?.document.kind === 'template'
+  const back = () => window.location.assign(isTemplate ? '/' : `/?doc=${documentId}`)
 
   if (error || !overview) {
     return (
@@ -100,11 +116,16 @@ export default function EventPage({ documentId }) {
       <header className="sheet-bar">
         <button className="secondary" onClick={back}>← Documents</button>
         <strong className="sheet-title">{overview.document.name}</strong>
-        <span className="muted small">Requirements{isAdmin ? '' : ' · read only'}</span>
-        <span className="sheet-status">
-          {overview.unpublished_changes > 0 ? `${overview.unpublished_changes} unpublished change(s)` : overview.has_records ? 'All published' : ''}
+        <span className="muted small">
+          {isTemplate ? <span className="tag">Template</span> : 'Requirements'}{isAdmin ? '' : ' · read only'}
         </span>
-        {isAdmin && overview.has_records && (
+        <span className="sheet-status">
+          {isTemplate ? '' : overview.unpublished_changes > 0 ? `${overview.unpublished_changes} unpublished change(s)` : overview.has_records ? 'All published' : ''}
+        </span>
+        {isAdmin && !isTemplate && overview.has_records && (
+          <button className="secondary" onClick={saveAsTemplate}>Save as template</button>
+        )}
+        {isAdmin && !isTemplate && overview.has_records && (
           <button onClick={publish} disabled={publishing || overview.unpublished_changes === 0}>
             {publishing ? 'Publishing…' : `Publish V${(overview.latest_version || 0) + 1}`}
           </button>
@@ -121,7 +142,7 @@ export default function EventPage({ documentId }) {
       )}
       <div className="event-body">
         <nav className="event-nav" aria-label="Requirements">
-          {VIEWS.map(([key, label]) => (
+          {VIEWS.filter(([key]) => !(isTemplate && key === 'partner')).map(([key, label]) => (
             <button key={key} className={view === key ? 'active' : ''} onClick={() => goTo(key)}
               disabled={!overview.has_records && overview.venues.length === 0 && key !== 'overview' && key !== 'history'}>
               {label}

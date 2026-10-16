@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   createEvent,
   deleteDocument,
+  deleteTemplate,
   downloadFile,
   fetchFile,
   listDocuments,
-  listEvents,
+  listTemplates,
   listVersions,
   uploadDocument,
 } from './api.js'
@@ -131,19 +132,12 @@ function UploadForm({ identity, onCreated }) {
   )
 }
 
-function NewEventForm({ identity }) {
+function NewEventForm({ identity, templates }) {
   const [open, setOpen] = useState(false)
   const [code, setCode] = useState('')
-  const [events, setEvents] = useState([])
-  const [copyFrom, setCopyFrom] = useState('')
-  const [copyRecords, setCopyRecords] = useState(false)
+  const [templateId, setTemplateId] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
-
-  useEffect(() => {
-    if (!open) return
-    listEvents(identity).then(setEvents).catch((err) => setError(err.message))
-  }, [open, identity])
 
   async function submit(e) {
     e.preventDefault()
@@ -151,7 +145,7 @@ function NewEventForm({ identity }) {
     setError(null)
     try {
       const doc = await createEvent(
-        { eventCode: code.trim(), copyFrom: copyFrom ? Number(copyFrom) : null, copyRecords: !!copyFrom && copyRecords },
+        { eventCode: code.trim(), templateId: templateId ? Number(templateId) : null },
         identity,
       )
       window.location.assign(`/event/${doc.id}`)
@@ -172,25 +166,17 @@ function NewEventForm({ identity }) {
       </label>
       <label className="stack-label">
         Start from
-        <select value={copyFrom} onChange={(e) => setCopyFrom(e.target.value)}>
+        <select value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
           <option value="">Empty (one venue, the usual sections)</option>
-          {events.map((ev) => (
-            <option key={ev.id} value={ev.id}>Copy of {ev.name.split(' | ')[0]}</option>
-          ))}
+          {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
         </select>
       </label>
-      {events.length === 0 && (
-        <p className="muted small">No other events to copy from yet. Once events exist, they appear here as &ldquo;Copy of …&rdquo;.</p>
-      )}
-      {copyFrom && (
-        <label className="check">
-          <input type="checkbox" checked={copyRecords} onChange={(e) => setCopyRecords(e.target.checked)} />
-          Also copy its requirements (Wi-Fi, Ethernet, partner orders, VLAN extensions)
-        </label>
+      {templates.length === 0 && (
+        <p className="muted small">No templates yet. Use &ldquo;Save as template&rdquo; on an event&apos;s requirements page.</p>
       )}
       <p className="muted small">
-        {copyFrom
-          ? 'Venues, sections and lists are always copied.'
+        {templateId
+          ? 'Copies the template: venues, sections, lists, Wi-Fi networks, Ethernet items and VLAN extensions.'
           : 'Add venues, sections and list values on the requirements page.'}{' '}
         Publishing creates V1.
       </p>
@@ -203,13 +189,55 @@ function NewEventForm({ identity }) {
   )
 }
 
+function TemplateList({ identity, templates, onChanged }) {
+  const [error, setError] = useState(null)
+
+  async function remove(t) {
+    if (!window.confirm(`Delete the template "${t.name}"?\n\nEvents already created from it are not affected.`)) return
+    setError(null)
+    try {
+      await deleteTemplate(t.id, identity)
+      onChanged()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  return (
+    <details className="templates">
+      <summary className="muted small">Templates ({templates.length})</summary>
+      <ul className="template-list">
+        {templates.map((t) => (
+          <li key={t.id} className="row space-between nowrap">
+            <button className="link" onClick={() => window.location.assign(`/event/${t.id}`)} title="View and edit the template">
+              {t.name}
+            </button>
+            <button className="link danger-link" onClick={() => remove(t)}>Delete</button>
+          </li>
+        ))}
+        {templates.length === 0 && <li className="muted small">None yet. Save an event as a template on its requirements page.</li>}
+      </ul>
+      {error && <p className="error">{error}</p>}
+    </details>
+  )
+}
+
 function DocumentList({ documents, selectedId, viewing, onSelect, onViewVersion, onCreated, identity }) {
+  const [templates, setTemplates] = useState([])
+  const isAdmin = identity.role === 'network-admin'
+  const loadTemplates = useCallback(() => {
+    if (!isAdmin) return
+    listTemplates(identity).then(setTemplates).catch(() => setTemplates([]))
+  }, [identity, isAdmin])
+  useEffect(loadTemplates, [loadTemplates])
+
   return (
     <aside className="panel sidebar">
       <h2>Documents</h2>
-      {identity.role === 'network-admin' && (
+      {isAdmin && (
         <div className="stack">
-          <NewEventForm identity={identity} />
+          <NewEventForm identity={identity} templates={templates} />
+          <TemplateList identity={identity} templates={templates} onChanged={loadTemplates} />
           <details className="legacy-upload">
             <summary className="muted small">Legacy: upload a workbook</summary>
             <UploadForm identity={identity} onCreated={onCreated} />

@@ -1137,3 +1137,29 @@ button.link:hover:not(:disabled) {
   cursor: pointer;
   margin-bottom: 8px;
 }
+
+.template-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.templates summary {
+  cursor: pointer;
+}
+
+.danger-link {
+  color: var(--danger, #b42318);
+}
+
+.tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  background: var(--accent-soft, #e8efff);
+  color: var(--accent, #1d4ed8);
+  font-weight: 600;
+}

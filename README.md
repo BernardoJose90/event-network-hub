@@ -125,9 +125,11 @@ backend/app/
 
 Viewers see the same pages read-only. Editing and publishing are for network admins. Each record has a revision, so concurrent edits get "X changed this record, reload" instead of overwriting each other.
 
-**Getting started:** network admins click **+ New event** on the documents page and enter an event code (e.g. `WEB26`). No workbook is needed. The event can start:
-- **empty**, with one venue ("Main venue"), the usual Wi-Fi groups and Ethernet sections, and empty lists; or
-- **as a copy of another event**, which copies its venues, groups, sections and lists. Tick the box to copy its active requirements too (archived ones are left out). The copy is independent of the original.
+**Getting started:** network admins click **+ New event** on the documents page and enter an event code (e.g. `WEB26`). No workbook is needed. **Start from**:
+- **Empty:** one venue ("Main venue"), the usual Wi-Fi groups and Ethernet sections, and empty lists; or
+- **a template** (e.g. LIS, QATAR, RIO, VAN): the new event gets a copy of everything in it. Later changes to the template don't affect events already created.
+
+**Templates** are made with **Save as template** on an event's requirements page. A template keeps the event's venues, sections, lists, Wi-Fi networks, Ethernet items and VLAN extensions, with **every Ethernet point set to 0**, **no partner orders** and **no Wi-Fi passwords**. Templates are stored in the app (documents with `kind = 'template'`), not in `samples/`. They aren't in the documents list, have no versions and can't be published. Admins open or delete them under **Templates** in the sidebar, and edit them on the same requirements page.
 
 The event has no versions until the first **Publish**, which creates V1. Uploading a workbook for the same event code later adds a version to the same document.
 
@@ -147,8 +149,9 @@ Code: `backend/app/records/` (models, store, service, importer, publish, routes)
 
 | Method | Path | Notes |
 |--------|------|-------|
-| GET | `/api/events` | events with requirements set up (to copy from) |
-| POST | `/api/events` | `{event_code, copy_from?, copy_records?}`; admin; 409 if the event exists |
+| POST | `/api/events` | `{event_code, template_id?}`; admin; 409 if the event exists |
+| GET/POST | `/api/templates` | POST `{name, event_id}`: save an event as a template; admin |
+| DELETE | `/api/templates/{id}` | admin; events created from it are kept |
 | GET | `/api/events/{id}/overview` | totals, counts, lists, unpublished changes |
 | POST | `/api/events/{id}/import` | `{replace}`; from the latest ready version |
 | GET/POST | `/api/events/{id}/records/{type}` | type: `wifi`, `ethernet`, `partner`, `vlan_extension`; `?archived=true` |

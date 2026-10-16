@@ -58,20 +58,26 @@ export async function uploadDocument(file, identity) {
   )
 }
 
-// Events with requirements set up, to copy from when creating a new event.
-export async function listEvents(identity) {
-  return json(await fetch('/api/events', { headers: identityHeaders(identity) }))
+// Event templates, for "Start from" when creating a new event.
+export async function listTemplates(identity) {
+  return json(await fetch('/api/templates', { headers: identityHeaders(identity) }))
 }
 
-// Admin only: create an event without a workbook, empty or copied from another event.
-export async function createEvent({ eventCode, copyFrom, copyRecords }, identity) {
+// Admin only: create an event without a workbook, empty or from a template.
+export async function createEvent({ eventCode, templateId }, identity) {
   return json(
     await fetch('/api/events', {
       method: 'POST',
       headers: { ...identityHeaders(identity), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ event_code: eventCode, copy_from: copyFrom, copy_records: copyRecords }),
+      body: JSON.stringify({ event_code: eventCode, template_id: templateId }),
     }),
   )
+}
+
+// Admin only. Events created from the template are not affected.
+export async function deleteTemplate(templateId, identity) {
+  const res = await fetch(`/api/templates/${templateId}`, { method: 'DELETE', headers: identityHeaders(identity) })
+  if (!res.ok) throw new Error(await errorMessage(res))
 }
 
 // Admin only: deletes the document with all versions, files and download history.

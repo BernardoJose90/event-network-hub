@@ -1,20 +1,32 @@
+/* Colours, type and shapes follow the websummit.com design tokens
+   (brand primary navy, accent pink, secondary teal, Inter). */
 :root {
-  --bg: #f6f7f9;
+  --navy: #0c1439;
+  --navy-soft: #e2e3e7;
+  --pink: #cb1977;
+  --pink-hover: #b80e5a;
+  --pink-soft: #f9e3ef;
+  --teal: #008484;
+  --teal-soft: #e0f0f0;
+  --gradient: linear-gradient(90deg, #de0e7b, #6b4aa4, #00aca8);
+  --bg: #f6f6f7;
   --panel: #ffffff;
-  --text: #1d2330;
-  --muted: #6b7280;
-  --border: #e3e6eb;
-  --accent: #2557d6;
-  --accent-hover: #1d47b3;
-  --ok-bg: #e8f6ee;
-  --ok: #17733d;
-  --info-bg: #eaf1fd;
-  --info: #2557d6;
-  --error-bg: #fdecec;
-  --error: #b42318;
+  --text: #131313;
+  --muted: #646464;
+  --border: #e5e5e5;
+  --accent: var(--pink);
+  --accent-hover: var(--pink-hover);
+  --accent-soft: var(--pink-soft);
+  --ok-bg: #e3f3e8;
+  --ok: #19873d;
+  --info-bg: var(--teal-soft);
+  --info: var(--teal);
+  --error-bg: #fbe7eb;
+  --error: #d5113b;
+  --danger: #d5113b;
   --warn: #a15c07;
-  --radius: 8px;
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --radius: 16px;
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   font-size: 15px;
   color: var(--text);
   background: var(--bg);
@@ -1162,4 +1174,186 @@ button.link:hover:not(:disabled) {
   background: var(--accent-soft, #e8efff);
   color: var(--accent, #1d4ed8);
   font-weight: 600;
+}
+
+/* --- Web Summit look -------------------------------------------------------- */
+
+h1,
+h2,
+h3 {
+  color: var(--navy);
+  font-weight: 700;
+}
+
+button,
+a.button {
+  border-radius: 2rem;
+  padding: 7px 16px;
+  font-weight: 600;
+  transition: background-color 0.15s, color 0.15s, border-color 0.15s;
+}
+
+button.secondary,
+button.danger {
+  padding: 5px 12px;
+}
+
+.rec-actions button {
+  padding: 2px 9px;
+}
+
+button.secondary {
+  color: var(--navy);
+  border-color: var(--navy);
+}
+
+button.secondary:hover:not(:disabled) {
+  background: var(--navy);
+  color: #fff;
+}
+
+/* The main call to action on a page uses the Web Summit gradient. */
+.new-event button[type='submit'],
+.sidebar > .stack > button:first-child,
+.sheet-bar > button:last-child:not(.secondary) {
+  background-image: var(--gradient);
+  border-color: transparent;
+}
+
+.sidebar > .stack > button:first-child:hover:not(:disabled),
+.sheet-bar > button:last-child:not(.secondary):hover:not(:disabled) {
+  background-image: linear-gradient(rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.2)), var(--gradient);
+}
+
+button.link,
+button.link:hover:not(:disabled) {
+  background: none;
+  border-radius: 0;
+  padding: 0 4px;
+  color: var(--teal);
+  font-weight: 500;
+}
+
+button.link.danger-link {
+  color: var(--danger);
+}
+
+input,
+select {
+  border-radius: 8px;
+  border-color: #d9d9d9;
+}
+
+input:focus,
+select:focus,
+button:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 1px;
+}
+
+.panel,
+.rec-panel {
+  border-radius: var(--radius);
+  border-color: var(--border);
+}
+
+/* Navy bars at the top of every page */
+.topbar,
+.sheet-bar,
+.editor-bar {
+  background: var(--navy);
+  color: #fff;
+  border-bottom: 0;
+}
+
+.topbar h1,
+.sheet-bar .sheet-title {
+  color: #fff;
+}
+
+.topbar .identity label,
+.sheet-bar .muted,
+.sheet-bar .sheet-status {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.topbar .badge {
+  color: #ffcc00;
+}
+
+.sheet-bar button.secondary,
+.editor-bar button.secondary {
+  background: transparent;
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+.sheet-bar button.secondary:hover:not(:disabled),
+.editor-bar button.secondary:hover:not(:disabled) {
+  background: #fff;
+  color: var(--navy);
+}
+
+.tag {
+  background: var(--pink-soft);
+  color: var(--pink);
+}
+
+/* Documents sidebar */
+.doc-item {
+  border-radius: 12px;
+}
+
+.doc-item.selected {
+  background: var(--pink-soft);
+  border-color: var(--pink);
+}
+
+.version-item.selected {
+  color: var(--pink);
+}
+
+/* Requirements navigation */
+.event-nav button {
+  border-radius: 10px;
+}
+
+.event-nav button.active {
+  background: var(--pink-soft);
+  color: var(--pink);
+}
+
+.nav-count {
+  color: var(--muted);
+}
+
+.venue-tabs button.active {
+  background: var(--navy);
+  border-color: var(--navy);
+}
+
+/* Record tables: navy headers, teal section rows */
+.rec-table th {
+  background: var(--navy);
+}
+
+tr.rec-group td,
+tr.rec-group.wifi td {
+  background: var(--teal);
+}
+
+.rec-cell.editable:hover {
+  background: var(--teal-soft);
+}
+
+.ov-card strong {
+  color: var(--navy);
+}
+
+.link-card:hover:not(:disabled) {
+  border-color: var(--pink);
+}
+
+.notice {
+  border-radius: 12px;
 }

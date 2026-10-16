@@ -55,7 +55,7 @@ def _check_lists(conn: sqlite3.Connection, doc: int, record_type: str, data: dic
             continue
         if not any(value in allowed.get(k, ()) for k in kinds):
             names = " or ".join(kinds)
-            raise RecordError(422, f"'{value}' is not in the {names} list. Add it under Lists first.")
+            raise RecordError(422, f"'{value}' is not in the {names} list. Add it under Setup first.")
 
 
 def _is_template(conn: sqlite3.Connection, doc: int) -> bool:

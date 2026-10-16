@@ -115,13 +115,13 @@ backend/app/
 - **Overview:** totals per venue and section, counts, list values to review, unpublished changes, and **Publish V<n>** (admins).
 - **Wi-Fi networks, Ethernet requirements, Partner orders:**
   - venue tabs, with section rows showing live subtotals;
-  - click a cell to edit; VLAN and location come from the managed lists; numbers are checked;
+  - click a cell to edit; VLAN and location come from the Setup lists; numbers are checked;
   - **+ Add** per section, move up and down, search.
   - **Archive** hides an item from lists, totals and published versions. Archived items can be restored, or deleted permanently.
   - Wi-Fi passwords are masked until **Reveal**, and every reveal is logged.
   - Wi-Fi **Band** is a dropdown: "5 GHz & 6 GHz" or "5 GHz". Other spellings ("5Ghz", "5 ghz") are normalised; an older value outside the options (e.g. "6 GHz") is kept until someone changes it.
 - **VLAN extensions:** a tick matrix per venue.
-- **Lists:** venues, Ethernet sections, Wi-Fi groups, VLANs, locations, buildings, bandwidths. A value in use can't be removed, and renaming a value updates every record that uses it.
+- **Setup:** venues, Ethernet sections, Wi-Fi groups, VLANs, locations, buildings, bandwidths. A value in use can't be removed, and renaming a value updates every record that uses it.
 - **History:** every change is recorded automatically (who, when, old → new), so nobody keeps a change log by hand. Password values are never logged. An imported workbook's old "Changes - Log" appears here as legacy entries.
 
 Viewers see the same pages read-only. Editing and publishing are for network admins. Each record has a revision, so concurrent edits get "X changed this record, reload" instead of overwriting each other.

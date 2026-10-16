@@ -39,12 +39,12 @@ export function Overview({ overview, api, isAdmin, notify, onChanged, onPublish,
               Set up with {overview.venues.length === 1 ? 'one venue' : `${overview.venues.length} venues`} (
               {overview.venues.map((v) => v.name).join(', ')}).{' '}
               {isAdmin
-                ? 'Add requirements on each tab. VLANs and locations come from Lists, so add those values first. Publishing creates the next version.'
+                ? 'Add requirements on each tab. VLANs and locations come from Setup, so add those values first. Publishing creates the next version.'
                 : 'A network admin is adding the requirements.'}
             </p>
             <div className="row">
               {['wifi', 'ethernet', 'partner', 'vlan_extension', 'lists'].map((key) => (
-                <button key={key} className="secondary" onClick={() => goTo(key)}>{TITLES[key] || 'Lists'}</button>
+                <button key={key} className="secondary" onClick={() => goTo(key)}>{TITLES[key] || 'Setup'}</button>
               ))}
             </div>
           </>
@@ -354,7 +354,7 @@ export function ListsPanel({ api, overview, isAdmin, notify, onChanged }) {
 
 const ENTITY_LABELS = {
   '': 'Everything', wifi: 'Wi-Fi networks', ethernet: 'Ethernet', partner: 'Partner orders',
-  vlan_extension: 'VLAN extensions', list: 'Lists', venue: 'Venues', group: 'Sections', event: 'Imports & publishing',
+  vlan_extension: 'VLAN extensions', list: 'Setup lists', venue: 'Venues', group: 'Sections', event: 'Imports & publishing',
   legacy: 'Old change log (imported)',
 }
 

@@ -14,7 +14,7 @@ const VIEWS = [
   ['ethernet', TITLES.ethernet],
   ['partner', TITLES.partner],
   ['vlan_extension', TITLES.vlan_extension],
-  ['lists', 'Lists'],
+  ['lists', 'Setup'],
   ['history', 'History'],
 ]
 

@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { createDocument, downloadFile, listDocuments, listVersions, uploadVersion } from './api.js'
+import {
+  deleteDocument,
+  downloadFile,
+  listDocuments,
+  listVersions,
+  uploadNewDocument,
+  uploadVersion,
+} from './api.js'
 
 // TEST ONLY: role switcher standing in for real authentication.
 const ROLES = [
@@ -86,19 +93,40 @@ function IdentityBar({ identity, onChange }) {
   )
 }
 
-function DocumentList({ documents, selectedId, onSelect, onCreated, identity }) {
-  const [name, setName] = useState('')
-  const [error, setError] = useState(null)
+function UploadResult({ result }) {
+  const tone = { created: 'ok', unchanged: 'info', failed: 'error' }[result.outcome]
+  return (
+    <div className={`notice ${tone}`}>
+      <p>{result.message}</p>
+      {result.version.warnings.length > 0 && (
+        <>
+          <p className="small">This upload contains formula errors:</p>
+          <Warnings warnings={result.version.warnings} />
+        </>
+      )}
+    </div>
+  )
+}
+
+function NewDocumentForm({ identity, onCreated }) {
+  const inputRef = useRef(null)
+  const [file, setFile] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState(null)
+  const [error, setError] = useState(null)
 
   async function submit(e) {
     e.preventDefault()
+    if (!file) return
     setBusy(true)
+    setResult(null)
     setError(null)
     try {
-      const doc = await createDocument(name.trim(), identity)
-      setName('')
-      onCreated(doc)
+      const res = await uploadNewDocument(file, identity)
+      setResult(res)
+      setFile(null)
+      if (inputRef.current) inputRef.current.value = ''
+      onCreated(res.document)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -107,25 +135,28 @@ function DocumentList({ documents, selectedId, onSelect, onCreated, identity }) 
   }
 
   return (
+    <form onSubmit={submit} className="stack">
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        onChange={(e) => setFile(e.target.files[0] || null)}
+      />
+      <button type="submit" disabled={!file || busy}>
+        {busy ? 'Converting…' : 'Upload new document'}
+      </button>
+      <p className="muted small">The document is named after the file.</p>
+      {error && <p className="error">{error}</p>}
+      {result && <UploadResult result={result} />}
+    </form>
+  )
+}
+
+function DocumentList({ documents, selectedId, onSelect, onCreated, identity }) {
+  return (
     <aside className="panel sidebar">
       <h2>Documents</h2>
-      {identity.role === 'network-admin' ? (
-        <form onSubmit={submit} className="stack">
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="New document name"
-            maxLength={200}
-            required
-          />
-          <button type="submit" disabled={busy || !name.trim()}>
-            Create document
-          </button>
-          {error && <p className="error">{error}</p>}
-        </form>
-      ) : (
-        <p className="muted small">Only network admins can create documents.</p>
-      )}
+      {identity.role === 'network-admin' && <NewDocumentForm identity={identity} onCreated={onCreated} />}
       <ul className="doc-list">
         {documents.map((d) => (
           <li key={d.id}>
@@ -143,6 +174,41 @@ function DocumentList({ documents, selectedId, onSelect, onCreated, identity }) 
         {documents.length === 0 && <li className="muted">No documents yet.</li>}
       </ul>
     </aside>
+  )
+}
+
+function DocumentHeader({ document, identity, onDeleted }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  async function remove() {
+    const ok = window.confirm(
+      `Delete "${document.name}"?\n\nThis permanently removes every version, its PDFs and Excel files, and its download history.`,
+    )
+    if (!ok) return
+    setBusy(true)
+    setError(null)
+    try {
+      await deleteDocument(document.id, identity)
+      onDeleted()
+    } catch (err) {
+      setError(err.message)
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="doc-header">
+      <div className="row space-between">
+        <h2>{document.name}</h2>
+        {identity.role === 'network-admin' && (
+          <button className="danger" onClick={remove} disabled={busy}>
+            {busy ? 'Deleting…' : 'Delete document'}
+          </button>
+        )}
+      </div>
+      {error && <p className="error">{error}</p>}
+    </div>
   )
 }
 
@@ -177,8 +243,6 @@ function UploadForm({ documentId, identity, onUploaded }) {
     }
   }
 
-  const tone = result ? { created: 'ok', unchanged: 'info', failed: 'error' }[result.outcome] : null
-
   return (
     <section className="panel">
       <h3>Upload a new version</h3>
@@ -195,17 +259,7 @@ function UploadForm({ documentId, identity, onUploaded }) {
       </form>
       <p className="muted small">.xlsx only, up to 10 MB. Conversion can take up to 90 seconds.</p>
       {error && <p className="error">{error}</p>}
-      {result && (
-        <div className={`notice ${tone}`}>
-          <p>{result.message}</p>
-          {result.version.warnings.length > 0 && (
-            <>
-              <p className="small">This upload contains formula errors:</p>
-              <Warnings warnings={result.version.warnings} />
-            </>
-          )}
-        </div>
-      )}
+      {result && <UploadResult result={result} />}
     </section>
   )
 }
@@ -355,7 +409,15 @@ export default function App() {
           {error && <p className="error">{error}</p>}
           {selected ? (
             <>
-              <h2>{selected.name}</h2>
+              <DocumentHeader
+                key={selected.id}
+                document={selected}
+                identity={identity}
+                onDeleted={() => {
+                  setSelectedId(null)
+                  refreshDocuments()
+                }}
+              />
               <UploadForm
                 documentId={selected.id}
                 identity={identity}
@@ -367,7 +429,11 @@ export default function App() {
               <VersionTable documentId={selected.id} versions={versions} identity={identity} />
             </>
           ) : (
-            <p className="muted">Create or select a document to get started.</p>
+            <p className="muted">
+              {identity.role === 'network-admin'
+                ? 'Upload a new document or select one to get started.'
+                : 'Select a document to get started.'}
+            </p>
           )}
         </div>
       </main>

@@ -105,6 +105,12 @@ def list_documents(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+def delete_document(conn: sqlite3.Connection, document_id: int) -> None:
+    """Delete a document; its versions and download log rows go with it (ON DELETE CASCADE)."""
+    with conn:
+        conn.execute("DELETE FROM documents WHERE id = ?", (document_id,))
+
+
 # --- versions ---------------------------------------------------------------
 
 

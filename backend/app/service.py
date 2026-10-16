@@ -26,6 +26,10 @@ class VersionAllocationError(RuntimeError):
     pass
 
 
+class DocumentGone(LookupError):
+    """The document was deleted while a version was being uploaded."""
+
+
 @dataclass
 class UploadResult:
     outcome: str  # "created" | "unchanged" | "failed"
@@ -72,6 +76,8 @@ def allocate_version(
                 warnings=warnings,
             )
         except sqlite3.IntegrityError:
+            if db.get_document(conn, document_id) is None:
+                raise DocumentGone(document_id)
             log.info("version %s of document %s already taken (attempt %s), retrying",
                      number, document_id, attempt)
     raise VersionAllocationError("Could not allocate a version number; please retry the upload.")

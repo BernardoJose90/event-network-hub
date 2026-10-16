@@ -7,6 +7,7 @@ implementation can be swapped for S3 without touching them.
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Protocol
@@ -25,9 +26,17 @@ class Storage(Protocol):
 
     def get(self, key: str) -> bytes: ...
 
+    def delete_prefix(self, prefix: str) -> None:
+        """Delete every object whose key starts with ``prefix`` (a "directory", ending in /)."""
+        ...
+
+
+def document_prefix(document_id: int) -> str:
+    return f"documents/{document_id}/"
+
 
 def version_key(document_id: int, version: int, filename: str) -> str:
-    return f"documents/{document_id}/v{version}/{filename}"
+    return f"{document_prefix(document_id)}v{version}/{filename}"
 
 
 class LocalStorage:
@@ -60,3 +69,12 @@ class LocalStorage:
             return self._path(key).read_bytes()
         except FileNotFoundError as exc:
             raise ObjectNotFound(key) from exc
+
+    def delete_prefix(self, prefix: str) -> None:
+        if not prefix.endswith("/"):
+            raise StorageError(f"prefix must end with '/': {prefix!r}")
+        path = self._path(prefix.rstrip("/"))
+        if path == self._root:
+            raise StorageError("refusing to delete the storage root")
+        if path.exists():
+            shutil.rmtree(path)

@@ -5,12 +5,14 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
+from fastapi.responses import JSONResponse
 
 from . import db
 from .config import Settings, load_settings
 from .converter import GotenbergConverter
 from .routes import router
+from .service import DocumentGone
 from .storage import LocalStorage
 
 logging.basicConfig(
@@ -38,6 +40,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="portal-pdf-test", lifespan=lifespan)
     app.include_router(router)
+
+    @app.exception_handler(DocumentGone)
+    async def document_gone(_: Request, __: DocumentGone) -> JSONResponse:
+        return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": "Document not found"})
+
     return app
 
 

@@ -76,6 +76,24 @@ button:disabled {
   cursor: not-allowed;
 }
 
+button.danger {
+  background: #fff;
+  color: var(--error);
+  border-color: var(--error);
+}
+
+button.danger:hover:not(:disabled) {
+  background: var(--error-bg);
+}
+
+.doc-header {
+  margin-bottom: 12px;
+}
+
+.doc-header h2 {
+  margin: 0;
+}
+
 button.secondary {
   background: #fff;
   color: var(--accent);

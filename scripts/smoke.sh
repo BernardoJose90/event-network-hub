@@ -2,12 +2,13 @@
 # End-to-end smoke test against a running stack (docker compose up).
 #
 # For every samples/*.xlsx (directory overridable with SAMPLES_DIR): create a
-# document, upload the file, download the PDF as viewer and as network-admin,
+# document from the file, download the PDF as viewer and as network-admin,
 # then check
 #   a) both roles receive the same PDF
 #   b) pdffonts lists Overpass and does not list DejaVu
 #   c) the PDF page count equals the number of visible sheets
 #   d) the Excel download is byte-identical to the uploaded file
+#   e) deleting the document works and removes its files (this also cleans up)
 #
 # Downloaded PDFs live in a private temp dir that is deleted on exit.
 #
@@ -55,17 +56,17 @@ for sample in "${samples[@]}"; do
   work="$TMP/${base%.xlsx}"
   mkdir -p "$work"
 
-  # --- create document + upload ----------------------------------------------
+  # --- upload as a new document ---------------------------------------------
+  # A unique name keeps repeated runs from colliding with earlier documents.
   name="smoke ${base%.xlsx} $(date -u +%Y%m%dT%H%M%SZ)-$$"
-  doc_id="$(curl -fsS -X POST -H 'Content-Type: application/json' -H 'X-Role: network-admin' \
-    -d "$(jq -n --arg n "$name" '{name: $n}')" "$API/documents" | jq -r '.id')"
-
-  code="$(curl -sS -o "$work/upload.json" -w '%{http_code}' -H "X-User: smoke-test" \
-    -F "file=@$sample;type=$XLSX_TYPE" "$API/documents/$doc_id/versions")"
+  code="$(curl -sS -o "$work/upload.json" -w '%{http_code}' \
+    -H "X-Role: network-admin" -H "X-User: smoke-test" \
+    -F "file=@$sample;type=$XLSX_TYPE" -F "name=$name" "$API/documents/upload")"
   if [ "$code" != "201" ]; then
     fail "upload (HTTP $code): $(jq -r '.message // .detail // "unknown error"' "$work/upload.json" 2>/dev/null)"
     continue
   fi
+  doc_id="$(jq -r '.document.id' "$work/upload.json")"
   version="$(jq -r '.version.version' "$work/upload.json")"
   warnings="$(jq -r '.version.warnings | length' "$work/upload.json")"
   echo "  uploaded as document $doc_id version $version ($warnings formula warning(s))"
@@ -114,6 +115,16 @@ for sample in "${samples[@]}"; do
     pass "d) Excel download is identical to the uploaded file"
   else
     fail "d) Excel download (HTTP $code_x) differs from the uploaded file"
+  fi
+
+  # --- e) delete (also cleans up the smoke document) ---------------------------
+  code_del="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE -H "X-Role: network-admin" \
+    "$API/documents/$doc_id")"
+  code_after="$(download "$doc_id" network-admin "$work/after.pdf")"
+  if [ "$code_del" = "204" ] && [ "$code_after" = "404" ]; then
+    pass "e) document deleted; its files are no longer downloadable"
+  else
+    fail "e) delete returned HTTP $code_del, download afterwards HTTP $code_after (expected 204, 404)"
   fi
 done
 

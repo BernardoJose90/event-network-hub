@@ -1,20 +1,23 @@
 from __future__ import annotations
 
+import logging
 import re
 import sqlite3
 from collections.abc import Iterator
+from pathlib import PurePath
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
 
 from . import db
 from .auth import Principal, current_principal, require_admin, require_known_role
 from .converter import XLSX_MEDIA_TYPE, Converter
-from .service import FULL_PDF, ORIGINAL, upload_version
-from .storage import ObjectNotFound, Storage, version_key
+from .service import FULL_PDF, ORIGINAL, UploadResult, upload_version
+from .storage import ObjectNotFound, Storage, document_prefix, version_key
 from .validation import UploadRejected, validate_upload
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
 
@@ -65,8 +68,43 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-class DocumentCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
+MAX_NAME_LENGTH = 200
+
+
+def _read_validated_upload(request: Request, file: UploadFile) -> bytes:
+    max_bytes = request.app.state.settings.max_upload_bytes
+
+    # Read at most max_bytes + 1 so oversized uploads are rejected without buffering them fully.
+    buf = bytearray()
+    while len(buf) <= max_bytes:
+        chunk = file.file.read(READ_CHUNK)
+        if not chunk:
+            break
+        buf.extend(chunk)
+    data = bytes(buf)
+
+    try:
+        validate_upload(file.filename, data, max_bytes=max_bytes)
+    except UploadRejected as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc))
+    return data
+
+
+def _upload_response(result: UploadResult, document: dict[str, Any]) -> JSONResponse:
+    status_code = {
+        "created": status.HTTP_201_CREATED,
+        "unchanged": status.HTTP_200_OK,
+        "failed": status.HTTP_502_BAD_GATEWAY,
+    }[result.outcome]
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "outcome": result.outcome,
+            "message": result.message,
+            "document": document,
+            "version": result.version,
+        },
+    )
 
 
 @router.get("/documents")
@@ -74,21 +112,65 @@ def list_documents(conn: Conn) -> list[dict[str, Any]]:
     return db.list_documents(conn)
 
 
-@router.post("/documents", status_code=status.HTTP_201_CREATED)
-def create_document(body: DocumentCreate, conn: Conn, principal: CurrentPrincipal) -> dict[str, Any]:
-    require_admin(principal)
-    name = body.name.strip()
-    if not name:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Name must not be blank")
+@router.post("/documents/upload")
+def upload_new_document(
+    request: Request,
+    conn: Conn,
+    principal: CurrentPrincipal,
+    file: Annotated[UploadFile, File()],
+    storage: Annotated[Storage, Depends(get_storage)],
+    converter: Annotated[Converter, Depends(get_converter)],
+    name: Annotated[str | None, Form(max_length=MAX_NAME_LENGTH)] = None,
+) -> JSONResponse:
+    """Create a document from an uploaded workbook, which becomes version 1.
+
+    The document is named after the file (without .xlsx) unless ``name`` is given.
+    """
+    require_admin(principal, "create documents")
+    data = _read_validated_upload(request, file)
+
+    doc_name = (name or "").strip() or PurePath(file.filename or "").stem.strip()
+    if not doc_name:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Document name must not be blank")
+    doc_name = doc_name[:MAX_NAME_LENGTH]
     try:
-        return db.create_document(conn, name)
+        document = db.create_document(conn, doc_name)
     except sqlite3.IntegrityError:
-        raise HTTPException(status.HTTP_409_CONFLICT, f"A document named {name!r} already exists")
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"A document named {doc_name!r} already exists. Upload the file as a new version of it instead.",
+        )
+
+    result = upload_version(
+        conn, storage, converter, document=document, data=data, uploaded_by=principal.user
+    )
+    return _upload_response(result, db.get_document(conn, document["id"]))  # type: ignore[arg-type]
 
 
 @router.get("/documents/{document_id}")
 def get_document(document_id: int, conn: Conn) -> dict[str, Any]:
     return _document_or_404(conn, document_id)
+
+
+@router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_document(
+    document_id: int,
+    conn: Conn,
+    principal: CurrentPrincipal,
+    storage: Annotated[Storage, Depends(get_storage)],
+) -> Response:
+    """Delete a document with all its versions, stored files and download log rows."""
+    require_admin(principal, "delete documents")
+    _document_or_404(conn, document_id)
+    # Database first: once the rows are gone nothing can reference the files, so
+    # a failure while removing files leaves orphans rather than broken links.
+    db.delete_document(conn, document_id)
+    try:
+        storage.delete_prefix(document_prefix(document_id))
+    except Exception:
+        log.exception("document %s deleted but its files could not be removed", document_id)
+    log.info("document %s deleted by %s", document_id, principal.user)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/documents/{document_id}/versions")
@@ -108,38 +190,11 @@ def upload(
     converter: Annotated[Converter, Depends(get_converter)],
 ) -> JSONResponse:
     document = _document_or_404(conn, document_id)
-    max_bytes = request.app.state.settings.max_upload_bytes
-
-    # Read at most max_bytes + 1 so oversized uploads are rejected without buffering them fully.
-    buf = bytearray()
-    while len(buf) <= max_bytes:
-        chunk = file.file.read(READ_CHUNK)
-        if not chunk:
-            break
-        buf.extend(chunk)
-    data = bytes(buf)
-
-    try:
-        validate_upload(file.filename, data, max_bytes=max_bytes)
-    except UploadRejected as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc))
-
+    data = _read_validated_upload(request, file)
     result = upload_version(
         conn, storage, converter, document=document, data=data, uploaded_by=principal.user
     )
-    status_code = {
-        "created": status.HTTP_201_CREATED,
-        "unchanged": status.HTTP_200_OK,
-        "failed": status.HTTP_502_BAD_GATEWAY,
-    }[result.outcome]
-    return JSONResponse(
-        status_code=status_code,
-        content={
-            "outcome": result.outcome,
-            "message": result.message,
-            "version": result.version,
-        },
-    )
+    return _upload_response(result, db.get_document(conn, document_id))  # type: ignore[arg-type]
 
 
 def _safe_filename(name: str) -> str:

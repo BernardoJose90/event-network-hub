@@ -130,3 +130,11 @@ def test_warnings_are_stored_on_version(conn, storage, converter: FakeConverter,
 
     result = _upload(conn, storage, converter, document, xlsx_bytes(build))
     assert result.version["warnings"] == [{"sheet": "Sheet1", "cell": "B2", "error": "#REF!"}]
+
+
+def test_document_deleted_during_upload(conn, storage, converter, document, monkeypatch) -> None:
+    db.delete_document(conn, document["id"])
+    monkeypatch.setattr(service, "find_duplicate", lambda *a: None)
+
+    with pytest.raises(service.DocumentGone):
+        _upload(conn, storage, converter, document, _wb("v1"))

@@ -43,12 +43,13 @@ mkdir -p samples && cp /path/to/your/workbook.xlsx samples/
 scripts/smoke.sh
 ```
 
-For each `samples/*.xlsx`, the script creates a document, uploads the file, downloads the PDF as each role and prints PASS/FAIL for each check:
+For each `samples/*.xlsx`, the script uploads the file as a new document, downloads the PDF as each role and prints PASS/FAIL for each check:
 
 - **a)** viewer and network-admin receive the same PDF;
 - **b)** `pdffonts` lists Overpass and does not list DejaVu;
 - **c)** the page count equals the number of visible sheets;
-- **d)** the Excel download is byte-identical to the uploaded file.
+- **d)** the Excel download is byte-identical to the uploaded file;
+- **e)** deleting the document works and removes its files. This also cleans up, so smoke runs leave no documents behind.
 
 > `samples/`, `*.xlsx` and `*.pdf` are git-ignored, because sample workbooks can contain credentials. The smoke script keeps its downloads in a private temp dir that is deleted on exit.
 
@@ -86,7 +87,8 @@ backend/app/
 | Method | Path                                          | Notes                                                     |
 |--------|-----------------------------------------------|-----------------------------------------------------------|
 | GET    | `/api/documents`                              |                                                           |
-| POST   | `/api/documents`                              | `{"name": "..."}`. Needs `X-Role: network-admin`          |
+| POST   | `/api/documents/upload`                       | multipart `file` (+ optional `name`). Needs `X-Role: network-admin`. Creates a document named after the file with the file as v1; 409 if the name exists |
+| DELETE | `/api/documents/{id}`                         | Needs `X-Role: network-admin`. Removes the document, all versions, stored files and download log rows. 204 |
 | GET    | `/api/documents/{id}/versions`                |                                                           |
 | POST   | `/api/documents/{id}/versions`                | multipart `file`. 201 created, 200 unchanged, 422 invalid, 502 conversion failed |
 | GET    | `/api/documents/{id}/download[?version=N][&format=pdf\|xlsx]` | needs `X-Role` (`viewer` or `network-admin`). `pdf` (default) is the converted PDF, `xlsx` the original upload |

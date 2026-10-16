@@ -31,14 +31,35 @@ export async function listDocuments() {
   return json(await fetch('/api/documents'))
 }
 
-export async function createDocument(name, identity) {
-  return json(
-    await fetch('/api/documents', {
+async function uploadResult(res) {
+  // created / unchanged / failed (502) all carry an upload result body.
+  if (res.ok || res.status === 502) {
+    const body = await res.json().catch(() => null)
+    if (body && body.outcome) return body
+  }
+  throw new Error(await errorMessage(res))
+}
+
+// Admin only: creates a document named after the file, with the file as version 1.
+export async function uploadNewDocument(file, identity) {
+  const form = new FormData()
+  form.append('file', file)
+  return uploadResult(
+    await fetch('/api/documents/upload', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...identityHeaders(identity) },
-      body: JSON.stringify({ name }),
+      headers: identityHeaders(identity),
+      body: form,
     }),
   )
+}
+
+// Admin only: deletes the document with all versions, files and download history.
+export async function deleteDocument(documentId, identity) {
+  const res = await fetch(`/api/documents/${documentId}`, {
+    method: 'DELETE',
+    headers: identityHeaders(identity),
+  })
+  if (!res.ok) throw new Error(await errorMessage(res))
 }
 
 export async function listVersions(documentId) {
@@ -50,16 +71,13 @@ export async function listVersions(documentId) {
 export async function uploadVersion(documentId, file, identity) {
   const form = new FormData()
   form.append('file', file)
-  const res = await fetch(`/api/documents/${documentId}/versions`, {
-    method: 'POST',
-    headers: identityHeaders(identity),
-    body: form,
-  })
-  if (res.ok || res.status === 502) {
-    const body = await res.json().catch(() => null)
-    if (body && body.outcome) return body
-  }
-  throw new Error(await errorMessage(res))
+  return uploadResult(
+    await fetch(`/api/documents/${documentId}/versions`, {
+      method: 'POST',
+      headers: identityHeaders(identity),
+      body: form,
+    }),
+  )
 }
 
 function filenameFrom(res, fallback) {

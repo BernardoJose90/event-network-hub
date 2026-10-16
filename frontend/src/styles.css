@@ -1357,3 +1357,20 @@ tr.rec-group.wifi td {
 .notice {
   border-radius: 12px;
 }
+
+/* Web Summit mark (from websummit.com, used unaltered) */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-mark {
+  height: 28px;
+  width: auto;
+  display: block;
+}
+
+.sheet-bar .brand-mark {
+  height: 24px;
+}

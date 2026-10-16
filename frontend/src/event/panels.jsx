@@ -87,7 +87,7 @@ export function Overview({ overview, api, isAdmin, notify, onChanged, onPublish,
         {overview.totals.ethernet.map((t) => (
           <div key={t.venue_id} className="panel ov-card">
             <h3>{t.venue}</h3>
-            <p><strong>{t.total}</strong> Ethernet points</p>
+            <p><strong>{t.total}</strong> <span className="small">Ethernet points</span></p>
           </div>
         ))}
         {['wifi', 'ethernet', 'partner', 'vlan_extension'].filter((t) => !(isTemplate && t === 'partner')).map((type) => (

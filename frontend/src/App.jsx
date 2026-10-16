@@ -40,7 +40,10 @@ function Warnings({ warnings }) {
 function IdentityBar({ identity, onChange }) {
   return (
     <header className="topbar">
-      <h1>Portal PDF Test</h1>
+      <h1 className="brand">
+        <img src="/websummit-mark.png" alt="Web Summit" className="brand-mark" />
+        Portal PDF Test
+      </h1>
       <div className="identity">
         <span className="badge" title="Fake identity for local testing; replaced by real auth in production">
           TEST ONLY

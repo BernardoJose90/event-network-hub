@@ -114,6 +114,7 @@ export default function EventPage({ documentId }) {
   return (
     <div className="event-page">
       <header className="sheet-bar">
+        <img src="/websummit-mark.png" alt="Web Summit" className="brand-mark" />
         <button className="secondary" onClick={back}>← Documents</button>
         <strong className="sheet-title">{overview.document.name}</strong>
         <span className="muted small">

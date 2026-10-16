@@ -42,7 +42,7 @@ function IdentityBar({ identity, onChange }) {
     <header className="topbar">
       <h1 className="brand">
         <img src="/websummit-mark.png" alt="Web Summit" className="brand-mark" />
-        Portal PDF Test
+        Event Network Hub
       </h1>
       <div className="identity">
         <span className="badge" title="Fake identity for local testing; replaced by real auth in production">

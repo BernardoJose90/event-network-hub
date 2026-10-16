@@ -62,7 +62,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             converter.close()
 
-    app = FastAPI(title="portal-pdf-test", lifespan=lifespan)
+    app = FastAPI(title="Event Network Hub", lifespan=lifespan)
     app.include_router(router)
     app.include_router(wopi_router)
     app.include_router(sheet_router)

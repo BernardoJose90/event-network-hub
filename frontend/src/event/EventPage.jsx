@@ -35,7 +35,7 @@ export default function EventPage({ documentId }) {
     try {
       const ov = await api.overview()
       setOverview(ov)
-      document.title = `${ov.document.name} · requirements`
+      document.title = `${ov.document.name} · Event Network Hub`
     } catch (err) {
       setError(err.status === 403 ? 'Choose a role on the documents page first.' : err.message)
     }

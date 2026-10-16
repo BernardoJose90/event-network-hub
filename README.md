@@ -1,6 +1,8 @@
-# portal-pdf-test
+# Event Network Hub
 
-A small test harness that proves one feature: **upload an Excel workbook and download it as a PDF that looks like the spreadsheet**, with one page per sheet. Viewers and network admins both get the same, complete PDF; viewers are trusted, so nothing is redacted.
+Web Summit's event network requirements in one place: Wi-Fi networks, Ethernet requirements, partner orders and VLAN extensions, kept as structured records per event. Events start empty or from a template (LIS, QATAR, RIO, VAN), and **Publish** creates a numbered version as an Excel workbook and a PDF report. It started as a test harness for one feature, uploading an Excel workbook and downloading it as a PDF that looks like the spreadsheet, and that path is still available under Legacy. Viewers and network admins both see the same complete content; viewers are trusted, so nothing is redacted.
+
+(Internal names such as the Docker Compose project `portal-pdf-test` are unchanged, because renaming the project would point the app at a new, empty data volume.)
 
 It is built to production standards but kept deliberately small, so the code can move into the production app (Python backend, React frontend, EKS).
 

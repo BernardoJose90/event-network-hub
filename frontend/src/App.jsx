@@ -146,8 +146,9 @@ function UploadForm({ identity, onCreated }) {
         {busy ? 'Converting…' : 'Upload'}
       </button>
       <p className="muted small">
-        Excel (.xlsx) only, named like <code>LIS26 _ Event_Network_Requirements_V1.xlsx</code>. A new V
-        number updates that event&apos;s document; each V number can be uploaded once.
+        Excel (.xlsx) only, named like <code>LIS26 _ Event_Network_Requirements_V1.xlsx</code>, using
+        underscores (no spaces or hyphens). A new V number updates that event&apos;s document; each V
+        number can be uploaded once.
       </p>
       {error && <p className="error">{error}</p>}
       {result && <UploadResult result={result} />}

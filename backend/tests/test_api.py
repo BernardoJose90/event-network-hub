@@ -106,6 +106,20 @@ def test_same_version_twice_is_rejected(client: TestClient) -> None:
     assert len(client.get(f"/api/documents/{doc_id}/versions").json()) == 1
 
 
+def test_same_version_under_another_spelling_is_rejected(client: TestClient) -> None:
+    assert _upload(client, filename="VAN26 _ Event_Network_Requirements_V1.xlsx").status_code == 201
+    r = _upload(client, filename="van26_event_network_requirements_v1.xlsx", data=_wb("other"))
+    assert r.status_code == 409
+    assert "V1 of VAN26 | Event_Network_Requirements has already been uploaded" in r.json()["detail"]
+    assert len(client.get("/api/documents").json()) == 1
+
+
+def test_spaces_instead_of_underscores_explained(client: TestClient) -> None:
+    r = _upload(client, filename="VAN26 _ Event Network Requirements - V1.xlsx")
+    assert r.status_code == 422
+    assert "Use underscores" in r.json()["detail"]
+
+
 @pytest.mark.parametrize(
     ("filename", "message"),
     [

@@ -10,11 +10,13 @@
 #   d) the Excel download is byte-identical to the uploaded file
 #   e) uploading the same version number twice is rejected
 #   f) the in-browser editor opens (Collabora page loads and can read the file)
-#   g) deleting the document works and removes its files (this also cleans up)
+#   g) the live sheet: create it, edit a cell via the API, a stale save is
+#      refused, and the downloaded PDF shows the edit
+#   h) deleting the document works and removes its files (this also cleans up)
 #
 # Downloaded PDFs live in a private temp dir that is deleted on exit.
 #
-# Requires: curl, jq, python3, docker, pdffonts/pdfinfo (poppler-utils).
+# Requires: curl, jq, python3, docker, pdffonts/pdfinfo/pdftotext (poppler-utils).
 
 set -euo pipefail
 
@@ -23,7 +25,7 @@ API="${API_URL:-http://localhost:8000/api}"
 SAMPLES_DIR="${SAMPLES_DIR:-$ROOT/samples}"
 XLSX_TYPE="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
-for tool in curl jq docker pdffonts pdfinfo; do
+for tool in curl jq python3 docker pdffonts pdfinfo pdftotext; do
   command -v "$tool" >/dev/null || { echo "ERROR: '$tool' is required but not installed" >&2; exit 2; }
 done
 
@@ -150,14 +152,48 @@ for sample in "${samples[@]}"; do
     fail "f) starting an edit session returned HTTP $code_ed"
   fi
 
-  # --- g) delete (also cleans up the smoke document) ---------------------------
+  # --- g) live sheet -----------------------------------------------------------------
+  code_ls="$(curl -sS -o "$work/sheet.json" -w '%{http_code}' -X POST -H "X-Role: network-admin" \
+    -H "X-User: smoke-test" -H 'Content-Type: application/json' -d '{}' "$API/documents/$doc_id/sheet")"
+  if [ "$code_ls" = "200" ]; then
+    # Put a marker into the first row of the first sheet, in its widest column
+    # (narrow columns clip text in the PDF, as Excel does), and save it.
+    python3 - "$work/sheet.json" "$work/save.json" <<'PY'
+import json, sys
+sheet = json.load(open(sys.argv[1]))
+first = sheet["data"]["sheets"][0]
+col = max(first["columns"], key=lambda c: c.get("width", 100))["id"]
+cell = first["rows"][0]["cells"].get(col, {})
+cell.update({"v": "SMOKE-LIVE-EDIT", "kind": "text"})
+cell.pop("source", None); cell.pop("expr", None)
+first["rows"][0]["cells"][col] = cell
+json.dump({"data": sheet["data"], "revision": sheet["revision"]}, open(sys.argv[2], "w"))
+PY
+    save() { curl -sS -o /dev/null -w '%{http_code}' -X PUT -H "X-Role: network-admin" -H "X-User: smoke-test" \
+      -H 'Content-Type: application/json' --data-binary @"$work/save.json" "$API/documents/$doc_id/sheet"; }
+    code_save="$(save)"; code_stale="$(save)"  # the second save reuses the old revision
+    code_lpdf="$(curl -sS -o "$work/live.pdf" -w '%{http_code}' -H "X-Role: network-admin" \
+      "$API/documents/$doc_id/sheet/download?format=pdf")"
+    live_pages="$(pdfinfo "$work/live.pdf" 2>/dev/null | awk '/^Pages:/ {print $2}')"
+    if [ "$code_save" = "200" ] && [ "$code_stale" = "409" ] && [ "$code_lpdf" = "200" ] \
+       && pdftotext "$work/live.pdf" "$work/live.txt" && grep -q "SMOKE-LIVE-EDIT" "$work/live.txt" \
+       && [ "$live_pages" = "$sheets" ]; then
+      pass "g) live sheet: edit saved, stale save refused, PDF shows the edit ($live_pages pages)"
+    else
+      fail "g) live sheet: save HTTP $code_save, stale save HTTP $code_stale, PDF HTTP $code_lpdf, pages ${live_pages:-?}"
+    fi
+  else
+    fail "g) creating the live sheet returned HTTP $code_ls"
+  fi
+
+  # --- h) delete (also cleans up the smoke document) ---------------------------
   code_del="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE -H "X-Role: network-admin" \
     "$API/documents/$doc_id")"
   code_after="$(download "$doc_id" network-admin "$work/after.pdf")"
   if [ "$code_del" = "204" ] && [ "$code_after" = "404" ]; then
-    pass "g) document deleted; its files are no longer downloadable"
+    pass "h) document deleted; its files are no longer downloadable"
   else
-    fail "g) delete returned HTTP $code_del, download afterwards HTTP $code_after (expected 204, 404)"
+    fail "h) delete returned HTTP $code_del, download afterwards HTTP $code_after (expected 204, 404)"
   fi
 done
 

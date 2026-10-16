@@ -52,7 +52,8 @@ For each `samples/*.xlsx`, the script uploads the file, downloads the PDF as eac
 - **d)** the Excel download is byte-identical to the uploaded file;
 - **e)** uploading the same version number again is rejected;
 - **f)** the in-browser editor opens: Collabora's page loads and it can read the file through WOPI;
-- **g)** deleting the document works and removes its files. This also cleans up, so smoke runs leave no documents behind.
+- **g)** the live sheet: it's created, an edit saved through the API appears in its PDF, and a stale save is refused;
+- **h)** deleting the document works and removes its files. This also cleans up, so smoke runs leave no documents behind.
 
 The smoke test uploads your file under a throwaway `SMOKE<n>` event code, so it never touches your real documents.
 
@@ -123,6 +124,34 @@ How it fits together, using the standard WOPI protocol:
 | GET  | `/wopi/files/{session}` | WOPI CheckFileInfo (called by Collabora) |
 | GET  | `/wopi/files/{session}/contents` | WOPI GetFile |
 | POST | `/wopi/files/{session}/contents` | WOPI PutFile; saves as the session's new version |
+
+## Live sheet (edit in the app, not Excel)
+
+**Open live sheet** on a document (network admins) opens `/sheet/<document id>`: an editable web grid that looks like the workbook. It has one tab per sheet, the same fills, fonts and column widths, and frozen header rows.
+
+- **Editing:** click a cell and type; Enter, Tab and the arrow keys move; Delete clears; double-click edits.
+- **Dropdowns and tick-boxes:** cells that had dropdowns offer the same lists, taken from the Setup sheet or a fixed list such as Yes/No/TBC. TRUE/FALSE cells are tick-boxes.
+- **Rows and columns:** right-click a row number, column letter or cell to insert or delete. A new row copies the dropdowns, tick-boxes and look of its neighbours.
+- **Automatic totals:**
+  - each section total adds every row in its section, including rows added later;
+  - the overall total adds the section totals;
+  - per-row formulas such as Change Qty (`V6 - V5`) recalculate as you type.
+  The original workbook's totals don't always match these:
+  - **Altice Arena – Ethernet Req:** INTERNAL WORKSPACES was `=SUM(H3:H22)` and missed three rows (108 → 232). Four totals were broken `sum(#REF!)`.
+  - **FIL 1-5 Ethernet Req:** Registration Areas missed one row (15 → 19), and its overall total left out INTERNAL WORKSPACES.
+- **Saving:** automatic, about 1.5 s after the last change, with undo and redo (Ctrl+Z / Ctrl+Shift+Z). Each save carries a revision number. If someone else saved in the meantime, the save is refused (409) and the page offers to reload, so edits are never silently overwritten.
+- **Separate from versions:** the live sheet starts from the latest version. Later uploads don't touch it; the page shows "V8 uploaded since. Start again from V8".
+- **Downloads:** Excel and PDF are generated from the live sheet on download. Totals are written as real `SUM` formulas over their current ranges.
+- **Not supported yet:** writing new formulas, changing colours or bold, multi-cell copy and paste, charts and images. Formulas it can't represent keep their last value and are listed as import notes.
+
+Code: `backend/app/sheets/` (model, importer, engine, exporter) and `backend/app/sheet_routes.py`; `frontend/src/SheetPage.jsx` and `frontend/src/sheet/` (grid, ops, engine). The calculation rules exist twice, in `sheets/engine.py` for downloads and `sheet/engine.js` for the page, and must stay in step.
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET  | `/api/documents/{id}/sheet` | 404 until created |
+| POST | `/api/documents/{id}/sheet` | create, or start again, from the latest ready version |
+| PUT  | `/api/documents/{id}/sheet` | `{data, revision}`; 409 if someone else saved first |
+| GET  | `/api/documents/{id}/sheet/download?format=xlsx\|pdf` | generated on demand |
 
 ## What changes for production
 

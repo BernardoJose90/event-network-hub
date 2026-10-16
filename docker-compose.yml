@@ -14,6 +14,25 @@ services:
       start_period: 15s
     restart: unless-stopped
 
+  # In-browser spreadsheet editor (Collabora Online Development Edition, for
+  # testing; production needs a Collabora subscription). The browser loads the
+  # editor from it directly, so it is published on localhost:9980. It fetches
+  # and saves files only through the backend's WOPI endpoints (aliasgroup1).
+  collabora:
+    image: collabora/code:26.04.4.2.1
+    environment:
+      aliasgroup1: ${COLLABORA_WOPI_HOST:-http://backend:8000}
+      server_name: ${COLLABORA_SERVER_NAME:-localhost:9980}
+      DONT_GEN_SSL_CERT: "1"
+      # Local test only: plain HTTP, embeddable by the frontend, no welcome popups.
+      extra_params: >-
+        --o:ssl.enable=false --o:ssl.termination=false
+        --o:net.frame_ancestors=${COLLABORA_FRAME_ANCESTOR:-localhost:5173}
+        --o:home_mode.enable=true
+    ports:
+      - "127.0.0.1:9980:9980"
+    restart: unless-stopped
+
   backend:
     build:
       context: ./backend
@@ -24,6 +43,11 @@ services:
       DATA_DIR: ${DATA_DIR:-/data}
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10485760}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      COLLABORA_URL: ${COLLABORA_URL:-http://collabora:9980}
+      WOPI_BASE_URL: ${WOPI_BASE_URL:-http://backend:8000}
+      APP_ORIGIN: ${APP_ORIGIN:-http://localhost:5173}
+      # Leave unset locally (random per start); set from a secret store in production.
+      WOPI_TOKEN_SECRET: ${WOPI_TOKEN_SECRET:-}
     volumes:
       - appdata:/data
     ports:

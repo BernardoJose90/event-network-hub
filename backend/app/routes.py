@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import logging
 import re
+import secrets
 import sqlite3
+import time
 from collections.abc import Iterator
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import JSONResponse
 
-from . import db
+from . import db, wopi_tokens
 from .auth import Principal, current_principal, require_admin, require_known_role
+from .collabora import EditorUnavailable
 from .converter import XLSX_MEDIA_TYPE, Converter
 from .naming import parse_upload_name
 from .service import FULL_PDF, ORIGINAL, UploadResult, VersionExists, upload_file
@@ -172,6 +175,48 @@ def list_versions(document_id: int, conn: Conn) -> list[dict[str, Any]]:
 
 def _safe_filename(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("_") or "document"
+
+
+@router.post("/documents/{document_id}/versions/{version}/edit")
+def start_edit(request: Request, document_id: int, version: int, conn: Conn, principal: CurrentPrincipal) -> dict[str, Any]:
+    """Open a version in the in-browser editor. Saving there creates the next version.
+
+    Returns the editor URL and a short-lived access token; the page POSTs the
+    token to the URL inside an iframe (the standard WOPI host page flow).
+    """
+    require_admin(principal, "edit documents")
+    _document_or_404(conn, document_id)
+    row = db.get_version(conn, document_id, version)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Version {version} not found")
+    if row["status"] != db.STATUS_READY:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Version {version} is {row['status']}")
+
+    settings = request.app.state.settings
+    discovery = request.app.state.discovery
+    try:
+        discovery.xlsx_edit_urlsrc()  # fail before creating a session if the editor is down
+    except EditorUnavailable as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc))
+
+    session_id = secrets.token_urlsafe(16)
+    db.create_edit_session(
+        conn, session_id=session_id, document_id=document_id, base_version=version, user=principal.user
+    )
+    expires_at = int(time.time()) + settings.wopi_token_ttl_seconds
+    token = wopi_tokens.issue(
+        settings.wopi_token_secret,
+        wopi_tokens.EditGrant(session_id=session_id, document_id=document_id, user=principal.user,
+                              expires_at=expires_at),
+    )
+    wopi_src = f"{settings.wopi_base_url}/wopi/files/{session_id}"
+    log.info("%s opened document %s V%s for editing (session %s)", principal.user, document_id, version, session_id)
+    return {
+        "editor_url": discovery.editor_url(wopi_src),
+        "access_token": token,
+        "access_token_ttl": expires_at * 1000,  # WOPI expects milliseconds since the epoch
+        "base_version": version,
+    }
 
 
 @router.get("/documents/{document_id}/download")

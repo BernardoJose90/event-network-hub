@@ -29,7 +29,19 @@ CREATE TABLE IF NOT EXISTS document_versions (
     status       TEXT NOT NULL CHECK (status IN ('processing', 'ready', 'failed')),
     warnings     TEXT NOT NULL DEFAULT '[]',
     error        TEXT,
+    edited_from  INTEGER,
     UNIQUE (document_id, version)
+);
+
+-- One row per in-browser editing session. Its first save creates
+-- saved_version; later saves in the same session update that version.
+CREATE TABLE IF NOT EXISTS edit_sessions (
+    id             TEXT PRIMARY KEY,
+    document_id    INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    base_version   INTEGER NOT NULL,
+    saved_version  INTEGER,
+    user           TEXT NOT NULL,
+    created_at     TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS download_log (
@@ -50,6 +62,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
             "ALTER TABLE download_log ADD COLUMN format TEXT NOT NULL DEFAULT 'pdf' "
             "CHECK (format IN ('pdf', 'xlsx'))"
         )
+    columns = {r["name"] for r in conn.execute("PRAGMA table_info(document_versions)")}
+    if "edited_from" not in columns:
+        conn.execute("ALTER TABLE document_versions ADD COLUMN edited_from INTEGER")
 
 
 def utcnow() -> str:
@@ -142,6 +157,7 @@ def insert_version(
     sha256: str,
     uploaded_by: str,
     warnings: list[dict[str, str]],
+    edited_from: int | None = None,
 ) -> dict[str, Any]:
     """Insert a version row in 'processing' state.
 
@@ -151,13 +167,32 @@ def insert_version(
         cur = conn.execute(
             """
             INSERT INTO document_versions
-                (document_id, version, sha256, uploaded_by, uploaded_at, status, warnings)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                (document_id, version, sha256, uploaded_by, uploaded_at, status, warnings, edited_from)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (document_id, version, sha256, uploaded_by, utcnow(), STATUS_PROCESSING,
-             json.dumps(warnings)),
+             json.dumps(warnings), edited_from),
         )
     return get_version_by_id(conn, cur.lastrowid)  # type: ignore[return-value]
+
+
+def max_version(conn: sqlite3.Connection, document_id: int) -> int:
+    row = conn.execute(
+        "SELECT COALESCE(MAX(version), 0) FROM document_versions WHERE document_id = ?", (document_id,)
+    ).fetchone()
+    return int(row[0])
+
+
+def update_version_content(
+    conn: sqlite3.Connection, version_id: int, *, sha256: str, warnings: list[dict[str, str]]
+) -> None:
+    """A later save in the same edit session replaced this version's file."""
+    with conn:
+        conn.execute(
+            "UPDATE document_versions SET sha256 = ?, warnings = ?, status = ?, error = NULL, "
+            "uploaded_at = ? WHERE id = ?",
+            (sha256, json.dumps(warnings), STATUS_PROCESSING, utcnow(), version_id),
+        )
 
 
 def delete_version(conn: sqlite3.Connection, version_id: int) -> None:
@@ -223,3 +258,28 @@ def log_download(conn: sqlite3.Connection, *, version_id: int, user: str, format
             "INSERT INTO download_log (version_id, user, format, downloaded_at) VALUES (?, ?, ?, ?)",
             (version_id, user, format, utcnow()),
         )
+
+
+# --- edit sessions --------------------------------------------------------
+
+
+def create_edit_session(
+    conn: sqlite3.Connection, *, session_id: str, document_id: int, base_version: int, user: str
+) -> dict[str, Any]:
+    with conn:
+        conn.execute(
+            "INSERT INTO edit_sessions (id, document_id, base_version, user, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (session_id, document_id, base_version, user, utcnow()),
+        )
+    return get_edit_session(conn, session_id)  # type: ignore[return-value]
+
+
+def get_edit_session(conn: sqlite3.Connection, session_id: str) -> dict[str, Any] | None:
+    row = conn.execute("SELECT * FROM edit_sessions WHERE id = ?", (session_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def set_edit_session_saved_version(conn: sqlite3.Connection, session_id: str, version: int) -> None:
+    with conn:
+        conn.execute("UPDATE edit_sessions SET saved_version = ? WHERE id = ?", (version, session_id))

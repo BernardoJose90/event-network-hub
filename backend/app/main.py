@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -11,14 +12,34 @@ from fastapi.responses import JSONResponse
 from . import db
 from .config import Settings, load_settings
 from .converter import GotenbergConverter
+from .collabora import CollaboraDiscovery
 from .routes import router
 from .service import DocumentGone
 from .storage import LocalStorage
+from .wopi import router as wopi_router
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
+
+_TOKEN_IN_URL = re.compile(r"(access_token=)[^&\s\"]+")
+
+
+class RedactAccessTokens(logging.Filter):
+    """WOPI puts access tokens in URLs; keep them out of access logs."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(
+                _TOKEN_IN_URL.sub(r"\1[REDACTED]", a) if isinstance(a, str) else a for a in record.args
+            )
+        if isinstance(record.msg, str):
+            record.msg = _TOKEN_IN_URL.sub(r"\1[REDACTED]", record.msg)
+        return True
+
+
+logging.getLogger("uvicorn.access").addFilter(RedactAccessTokens())
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -33,6 +54,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.settings = settings
         app.state.storage = LocalStorage(settings.files_dir)
         app.state.converter = converter
+        app.state.discovery = CollaboraDiscovery(settings.collabora_url)
         try:
             yield
         finally:
@@ -40,6 +62,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="portal-pdf-test", lifespan=lifespan)
     app.include_router(router)
+    app.include_router(wopi_router)
 
     @app.exception_handler(DocumentGone)
     async def document_gone(_: Request, __: DocumentGone) -> JSONResponse:

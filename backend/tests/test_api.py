@@ -227,7 +227,7 @@ def test_every_role_gets_the_full_pdf(client: TestClient, role) -> None:
 
     assert r.status_code == 200
     assert r.headers["content-type"] == "application/pdf"
-    assert r.content.endswith(b"LIS26-v1.xlsx")  # FakeConverter echoes the filename
+    assert r.content.endswith(b"-v1.xlsx")  # FakeConverter echoes the filename
 
     conn = db.connect(client.settings.db_path)
     rows = [dict(x) for x in conn.execute("SELECT user, format FROM download_log")]

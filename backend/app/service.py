@@ -110,26 +110,101 @@ def upload_file(
         conn, storage, document=document, version=parsed.version, sha256=sha256_hex(data),
         uploaded_by=uploaded_by, warnings=warnings,
     )
-    document_id, n = document["id"], parsed.version
+    reason = _store_and_convert(conn, storage, converter, document_id=document["id"], version=version, data=data)
+    result = dict(
+        document=db.get_document(conn, document["id"]),
+        version=db.get_version_by_id(conn, version["id"]),
+    )
+    n = parsed.version
+    if reason is not None:
+        return UploadResult(
+            outcome="failed", message=f"V{n} failed: {reason}. Upload the same file again to retry.", **result
+        )
+    return UploadResult(outcome="created", message=f"V{n} added to {document['name']}.", **result)
+
+
+def _store_and_convert(
+    conn: sqlite3.Connection,
+    storage: Storage,
+    converter: Converter,
+    *,
+    document_id: int,
+    version: dict[str, Any],
+    data: bytes,
+) -> str | None:
+    """Store the workbook and its PDF for ``version`` and mark it ready.
+
+    Returns None on success, or the user-facing reason after marking the version failed.
+    """
+    n = version["version"]
     try:
         storage.put(version_key(document_id, n, ORIGINAL), data)
-        pdf = converter.xlsx_to_pdf(prepare_for_pdf(data), filename=f"{parsed.event}-v{n}.xlsx")
+        pdf = converter.xlsx_to_pdf(prepare_for_pdf(data), filename=f"document-{document_id}-v{n}.xlsx")
         storage.put(version_key(document_id, n, FULL_PDF), pdf)
     except Exception as exc:
         reason = str(exc) if isinstance(exc, ConversionError) else "Internal error while processing the file"
         log.exception("processing document %s version %s failed", document_id, n)
         db.set_version_status(conn, version["id"], db.STATUS_FAILED, error=reason)
-        return UploadResult(
-            outcome="failed",
-            document=db.get_document(conn, document_id),  # type: ignore[arg-type]
-            version=db.get_version_by_id(conn, version["id"]),  # type: ignore[arg-type]
-            message=f"V{n} failed: {reason}. Upload the same file again to retry.",
-        )
-
+        return reason
     db.set_version_status(conn, version["id"], db.STATUS_READY)
-    return UploadResult(
-        outcome="created",
-        document=db.get_document(conn, document_id),  # type: ignore[arg-type]
-        version=db.get_version_by_id(conn, version["id"]),  # type: ignore[arg-type]
-        message=f"V{n} added to {document['name']}.",
-    )
+    return None
+
+
+# --- saving from the in-browser editor ---------------------------------------
+
+MAX_VERSION_ALLOCATION_ATTEMPTS = 5
+
+
+def _allocate_next_version(
+    conn: sqlite3.Connection, *, document_id: int, sha256: str, user: str,
+    warnings: list[dict[str, str]], edited_from: int,
+) -> dict[str, Any]:
+    """Insert the version after the newest one, retrying if a concurrent save or upload took it."""
+    for _ in range(MAX_VERSION_ALLOCATION_ATTEMPTS):
+        number = db.max_version(conn, document_id) + 1
+        try:
+            return db.insert_version(
+                conn, document_id=document_id, version=number, sha256=sha256,
+                uploaded_by=user, warnings=warnings, edited_from=edited_from,
+            )
+        except sqlite3.IntegrityError:
+            if db.get_document(conn, document_id) is None:
+                raise DocumentGone(document_id)
+    raise RuntimeError("could not allocate a version number for the edited file")
+
+
+def save_edit(
+    conn: sqlite3.Connection,
+    storage: Storage,
+    converter: Converter,
+    *,
+    session: dict[str, Any],
+    data: bytes,
+    user: str,
+) -> dict[str, Any]:
+    """Save a workbook from an edit session as a new version and return that version.
+
+    The session's first save creates the version after the newest one (V6 -> V7,
+    recording that it was edited from the session's base version). Later saves in
+    the same session, including the editor's autosaves, update that version, so
+    one editing session produces one new version. The caller validates ``data``.
+    """
+    document_id = session["document_id"]
+    if db.get_document(conn, document_id) is None:
+        raise DocumentGone(document_id)
+    sha, warnings = sha256_hex(data), find_formula_errors(data)
+
+    version = None
+    if session["saved_version"] is not None:
+        version = db.get_version(conn, document_id, session["saved_version"])
+    if version is None:
+        version = _allocate_next_version(
+            conn, document_id=document_id, sha256=sha, user=user,
+            warnings=warnings, edited_from=session["base_version"],
+        )
+        db.set_edit_session_saved_version(conn, session["id"], version["version"])
+    else:
+        db.update_version_content(conn, version["id"], sha256=sha, warnings=warnings)
+
+    _store_and_convert(conn, storage, converter, document_id=document_id, version=version, data=data)
+    return db.get_version_by_id(conn, version["id"])  # type: ignore[return-value]

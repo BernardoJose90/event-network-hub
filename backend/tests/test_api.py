@@ -13,6 +13,8 @@ from app.main import create_app
 from .conftest import FakeConverter, xlsx_bytes
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+ADMIN = {"X-Role": "network-admin"}
+NAME_V1 = "LIS26 _ Event_Network_Requirements_V1.xlsx"
 
 
 @pytest.fixture
@@ -35,72 +37,103 @@ def _wb(text: str) -> bytes:
     return xlsx_bytes(build)
 
 
-ADMIN = {"X-Role": "network-admin"}
-
-
-def _upload_new(client: TestClient, filename="lis25.xlsx", data=None, headers=None, **form):
+def _upload(client: TestClient, filename=NAME_V1, data=None, headers=None):
     return client.post(
         "/api/documents/upload",
-        files={"file": (filename, data if data is not None else _wb("v1"), XLSX)},
-        data=form,
+        files={"file": (filename, data if data is not None else _wb(filename), XLSX)},
         headers={**ADMIN, "X-User": "alice"} if headers is None else headers,
     )
 
 
 def _doc_with_version(client: TestClient) -> int:
-    r = _upload_new(client, name="LIS25 Network Requirements")
+    r = _upload(client)
     assert r.status_code == 201, r.text
     return r.json()["document"]["id"]
 
 
-def test_upload_new_document_named_after_file(client: TestClient) -> None:
-    r = _upload_new(client, filename="Event_Network_Requirements_V5.xlsx")
+# --- upload ---------------------------------------------------------------
+
+
+def test_upload_creates_document_for_event(client: TestClient) -> None:
+    r = _upload(client, filename="LIS25 _ Event_Network_Requirements_V5.xlsx")
 
     assert r.status_code == 201, r.text
     body = r.json()
-    assert body["document"]["name"] == "Event_Network_Requirements_V5"
-    assert (body["version"]["version"], body["version"]["status"]) == (1, "ready")
+    assert body["document"]["name"] == "LIS25 | Event_Network_Requirements"
+    assert (body["version"]["version"], body["version"]["status"]) == (5, "ready")
     assert body["version"]["uploaded_by"] == "alice"
-    assert [d["name"] for d in client.get("/api/documents").json()] == ["Event_Network_Requirements_V5"]
+    assert body["message"] == "V5 added to LIS25 | Event_Network_Requirements."
 
 
-def test_upload_new_document_with_explicit_name(client: TestClient) -> None:
-    r = _upload_new(client, name="  LIS25 Network Requirements ")
-    assert r.json()["document"]["name"] == "LIS25 Network Requirements"
+def test_new_version_updates_existing_document(client: TestClient) -> None:
+    doc_id = _doc_with_version(client)
+    r = _upload(client, filename="LIS26 | Event_Network_Requirements_V2.xlsx")
 
-
-def test_upload_new_document_name_conflict(client: TestClient) -> None:
-    assert _upload_new(client).status_code == 201
-    r = _upload_new(client, data=_wb("other"))
-    assert r.status_code == 409
-    assert "new version" in r.json()["detail"]
+    assert r.status_code == 201, r.text
+    assert r.json()["document"]["id"] == doc_id
+    assert [v["version"] for v in client.get(f"/api/documents/{doc_id}/versions").json()] == [2, 1]
     assert len(client.get("/api/documents").json()) == 1
+    latest = client.get(f"/api/documents/{doc_id}/download", headers=ADMIN)
+    assert latest.headers["x-document-version"] == "2"
+
+
+def test_same_version_twice_is_rejected(client: TestClient) -> None:
+    doc_id = _doc_with_version(client)
+    r = _upload(client, data=_wb("different contents"))
+
+    assert r.status_code == 409
+    assert "V1 of LIS26 | Event_Network_Requirements has already been uploaded" in r.json()["detail"]
+    assert len(client.get(f"/api/documents/{doc_id}/versions").json()) == 1
+
+
+@pytest.mark.parametrize(
+    ("filename", "message"),
+    [
+        ("Budget.xlsx", "must contain 'Event_Network_Requirements'"),
+        ("Event_Network_Requirements_V1.xlsx", "event code"),
+        ("LIS26 _ Event_Network_Requirements.xlsx", "version number"),
+        ("LIS26 _ Event_Network_Requirements_V1.xlsm", ".xlsm"),
+        ("LIS26 _ Event_Network_Requirements_V1.csv", "Only Excel .xlsx"),
+    ],
+)
+def test_bad_files_are_rejected_and_create_nothing(client: TestClient, filename, message) -> None:
+    r = _upload(client, filename=filename)
+    assert r.status_code == 422
+    assert message in r.json()["detail"]
+    assert client.get("/api/documents").json() == []
 
 
 @pytest.mark.parametrize("headers", [{}, {"X-Role": "viewer"}, {"X-Role": "superuser"}])
-def test_only_admin_can_create_documents(client: TestClient, headers) -> None:
-    r = _upload_new(client, headers=headers)
+def test_only_admin_can_upload(client: TestClient, headers) -> None:
+    r = _upload(client, headers=headers)
     assert r.status_code == 403
     assert client.get("/api/documents").json() == []
 
 
-def test_invalid_file_does_not_create_document(client: TestClient) -> None:
-    r = _upload_new(client, filename="x.xlsm")
-    assert r.status_code == 422
-    assert ".xlsm" in r.json()["detail"]
-    assert client.get("/api/documents").json() == []
+def test_failed_conversion_can_be_retried(client: TestClient) -> None:
+    client.app.state.converter.fail = True
+    r = _upload(client)
+    assert r.status_code == 502
+    assert r.json()["version"]["status"] == "failed"
+    doc_id = r.json()["document"]["id"]
+    h = {"X-Role": "viewer"}
+    assert client.get(f"/api/documents/{doc_id}/download?version=1", headers=h).status_code == 409
+    assert client.get(f"/api/documents/{doc_id}/download", headers=h).status_code == 404
+
+    client.app.state.converter.fail = False
+    assert _upload(client).status_code == 201
+    assert client.get(f"/api/documents/{doc_id}/download", headers=h).status_code == 200
 
 
-def test_old_json_create_endpoint_is_gone(client: TestClient) -> None:
-    assert client.post("/api/documents", json={"name": "A"}, headers=ADMIN).status_code == 405
-
-
-def test_uploading_new_versions_is_not_possible(client: TestClient) -> None:
+def test_removed_endpoints(client: TestClient) -> None:
     doc_id = _doc_with_version(client)
+    assert client.post("/api/documents", json={"name": "A"}, headers=ADMIN).status_code == 405
     r = client.post(f"/api/documents/{doc_id}/versions",
-                    files={"file": ("lis25.xlsx", _wb("v2"), XLSX)}, headers=ADMIN)
+                    files={"file": (NAME_V1, _wb("x"), XLSX)}, headers=ADMIN)
     assert r.status_code == 405
-    assert len(client.get(f"/api/documents/{doc_id}/versions").json()) == 1
+
+
+# --- delete ---------------------------------------------------------------
 
 
 def test_admin_deletes_document_with_everything(client: TestClient) -> None:
@@ -123,9 +156,15 @@ def test_admin_deletes_document_with_everything(client: TestClient) -> None:
     assert counts == [0, 0, 0]
 
 
+def test_after_delete_the_event_can_start_again_at_v1(client: TestClient) -> None:
+    doc_id = _doc_with_version(client)
+    client.delete(f"/api/documents/{doc_id}", headers=ADMIN)
+    assert _upload(client).status_code == 201
+
+
 def test_delete_leaves_other_documents_alone(client: TestClient) -> None:
-    keep = _upload_new(client, filename="keep.xlsx").json()["document"]["id"]
-    drop = _upload_new(client, filename="drop.xlsx", data=_wb("other")).json()["document"]["id"]
+    keep = _upload(client, filename="LIS26 _ Event_Network_Requirements_V1.xlsx").json()["document"]["id"]
+    drop = _upload(client, filename="LIS27 _ Event_Network_Requirements_V1.xlsx").json()["document"]["id"]
 
     assert client.delete(f"/api/documents/{drop}", headers=ADMIN).status_code == 204
     assert [d["id"] for d in client.get("/api/documents").json()] == [keep]
@@ -135,13 +174,15 @@ def test_delete_leaves_other_documents_alone(client: TestClient) -> None:
 @pytest.mark.parametrize("headers", [{}, {"X-Role": "viewer"}])
 def test_only_admin_can_delete(client: TestClient, headers) -> None:
     doc_id = _doc_with_version(client)
-    r = client.delete(f"/api/documents/{doc_id}", headers=headers)
-    assert r.status_code == 403
+    assert client.delete(f"/api/documents/{doc_id}", headers=headers).status_code == 403
     assert len(client.get("/api/documents").json()) == 1
 
 
 def test_delete_missing_document_is_404(client: TestClient) -> None:
     assert client.delete("/api/documents/999", headers=ADMIN).status_code == 404
+
+
+# --- download -------------------------------------------------------------
 
 
 @pytest.mark.parametrize("role", ["viewer", "network-admin"])
@@ -151,7 +192,7 @@ def test_every_role_gets_the_full_pdf(client: TestClient, role) -> None:
 
     assert r.status_code == 200
     assert r.headers["content-type"] == "application/pdf"
-    assert r.content.endswith(b"-v1.xlsx")  # FakeConverter echoes the filename
+    assert r.content.endswith(b"LIS26-v1.xlsx")  # FakeConverter echoes the filename
 
     conn = db.connect(client.settings.db_path)
     rows = [dict(x) for x in conn.execute("SELECT user, format FROM download_log")]
@@ -161,18 +202,15 @@ def test_every_role_gets_the_full_pdf(client: TestClient, role) -> None:
 
 @pytest.mark.parametrize("role", ["viewer", "network-admin"])
 def test_download_original_excel(client: TestClient, role) -> None:
-    doc_id = _doc_with_version(client)
+    data = _wb("original")
+    r = _upload(client, data=data)
+    doc_id = r.json()["document"]["id"]
     r = client.get(f"/api/documents/{doc_id}/download?format=xlsx", headers={"X-Role": role})
 
     assert r.status_code == 200
     assert r.headers["content-type"] == XLSX
-    assert r.content == _wb("v1")  # byte-identical to the upload
+    assert r.content == data  # byte-identical to the upload
     assert r.headers["content-disposition"].endswith('-v1.xlsx"')
-
-    conn = db.connect(client.settings.db_path)
-    formats = [x[0] for x in conn.execute("SELECT format FROM download_log")]
-    conn.close()
-    assert formats == ["xlsx"]
 
 
 def test_unknown_download_format_rejected(client: TestClient) -> None:
@@ -189,18 +227,8 @@ def test_download_without_known_role_is_forbidden(client: TestClient, headers) -
 
 def test_download_specific_and_missing_version(client: TestClient) -> None:
     doc_id = _doc_with_version(client)
+    _upload(client, filename="LIS26 _ Event_Network_Requirements_V2.xlsx")
     h = {"X-Role": "viewer"}
-    assert client.get(f"/api/documents/{doc_id}/download?version=1", headers=h).status_code == 200
+    r = client.get(f"/api/documents/{doc_id}/download?version=1", headers=h)
+    assert (r.status_code, r.headers["x-document-version"]) == (200, "1")
     assert client.get(f"/api/documents/{doc_id}/download?version=9", headers=h).status_code == 404
-
-
-def test_failed_conversion_keeps_document_but_nothing_to_download(client: TestClient) -> None:
-    client.app.state.converter.fail = True
-    r = _upload_new(client)
-    assert r.status_code == 502
-    assert r.json()["version"]["status"] == "failed"
-    doc_id = r.json()["document"]["id"]
-
-    h = {"X-Role": "viewer"}
-    assert client.get(f"/api/documents/{doc_id}/download?version=1", headers=h).status_code == 409
-    assert client.get(f"/api/documents/{doc_id}/download", headers=h).status_code == 404

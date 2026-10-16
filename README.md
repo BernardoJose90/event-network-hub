@@ -43,13 +43,16 @@ mkdir -p samples && cp /path/to/your/workbook.xlsx samples/
 scripts/smoke.sh
 ```
 
-For each `samples/*.xlsx`, the script uploads the file as a new document, downloads the PDF as each role and prints PASS/FAIL for each check:
+For each `samples/*.xlsx`, the script uploads the file, downloads the PDF as each role and prints PASS/FAIL for each check:
 
 - **a)** viewer and network-admin receive the same PDF;
 - **b)** `pdffonts` lists Overpass and does not list DejaVu;
 - **c)** the page count equals the number of visible sheets;
 - **d)** the Excel download is byte-identical to the uploaded file;
-- **e)** deleting the document works and removes its files. This also cleans up, so smoke runs leave no documents behind.
+- **e)** uploading the same version number again is rejected;
+- **f)** deleting the document works and removes its files. This also cleans up, so smoke runs leave no documents behind.
+
+The smoke test uploads your file under a throwaway `SMOKE<n>` event code, so it never touches your real documents.
 
 > `samples/`, `*.xlsx` and `*.pdf` are git-ignored, because sample workbooks can contain credentials. The smoke script keeps its downloads in a private temp dir that is deleted on exit.
 
@@ -60,7 +63,7 @@ The React UI talks only to the FastAPI backend, through the Vite `/api` proxy.
 On upload, the backend:
 
 1. validates the file;
-2. skips files identical to the latest version, compared by sha256;
+2. checks the file name, then finds or creates the event's document and refuses a version number that already exists;
 3. records formula-error warnings;
 4. sends the workbook to Gotenberg's LibreOffice route (`POST /forms/libreoffice/convert`, `singlePageSheets=true`);
 5. stores `original.xlsx` and `full.pdf`.
@@ -87,7 +90,7 @@ backend/app/
 | Method | Path                                          | Notes                                                     |
 |--------|-----------------------------------------------|-----------------------------------------------------------|
 | GET    | `/api/documents`                              |                                                           |
-| POST   | `/api/documents/upload`                       | multipart `file` (+ optional `name`). Needs `X-Role: network-admin`. Creates a document named after the file with the file as v1; 409 if the name exists |
+| POST   | `/api/documents/upload`                       | multipart `file` named `<EVENT> _ Event_Network_Requirements_V<n>.xlsx`. Needs `X-Role: network-admin`. Creates the event's document on first upload, otherwise adds V<n> to it. 409 if V<n> already exists, 422 for a bad name or file |
 | DELETE | `/api/documents/{id}`                         | Needs `X-Role: network-admin`. Removes the document, all versions, stored files and download log rows. 204 |
 | GET    | `/api/documents/{id}/versions`                |                                                           |
 | GET    | `/api/documents/{id}/download[?version=N][&format=pdf\|xlsx]` | needs `X-Role` (`viewer` or `network-admin`). `pdf` (default) is the converted PDF, `xlsx` the original upload |
@@ -95,7 +98,7 @@ backend/app/
 ### Behaviour notes
 
 - **TEST ONLY identity.** `X-Role` and `X-User` are trusted as sent. A missing or unknown role gets 403.
-- **One upload per document.** New versions can't be added to an existing document. To replace a file, delete the document and upload the new file. If a conversion fails, the document keeps a `failed` v1; delete it and upload again.
+- **File names drive documents and versions.** Uploads must be named like `LIS26 | Event_Network_Requirements_V1.xlsx`. `|`, `_` or `-` can separate the event code; matching ignores case. The event code (`LIS26`) picks the document, named `LIS26 | Event_Network_Requirements`, which is created on the first upload. `V<n>` is the version number. Each version number can be uploaded once; a different file under an existing number is rejected. A version whose conversion failed can be uploaded again to retry. Versions may arrive out of order, and View/Download use the highest ready version. The rule lives in `app/naming.py`, with the required text in `config.REQUIRED_NAME`.
 - **No redaction.** Viewers are trusted, so every role sees the workbook as-is, passwords included. The role header is kept so real authorization can be added later.
 - **Print gridlines are turned off for conversion.** With `singlePageSheets=true`, LibreOffice draws "print gridlines" at the wrong positions, so lines cut through the text. Seen with LibreOffice 26.8.0.3 (gotenberg 8.37.0) and 26.8.1.1 (gotenberg 8.38.1). `app/pdf_prep.py` removes the flag from the copy sent to Gotenberg; the stored original is untouched, and cell borders still render.
 - **Formula errors may look different in the PDF.** LibreOffice recalculates formulas, so a broken formula such as `sum(#REF!)`, saved as `#REF!`, can appear as `#NAME?`. Both are errors in the source workbook and are listed as upload warnings.

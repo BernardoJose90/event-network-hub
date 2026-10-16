@@ -4,16 +4,16 @@ import logging
 import re
 import sqlite3
 from collections.abc import Iterator
-from pathlib import PurePath
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import JSONResponse
 
 from . import db
 from .auth import Principal, current_principal, require_admin, require_known_role
 from .converter import XLSX_MEDIA_TYPE, Converter
-from .service import FULL_PDF, ORIGINAL, UploadResult, upload_version
+from .naming import parse_upload_name
+from .service import FULL_PDF, ORIGINAL, UploadResult, VersionExists, upload_file
 from .storage import ObjectNotFound, Storage, document_prefix, version_key
 from .validation import UploadRejected, validate_upload
 
@@ -68,9 +68,6 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-MAX_NAME_LENGTH = 200
-
-
 def _read_validated_upload(request: Request, file: UploadFile) -> bytes:
     max_bytes = request.app.state.settings.max_upload_bytes
 
@@ -90,10 +87,9 @@ def _read_validated_upload(request: Request, file: UploadFile) -> bytes:
     return data
 
 
-def _upload_response(result: UploadResult, document: dict[str, Any]) -> JSONResponse:
+def _upload_response(result: UploadResult) -> JSONResponse:
     status_code = {
         "created": status.HTTP_201_CREATED,
-        "unchanged": status.HTTP_200_OK,
         "failed": status.HTTP_502_BAD_GATEWAY,
     }[result.outcome]
     return JSONResponse(
@@ -101,7 +97,7 @@ def _upload_response(result: UploadResult, document: dict[str, Any]) -> JSONResp
         content={
             "outcome": result.outcome,
             "message": result.message,
-            "document": document,
+            "document": result.document,
             "version": result.version,
         },
     )
@@ -113,38 +109,33 @@ def list_documents(conn: Conn) -> list[dict[str, Any]]:
 
 
 @router.post("/documents/upload")
-def upload_new_document(
+def upload(
     request: Request,
     conn: Conn,
     principal: CurrentPrincipal,
     file: Annotated[UploadFile, File()],
     storage: Annotated[Storage, Depends(get_storage)],
     converter: Annotated[Converter, Depends(get_converter)],
-    name: Annotated[str | None, Form(max_length=MAX_NAME_LENGTH)] = None,
 ) -> JSONResponse:
-    """Create a document from an uploaded workbook, which becomes version 1.
+    """Upload ``<EVENT> _ Event_Network_Requirements_V<n>.xlsx``.
 
-    The document is named after the file (without .xlsx) unless ``name`` is given.
+    The event code picks the document (created on first upload) and ``V<n>``
+    becomes that version. A version number can only be uploaded once.
     """
-    require_admin(principal, "create documents")
+    require_admin(principal, "upload documents")
     data = _read_validated_upload(request, file)
-
-    doc_name = (name or "").strip() or PurePath(file.filename or "").stem.strip()
-    if not doc_name:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Document name must not be blank")
-    doc_name = doc_name[:MAX_NAME_LENGTH]
     try:
-        document = db.create_document(conn, doc_name)
-    except sqlite3.IntegrityError:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"A document named {doc_name!r} already exists. Upload the file as a new version of it instead.",
-        )
+        parsed = parse_upload_name(file.filename)
+    except UploadRejected as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc))
 
-    result = upload_version(
-        conn, storage, converter, document=document, data=data, uploaded_by=principal.user
-    )
-    return _upload_response(result, db.get_document(conn, document["id"]))  # type: ignore[arg-type]
+    try:
+        result = upload_file(
+            conn, storage, converter, parsed=parsed, data=data, uploaded_by=principal.user
+        )
+    except VersionExists as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    return _upload_response(result)
 
 
 @router.get("/documents/{document_id}")

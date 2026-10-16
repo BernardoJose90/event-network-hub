@@ -40,8 +40,9 @@ async function uploadResult(res) {
   throw new Error(await errorMessage(res))
 }
 
-// Admin only: creates a document named after the file, with the file as version 1.
-export async function uploadNewDocument(file, identity) {
+// Admin only. The file must be named like 'LIS26 _ Event_Network_Requirements_V1.xlsx':
+// the event code picks (or creates) the document and V<n> becomes that version.
+export async function uploadDocument(file, identity) {
   const form = new FormData()
   form.append('file', file)
   return uploadResult(

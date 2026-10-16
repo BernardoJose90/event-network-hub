@@ -92,6 +92,11 @@ def get_document(conn: sqlite3.Connection, document_id: int) -> dict[str, Any] |
     return dict(row) if row else None
 
 
+def get_document_by_name(conn: sqlite3.Connection, name: str) -> dict[str, Any] | None:
+    row = conn.execute("SELECT * FROM documents WHERE name = ?", (name,)).fetchone()
+    return dict(row) if row else None
+
+
 def list_documents(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
@@ -122,14 +127,6 @@ def _version(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return out
 
 
-def next_version_number(conn: sqlite3.Connection, document_id: int) -> int:
-    row = conn.execute(
-        "SELECT COALESCE(MAX(version), 0) + 1 FROM document_versions WHERE document_id = ?",
-        (document_id,),
-    ).fetchone()
-    return int(row[0])
-
-
 def insert_version(
     conn: sqlite3.Connection,
     *,
@@ -154,6 +151,11 @@ def insert_version(
              json.dumps(warnings)),
         )
     return get_version_by_id(conn, cur.lastrowid)  # type: ignore[return-value]
+
+
+def delete_version(conn: sqlite3.Connection, version_id: int) -> None:
+    with conn:
+        conn.execute("DELETE FROM document_versions WHERE id = ?", (version_id,))
 
 
 def set_version_status(

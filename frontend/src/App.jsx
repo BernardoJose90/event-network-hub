@@ -5,7 +5,7 @@ import {
   fetchFile,
   listDocuments,
   listVersions,
-  uploadNewDocument,
+  uploadDocument,
 } from './api.js'
 
 // TEST ONLY: role switcher standing in for real authentication.
@@ -108,7 +108,7 @@ function UploadResult({ result }) {
   )
 }
 
-function NewDocumentForm({ identity, onCreated }) {
+function UploadForm({ identity, onCreated }) {
   const inputRef = useRef(null)
   const [file, setFile] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -122,7 +122,7 @@ function NewDocumentForm({ identity, onCreated }) {
     setResult(null)
     setError(null)
     try {
-      const res = await uploadNewDocument(file, identity)
+      const res = await uploadDocument(file, identity)
       setResult(res)
       setFile(null)
       if (inputRef.current) inputRef.current.value = ''
@@ -143,9 +143,12 @@ function NewDocumentForm({ identity, onCreated }) {
         onChange={(e) => setFile(e.target.files[0] || null)}
       />
       <button type="submit" disabled={!file || busy}>
-        {busy ? 'Converting…' : 'Upload new document'}
+        {busy ? 'Converting…' : 'Upload'}
       </button>
-      <p className="muted small">The document is named after the file.</p>
+      <p className="muted small">
+        Excel (.xlsx) only, named like <code>LIS26 _ Event_Network_Requirements_V1.xlsx</code>. A new V
+        number updates that event&apos;s document; each V number can be uploaded once.
+      </p>
       {error && <p className="error">{error}</p>}
       {result && <UploadResult result={result} />}
     </form>
@@ -156,7 +159,7 @@ function DocumentList({ documents, selectedId, onSelect, onCreated, identity }) 
   return (
     <aside className="panel sidebar">
       <h2>Documents</h2>
-      {identity.role === 'network-admin' && <NewDocumentForm identity={identity} onCreated={onCreated} />}
+      {identity.role === 'network-admin' && <UploadForm identity={identity} onCreated={onCreated} />}
       <ul className="doc-list">
         {documents.map((d) => (
           <li key={d.id}>
@@ -166,7 +169,7 @@ function DocumentList({ documents, selectedId, onSelect, onCreated, identity }) 
             >
               <span>{d.name}</span>
               <span className="muted small">
-                {d.latest_ready_version ? `v${d.latest_ready_version}` : 'no versions'}
+                {d.latest_ready_version ? `V${d.latest_ready_version}` : 'no versions'}
               </span>
             </button>
           </li>
@@ -266,7 +269,7 @@ function VersionTable({ documentId, versions, identity, onView }) {
             <tbody>
               {versions.map((v) => (
                 <tr key={v.id}>
-                  <td>v{v.version}</td>
+                  <td>V{v.version}</td>
                   <td>{v.uploaded_by}</td>
                   <td>{formatTime(v.uploaded_at)}</td>
                   <td>
@@ -357,7 +360,7 @@ export default function App() {
         const url = URL.createObjectURL(file.blob)
         setPreview((p) => {
           if (p?.url) URL.revokeObjectURL(p.url)
-          return { url, title: `${documentName} · v${file.version}` }
+          return { url, title: `${documentName} · V${file.version}` }
         })
       } catch (err) {
         setError(err.message)
@@ -407,7 +410,10 @@ export default function App() {
           onSelect={setSelectedId}
           onCreated={(doc) => {
             refreshDocuments()
-            setSelectedId(doc.id)
+            // Selecting a different document reloads its versions; when the upload
+            // added a version to the open document, reload them explicitly.
+            if (doc.id === selectedId) refreshVersions()
+            else setSelectedId(doc.id)
           }}
         />
         <div className="content">
@@ -434,7 +440,7 @@ export default function App() {
           ) : (
             <p className="muted">
               {identity.role === 'network-admin'
-                ? 'Upload a new document or select one to get started.'
+                ? 'Upload a file or select a document to get started.'
                 : 'Select a document to get started.'}
             </p>
           )}

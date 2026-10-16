@@ -343,3 +343,7 @@ th {
 .small {
   font-size: 0.85rem;
 }
+
+.small code {
+  overflow-wrap: anywhere;
+}

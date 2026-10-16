@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # End-to-end smoke test against a running stack (docker compose up).
 #
-# For every samples/*.xlsx (directory overridable with SAMPLES_DIR): create a
-# document from the file, download the PDF as viewer and as network-admin,
+# For every samples/*.xlsx (directory overridable with SAMPLES_DIR): upload it
+# as V1 of a throwaway SMOKE<n> event, download the PDF as viewer and as network-admin,
 # then check
 #   a) both roles receive the same PDF
 #   b) pdffonts lists Overpass and does not list DejaVu
 #   c) the PDF page count equals the number of visible sheets
 #   d) the Excel download is byte-identical to the uploaded file
-#   e) deleting the document works and removes its files (this also cleans up)
+#   e) uploading the same version number twice is rejected
+#   f) deleting the document works and removes its files (this also cleans up)
 #
 # Downloaded PDFs live in a private temp dir that is deleted on exit.
 #
@@ -56,12 +57,14 @@ for sample in "${samples[@]}"; do
   work="$TMP/${base%.xlsx}"
   mkdir -p "$work"
 
-  # --- upload as a new document ---------------------------------------------
-  # A unique name keeps repeated runs from colliding with earlier documents.
-  name="smoke ${base%.xlsx} $(date -u +%Y%m%dT%H%M%SZ)-$$"
-  code="$(curl -sS -o "$work/upload.json" -w '%{http_code}' \
-    -H "X-Role: network-admin" -H "X-User: smoke-test" \
-    -F "file=@$sample;type=$XLSX_TYPE" -F "name=$name" "$API/documents/upload")"
+  # --- upload -------------------------------------------------------------------
+  # Uploaded under a unique event code so it never touches real documents.
+  upload_name="SMOKE$$${RANDOM} _ Event_Network_Requirements_V1.xlsx"
+  upload() {
+    curl -sS -o "$1" -w '%{http_code}' -H "X-Role: network-admin" -H "X-User: smoke-test" \
+      -F "file=@$sample;type=$XLSX_TYPE;filename=$upload_name" "$API/documents/upload"
+  }
+  code="$(upload "$work/upload.json")"
   if [ "$code" != "201" ]; then
     fail "upload (HTTP $code): $(jq -r '.message // .detail // "unknown error"' "$work/upload.json" 2>/dev/null)"
     continue
@@ -117,14 +120,22 @@ for sample in "${samples[@]}"; do
     fail "d) Excel download (HTTP $code_x) differs from the uploaded file"
   fi
 
-  # --- e) delete (also cleans up the smoke document) ---------------------------
+  # --- e) same version twice ------------------------------------------------------
+  code_dup="$(upload "$work/dup.json")"
+  if [ "$code_dup" = "409" ]; then
+    pass "e) uploading V1 again is rejected"
+  else
+    fail "e) uploading V1 again returned HTTP $code_dup (expected 409)"
+  fi
+
+  # --- f) delete (also cleans up the smoke document) ---------------------------
   code_del="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE -H "X-Role: network-admin" \
     "$API/documents/$doc_id")"
   code_after="$(download "$doc_id" network-admin "$work/after.pdf")"
   if [ "$code_del" = "204" ] && [ "$code_after" = "404" ]; then
-    pass "e) document deleted; its files are no longer downloadable"
+    pass "f) document deleted; its files are no longer downloadable"
   else
-    fail "e) delete returned HTTP $code_del, download afterwards HTTP $code_after (expected 204, 404)"
+    fail "f) delete returned HTTP $code_del, download afterwards HTTP $code_after (expected 204, 404)"
   fi
 done
 

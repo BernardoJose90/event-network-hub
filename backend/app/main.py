@@ -14,6 +14,7 @@ from .config import Settings, load_settings
 from .converter import GotenbergConverter
 from .collabora import CollaboraDiscovery
 from .routes import router
+from .sheet_routes import router as sheet_router
 from .service import DocumentGone
 from .storage import LocalStorage
 from .wopi import router as wopi_router
@@ -63,6 +64,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="portal-pdf-test", lifespan=lifespan)
     app.include_router(router)
     app.include_router(wopi_router)
+    app.include_router(sheet_router)
 
     @app.exception_handler(DocumentGone)
     async def document_gone(_: Request, __: DocumentGone) -> JSONResponse:

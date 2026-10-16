@@ -108,7 +108,7 @@ async def put_file(request: Request, file_id: str, access_token: Token) -> JSONR
     settings = request.app.state.settings
     data = await request.body()
     if len(data) > settings.max_upload_bytes:
-        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "File too large")
+        raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, "File too large")
 
     def save() -> dict[str, Any]:
         conn = db.connect(settings.db_path)

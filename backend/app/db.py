@@ -33,6 +33,17 @@ CREATE TABLE IF NOT EXISTS document_versions (
     UNIQUE (document_id, version)
 );
 
+-- The editable in-app copy of a document's workbook ("live sheet"). revision
+-- increases on every save so concurrent editors can't overwrite each other.
+CREATE TABLE IF NOT EXISTS live_sheets (
+    document_id   INTEGER PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+    base_version  INTEGER NOT NULL,
+    data          TEXT NOT NULL,
+    revision      INTEGER NOT NULL,
+    updated_by    TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+);
+
 -- One row per in-browser editing session. Its first save creates
 -- saved_version; later saves in the same session update that version.
 CREATE TABLE IF NOT EXISTS edit_sessions (
@@ -283,3 +294,43 @@ def get_edit_session(conn: sqlite3.Connection, session_id: str) -> dict[str, Any
 def set_edit_session_saved_version(conn: sqlite3.Connection, session_id: str, version: int) -> None:
     with conn:
         conn.execute("UPDATE edit_sessions SET saved_version = ? WHERE id = ?", (version, session_id))
+
+
+# --- live sheets ----------------------------------------------------------
+
+
+def get_live_sheet(conn: sqlite3.Connection, document_id: int) -> dict[str, Any] | None:
+    row = conn.execute("SELECT * FROM live_sheets WHERE document_id = ?", (document_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def put_live_sheet(
+    conn: sqlite3.Connection, *, document_id: int, base_version: int, data: str, user: str
+) -> dict[str, Any]:
+    """Create the live sheet, or replace it ("start again"), bumping the revision."""
+    with conn:
+        conn.execute(
+            """
+            INSERT INTO live_sheets (document_id, base_version, data, revision, updated_by, updated_at)
+            VALUES (?, ?, ?, 1, ?, ?)
+            ON CONFLICT (document_id) DO UPDATE SET
+                base_version = excluded.base_version, data = excluded.data,
+                revision = live_sheets.revision + 1,
+                updated_by = excluded.updated_by, updated_at = excluded.updated_at
+            """,
+            (document_id, base_version, data, user, utcnow()),
+        )
+    return get_live_sheet(conn, document_id)  # type: ignore[return-value]
+
+
+def save_live_sheet(
+    conn: sqlite3.Connection, *, document_id: int, data: str, expected_revision: int, user: str
+) -> dict[str, Any] | None:
+    """Save edits if nobody saved since ``expected_revision``; None means a conflict."""
+    with conn:
+        cur = conn.execute(
+            "UPDATE live_sheets SET data = ?, revision = revision + 1, updated_by = ?, updated_at = ? "
+            "WHERE document_id = ? AND revision = ?",
+            (data, user, utcnow(), document_id, expected_revision),
+        )
+    return get_live_sheet(conn, document_id) if cur.rowcount == 1 else None

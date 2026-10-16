@@ -17,6 +17,10 @@ from app.validation import UploadRejected
         ("VAN26 Event Network Requirements V2.xlsx", "VAN26", 2),
         ("VAN26 _ Event_Network Requirements_V 4.xlsx", "VAN26", 4),
         ("van26 _ event_network_requirements_v2.xlsx", "VAN26", 2),
+        ("QAT26 Event Network Matrix [V4].xlsx", "QAT26", 4),
+        ("RIO26 Event Network Matrix (V2).xlsx", "RIO26", 2),
+        ("VAN26 _ Event Network Requirements - V8 (1).xlsx", "VAN26", 8),
+        ("LIS26 _ Event_Network_Requirements_V1 (12).xlsx", "LIS26", 1),
     ],
 )
 def test_accepted_names(filename: str, event: str, version: int) -> None:
@@ -35,7 +39,11 @@ def test_accepted_names(filename: str, event: str, version: int) -> None:
         ("Event_Network_Requirements_V1.xlsx", "event code"),
         ("LIS 26 _ Event_Network_Requirements_V1.xlsx", "event code"),
         ("LIS26 _ Event_Network_Requirements.xlsx", "must end with a version number"),
-        ("LIS26 _ Event_Network_Requirements_V1 (1).xlsx", "must end with a version number"),
+        ("LIS26 _ Event_Network_Requirements_V1 (final).xlsx", "must end with a version number"),
+        ("LIS26 _ Event_Network_Requirements_[V1.xlsx", "must end with a version number"),
+        ("LIS26 _ Event_Network_Requirements_[V1).xlsx", "must end with a version number"),
+        ("LIS26 _ Event Network Matrix.xlsx", "must end with a version number"),
+        ("LIS26 _ Network_Matrix_V1.xlsx", "must contain 'Event Network Requirements'"),
         ("LIS26 _ Event_Network_Requirements_final.xlsx", "must end with a version number"),
         ("LIS26 _ Event_Network_Requirements_V0.xlsx", "1 or higher"),
         (None, "must contain"),
@@ -52,6 +60,8 @@ def test_spelling_variants_map_to_the_same_document_and_version() -> None:
         "VAN26 _ Event Network Requirements - V1.xlsx",
         "VAN26 | Event-Network-Requirements V1.xlsx",
         "van26_event_network_requirements_v1.xlsx",
+        "VAN26 Event Network Matrix [V1].xlsx",
+        "VAN26 _ Event Network Requirements - V1 (1).xlsx",
     ]
     assert {(p.document_name, p.version) for p in map(parse_upload_name, names)} == {
         ("VAN26 | Event_Network_Requirements", 1)

@@ -122,7 +122,7 @@ function UploadForm({ identity, onCreated }) {
       </button>
       <p className="muted small">
         Excel (.xlsx) only, named like <code>LIS26 _ Event_Network_Requirements_V1.xlsx</code> (spaces,
-        _ or - between words). A new V number updates that event&apos;s document; each V number can be
+        _ or - between words; &ldquo;Event Network Matrix [V1]&rdquo; also works). A new V number updates that event&apos;s document; each V number can be
         uploaded once.
       </p>
       {error && <p className="error">{error}</p>}

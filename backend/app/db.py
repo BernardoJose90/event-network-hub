@@ -17,7 +17,9 @@ CREATE TABLE IF NOT EXISTS documents (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     name        TEXT NOT NULL UNIQUE,
     created_at  TEXT NOT NULL,
-    kind        TEXT NOT NULL DEFAULT 'event' CHECK (kind IN ('event', 'template'))
+    kind        TEXT NOT NULL DEFAULT 'event' CHECK (kind IN ('event', 'template')),
+    archived_at TEXT,  -- archived events are read-only and listed separately
+    archived_by TEXT
 );
 
 CREATE TABLE IF NOT EXISTS document_versions (
@@ -75,6 +77,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
             "ALTER TABLE documents ADD COLUMN kind TEXT NOT NULL DEFAULT 'event' "
             "CHECK (kind IN ('event', 'template'))"
         )
+    if "archived_at" not in columns:
+        conn.execute("ALTER TABLE documents ADD COLUMN archived_at TEXT")
+        conn.execute("ALTER TABLE documents ADD COLUMN archived_by TEXT")
     columns = {r["name"] for r in conn.execute("PRAGMA table_info(download_log)")}
     if "format" not in columns:
         conn.execute(
@@ -110,6 +115,9 @@ def init_db(path: Path) -> None:
         from .records import store as records_store  # records tables reference documents/versions
 
         records_store.init(conn)
+        from .records import service as records_service
+
+        records_service.purge_archived_records(conn)
         conn.commit()
     finally:
         conn.close()
@@ -165,6 +173,29 @@ def list_documents(conn: sqlite3.Connection, kind: str = "event") -> list[dict[s
         if v["document_id"] in by_id:
             by_id[v["document_id"]]["versions"].append({"version": v["version"], "status": v["status"]})
     return docs
+
+
+class EventArchived(Exception):
+    """The event is archived, so it can't be changed. ``str(exc)`` is user-facing."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(f"'{name}' is archived and read-only. Restore it to make changes.")
+
+
+def ensure_not_archived(conn: sqlite3.Connection, document_id: int) -> None:
+    """Raise EventArchived if the document is archived (missing documents are the caller's concern)."""
+    row = conn.execute("SELECT name, archived_at FROM documents WHERE id = ?", (document_id,)).fetchone()
+    if row is not None and row["archived_at"]:
+        raise EventArchived(row["name"])
+
+
+def set_document_archived(conn: sqlite3.Connection, document_id: int, *, user: str | None) -> None:
+    """Archive (user given) or restore (user None) a document."""
+    with conn:
+        conn.execute(
+            "UPDATE documents SET archived_at = ?, archived_by = ? WHERE id = ?",
+            (utcnow() if user else None, user, document_id),
+        )
 
 
 def delete_document(conn: sqlite3.Connection, document_id: int) -> None:

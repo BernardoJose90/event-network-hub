@@ -57,6 +57,15 @@ def _document(conn: sqlite3.Connection, document_id: int) -> dict[str, Any]:
     return document
 
 
+def _writable_document(conn: sqlite3.Connection, document_id: int) -> dict[str, Any]:
+    document = _document(conn, document_id)
+    try:
+        db.ensure_not_archived(conn, document_id)
+    except db.EventArchived as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    return document
+
+
 def _response(conn: sqlite3.Connection, sheet: dict[str, Any]) -> dict[str, Any]:
     latest = db.latest_version(conn, sheet["document_id"], statuses=(db.STATUS_READY,))
     return {
@@ -87,7 +96,7 @@ def start_sheet(
     request: Request, document_id: int, conn: Conn, principal: Admin, body: StartRequest | None = None
 ) -> dict[str, Any]:
     """Create the live sheet from a version (latest ready by default), or start it again."""
-    _document(conn, document_id)
+    _writable_document(conn, document_id)
     if body is not None and body.from_version is not None:
         version = db.get_version(conn, document_id, body.from_version)
         if version is None:
@@ -138,7 +147,7 @@ async def save_sheet(request: Request, document_id: int, principal: Admin) -> di
 
     conn = db.connect(request.app.state.settings.db_path)
     try:
-        _document(conn, document_id)
+        _writable_document(conn, document_id)
         current = db.get_live_sheet(conn, document_id)
         if current is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "This document has no live sheet yet")

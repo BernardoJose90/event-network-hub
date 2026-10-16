@@ -12,6 +12,7 @@ function headers(identity, json = false) {
 async function call(method, path, identity, body) {
   const res = await fetch(path, {
     method,
+    keepalive: method === 'DELETE', // pending deletes are sent while leaving the page
     headers: headers(identity, body !== undefined),
     body: body === undefined ? undefined : JSON.stringify(body),
   })
@@ -38,11 +39,9 @@ export function eventApi(documentId, identity) {
   return {
     overview: () => call('GET', `${base}/overview`, identity),
     importVersion: (replace = false) => call('POST', `${base}/import`, identity, { replace }),
-    records: (type, archived = false) => call('GET', `${base}/records/${type}${archived ? '?archived=true' : ''}`, identity),
+    records: (type) => call('GET', `${base}/records/${type}`, identity),
     create: (type, body) => call('POST', `${base}/records/${type}`, identity, body),
     update: (type, id, revision, data) => call('PATCH', `${base}/records/${type}/${id}`, identity, { revision, data }),
-    archive: (type, id, revision) => call('POST', `${base}/records/${type}/${id}/archive`, identity, { revision }),
-    restore: (type, id, revision) => call('POST', `${base}/records/${type}/${id}/restore`, identity, { revision }),
     remove: (type, id, revision) => call('DELETE', `${base}/records/${type}/${id}?revision=${revision}`, identity),
     move: (type, id, revision, beforeId) =>
       call('POST', `${base}/records/${type}/${id}/move`, identity, { revision, before_id: beforeId }),

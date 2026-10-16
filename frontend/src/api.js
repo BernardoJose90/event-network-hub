@@ -74,6 +74,15 @@ export async function createEvent({ eventCode, templateId }, identity) {
   )
 }
 
+// Admin only: archived events are read-only and listed separately; restore undoes it.
+export async function archiveDocument(documentId, identity) {
+  return json(await fetch(`/api/documents/${documentId}/archive`, { method: 'POST', headers: identityHeaders(identity) }))
+}
+
+export async function restoreDocument(documentId, identity) {
+  return json(await fetch(`/api/documents/${documentId}/restore`, { method: 'POST', headers: identityHeaders(identity) }))
+}
+
 // Admin only. Events created from the template are not affected.
 export async function deleteTemplate(templateId, identity) {
   const res = await fetch(`/api/templates/${templateId}`, { method: 'DELETE', headers: identityHeaders(identity) })

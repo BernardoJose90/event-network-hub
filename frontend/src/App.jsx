@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  archiveDocument,
   createEvent,
   deleteDocument,
   deleteTemplate,
@@ -7,6 +8,7 @@ import {
   fetchFile,
   listDocuments,
   listTemplates,
+  restoreDocument,
   listVersions,
   uploadDocument,
 } from './api.js'
@@ -226,6 +228,8 @@ function TemplateList({ identity, templates, onChanged }) {
 }
 
 function DocumentList({ documents, selectedId, viewing, onSelect, onViewVersion, onCreated, identity }) {
+  const active = documents.filter((d) => !d.archived_at)
+  const archived = documents.filter((d) => d.archived_at)
   const [templates, setTemplates] = useState([])
   const isAdmin = identity.role === 'network-admin'
   const loadTemplates = useCallback(() => {
@@ -248,48 +252,76 @@ function DocumentList({ documents, selectedId, viewing, onSelect, onViewVersion,
         </div>
       )}
       <ul className="doc-list">
-        {documents.map((d) => (
-          <li key={d.id}>
-            <button
-              className={`doc-item ${d.id === selectedId ? 'selected' : ''}`}
-              onClick={() => onSelect(d.id)}
-            >
-              <span>{d.name}</span>
-              <span className="muted small">
-                {d.versions.length} version{d.versions.length === 1 ? '' : 's'}
-              </span>
-            </button>
-            {d.versions.length > 0 && (
-              <ul className="version-list">
-                {d.versions.map((v) => (
-                  <li key={v.version}>
-                    <button
-                      className={`version-item ${v.status} ${
-                        viewing?.documentId === d.id && viewing?.version === v.version ? 'selected' : ''
-                      }`}
-                      onClick={() => onViewVersion(d, v.version)}
-                      disabled={v.status !== 'ready'}
-                      title={v.status === 'ready' ? `View V${v.version}` : `V${v.version} is ${v.status}`}
-                    >
-                      V{v.version}
-                      {v.version === d.latest_ready_version && <span className="small muted"> · latest</span>}
-                      {v.status !== 'ready' && <span className="small"> · {v.status}</span>}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </li>
-        ))}
-        {documents.length === 0 && <li className="muted">No events yet.</li>}
+        {active.map(item)}
+        {active.length === 0 && <li className="muted">No events yet.</li>}
       </ul>
+      {archived.length > 0 && (
+        <details className="archived-events" open={archived.some((d) => d.id === selectedId) || undefined}>
+          <summary className="muted small">Archived ({archived.length})</summary>
+          <ul className="doc-list">{archived.map(item)}</ul>
+        </details>
+      )}
     </aside>
   )
+
+  function item(d) {
+    return (
+      <li key={d.id}>
+        <button
+          className={`doc-item ${d.id === selectedId ? 'selected' : ''}`}
+          onClick={() => onSelect(d.id)}
+        >
+          <span>{d.name}</span>
+          <span className="muted small">
+            {d.versions.length} version{d.versions.length === 1 ? '' : 's'}
+          </span>
+        </button>
+        {d.versions.length > 0 && (
+          <ul className="version-list">
+            {d.versions.map((v) => (
+              <li key={v.version}>
+                <button
+                  className={`version-item ${v.status} ${
+                    viewing?.documentId === d.id && viewing?.version === v.version ? 'selected' : ''
+                  }`}
+                  onClick={() => onViewVersion(d, v.version)}
+                  disabled={v.status !== 'ready'}
+                  title={v.status === 'ready' ? `View V${v.version}` : `V${v.version} is ${v.status}`}
+                >
+                  V{v.version}
+                  {v.version === d.latest_ready_version && <span className="small muted"> · latest</span>}
+                  {v.status !== 'ready' && <span className="small"> · {v.status}</span>}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </li>
+    )
+  }
 }
 
-function DocumentHeader({ document, identity, onDeleted }) {
+function DocumentHeader({ document, identity, onDeleted, onChanged }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
+  const isAdmin = identity.role === 'network-admin'
+  const archived = !!document.archived_at
+
+  async function setArchived(archive) {
+    if (archive && !window.confirm(
+      `Archive "${document.name}"?\n\nIt moves to Archived and becomes read-only. Nothing is deleted, and you can restore it at any time.`,
+    )) return
+    setBusy(true)
+    setError(null)
+    try {
+      await (archive ? archiveDocument : restoreDocument)(document.id, identity)
+      onChanged()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   async function remove() {
     const ok = window.confirm(
@@ -312,10 +344,19 @@ function DocumentHeader({ document, identity, onDeleted }) {
       <div className="row space-between">
         <h2>{document.name}</h2>
         <div className="row">
-          <button onClick={() => window.location.assign(`/event/${document.id}`)} title="View and edit the requirements">
+          <button onClick={() => window.location.assign(`/event/${document.id}`)}
+            title={archived ? 'View the requirements (read-only)' : 'View and edit the requirements'}>
             Open requirements
           </button>
-          {identity.role === 'network-admin' && (
+          {isAdmin && archived && (
+            <>
+              <button className="secondary" onClick={() => setArchived(false)} disabled={busy}>Restore</button>
+              <button className="danger" onClick={remove} disabled={busy}>
+                {busy ? 'Deleting…' : 'Delete event'}
+              </button>
+            </>
+          )}
+          {isAdmin && !archived && (
             <>
               <details className="legacy">
                 <summary>Legacy</summary>
@@ -326,19 +367,25 @@ function DocumentHeader({ document, identity, onDeleted }) {
                   <p className="muted small">The Excel-style editor is on each version: Edit.</p>
                 </div>
               </details>
-              <button className="danger" onClick={remove} disabled={busy}>
-                {busy ? 'Deleting…' : 'Delete event'}
+              <button className="secondary" onClick={() => setArchived(true)} disabled={busy}>
+                Archive event
               </button>
             </>
           )}
         </div>
       </div>
+      {archived && (
+        <p className="notice info">
+          Archived {formatTime(document.archived_at)} by {document.archived_by}. Read-only: versions can be viewed and
+          downloaded{isAdmin ? '; restore it to make changes, or delete it permanently' : ''}.
+        </p>
+      )}
       {error && <p className="error">{error}</p>}
     </div>
   )
 }
 
-function VersionTable({ documentId, versions, identity, onView, onEdit }) {
+function VersionTable({ documentId, versions, identity, readOnly, onView, onEdit }) {
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
 
@@ -367,7 +414,7 @@ function VersionTable({ documentId, versions, identity, onView, onEdit }) {
           <button onClick={() => onView(null)} disabled={!hasReady || busy}>
             View
           </button>
-          {isAdmin && (
+          {isAdmin && !readOnly && (
             <button onClick={() => onEdit(latestReady)} disabled={!hasReady || busy}>
               Edit
             </button>
@@ -423,7 +470,7 @@ function VersionTable({ documentId, versions, identity, onView, onEdit }) {
                       >
                         View
                       </button>
-                      {isAdmin && (
+                      {isAdmin && !readOnly && (
                         <button
                           className="secondary"
                           onClick={() => onEdit(v.version)}
@@ -595,11 +642,13 @@ export default function App() {
                   setSelectedId(null)
                   refreshDocuments()
                 }}
+                onChanged={refreshDocuments}
               />
               <VersionTable
                 documentId={selected.id}
                 versions={versions}
                 identity={identity}
+                readOnly={!!selected.archived_at}
                 onView={(version) => viewPdf(selected.id, selected.name, version)}
                 onEdit={(version) => openEditor(selected.id, version)}
               />

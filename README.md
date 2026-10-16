@@ -56,7 +56,7 @@ For each `samples/*.xlsx`, the script uploads the file, downloads the PDF as eac
 - **f)** the in-browser editor opens: Collabora's page loads and it can read the file through WOPI;
 - **g)** the live sheet: it's created, an edit saved through the API appears in its PDF, and a stale save is refused;
 - **h)** requirements: the workbook imports into records, publishing gives the next version (PDF report in Overpass, no DejaVu), and re-importing the published Excel gives identical records and totals;
-- **i)** deleting the document works and removes its files. This also cleans up, so smoke runs leave no documents behind.
+- **i)** deleting is refused until the document is archived; then it works and removes its files. This also cleans up, so smoke runs leave no documents behind.
 
 The smoke test uploads your file under a throwaway `SMOKE<n>` event code, so it never touches your real documents.
 
@@ -97,7 +97,8 @@ backend/app/
 |--------|-----------------------------------------------|-----------------------------------------------------------|
 | GET    | `/api/documents`                              |                                                           |
 | POST   | `/api/documents/upload`                       | multipart `file` named `<EVENT> _ Event_Network_Requirements_V<n>.xlsx`. Needs `X-Role: network-admin`. Creates the event's document on first upload, otherwise adds V<n> to it. 409 if V<n> already exists, 422 for a bad name or file |
-| DELETE | `/api/documents/{id}`                         | Needs `X-Role: network-admin`. Removes the document, all versions, stored files and download log rows. 204 |
+| DELETE | `/api/documents/{id}`                         | Needs `X-Role: network-admin`. Removes the document, all versions, stored files and download log rows. 204; 409 if the event isn't archived |
+| POST   | `/api/documents/{id}/archive`, `/restore`      | Needs `X-Role: network-admin`. Archived events are read-only; restore undoes it |
 | GET    | `/api/documents/{id}/versions`                |                                                           |
 | GET    | `/api/documents/{id}/download[?version=N][&format=pdf\|xlsx]` | needs `X-Role` (`viewer` or `network-admin`). `pdf` (default) is the converted PDF, `xlsx` the original upload |
 
@@ -119,12 +120,14 @@ backend/app/
   - venue tabs, with section rows showing live subtotals;
   - click a cell to edit; VLAN and location come from the Setup lists; numbers are checked;
   - **+ Add** per section, move up and down, search.
-  - **Archive** hides an item from lists, totals and published versions. Archived items can be restored, or deleted permanently.
+  - **Delete** removes an item after a confirmation, with **Undo** for 6 seconds (the delete is only sent when that time is up, or straight away when you leave the page). History keeps the deleted values, except passwords, and published versions keep their snapshot.
   - Wi-Fi passwords are masked until **Reveal**, and every reveal is logged.
   - Wi-Fi **Band** is a dropdown: "5 GHz & 6 GHz" or "5 GHz". Other spellings ("5Ghz", "5 ghz") are normalised; an older value outside the options (e.g. "6 GHz") is kept until someone changes it.
 - **VLAN extensions:** a tick matrix per venue.
 - **Setup:** venues, Ethernet sections, Wi-Fi groups, VLANs, locations, buildings, bandwidths. A value in use can't be removed, and renaming a value updates every record that uses it.
 - **History:** every change is recorded automatically (who, when, old → new), so nobody keeps a change log by hand. Password values are never logged. An imported workbook's old "Changes - Log" appears here as legacy entries.
+
+**Archiving events.** **Archive event** on the Events page moves an event under **Archived** in the sidebar (visible to everyone). An archived event is read-only for all roles: no edits, imports, publishing, uploads or editor sessions until a network admin clicks **Restore**. Its versions can still be viewed and downloaded, and it can still be saved as a template. **Delete event** is only offered for archived events, so deleting is always a deliberate second step; the API refuses to delete an event that isn't archived. Templates aren't archived; they're deleted directly.
 
 Viewers see the same pages read-only. Editing and publishing are for network admins. Each record has a revision, so concurrent edits get "X changed this record, reload" instead of overwriting each other.
 
@@ -157,9 +160,9 @@ Code: `backend/app/records/` (models, store, service, importer, publish, routes)
 | DELETE | `/api/templates/{id}` | admin; events created from it are kept |
 | GET | `/api/events/{id}/overview` | totals, counts, lists, unpublished changes |
 | POST | `/api/events/{id}/import` | `{replace}`; from the latest ready version |
-| GET/POST | `/api/events/{id}/records/{type}` | type: `wifi`, `ethernet`, `partner`, `vlan_extension`; `?archived=true` |
-| PATCH/DELETE | `/api/events/{id}/records/{type}/{rid}` | revision checked; DELETE only for archived records |
-| POST | `/api/events/{id}/records/{type}/{rid}/archive`, `/restore`, `/move` | |
+| GET/POST | `/api/events/{id}/records/{type}` | type: `wifi`, `ethernet`, `partner`, `vlan_extension` |
+| PATCH/DELETE | `/api/events/{id}/records/{type}/{rid}` | revision checked |
+| POST | `/api/events/{id}/records/{type}/{rid}/move` | |
 | POST | `/api/events/{id}/records/wifi/{rid}/reveal` | logged |
 | POST/PATCH/DELETE | `/api/events/{id}/lists/…`, `/venues/…`, `/groups/…` | |
 | GET | `/api/events/{id}/history`, `/changes` | |

@@ -142,6 +142,7 @@ def test_no_ready_version(client: TestClient) -> None:
 def test_deleting_the_document_removes_its_sheet(client: TestClient) -> None:
     doc_id = _upload(client)
     _start(client, doc_id)
+    client.post(f"/api/documents/{doc_id}/archive", headers=ADMIN)
     client.delete(f"/api/documents/{doc_id}", headers=ADMIN)
     conn = db.connect(client.settings.db_path)
     assert conn.execute("SELECT COUNT(*) FROM live_sheets").fetchone()[0] == 0

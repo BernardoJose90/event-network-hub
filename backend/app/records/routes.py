@@ -27,7 +27,20 @@ from .publish import changes_since_last_publish, publish
 
 log = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/events/{document_id}")
+def _not_archived(request: Request, document_id: int) -> None:
+    """Archived events are read-only: every change is refused (revealing a password is a read)."""
+    if request.method in ("GET", "HEAD") or request.url.path.endswith("/reveal"):
+        return
+    conn = db.connect(request.app.state.settings.db_path)
+    try:
+        db.ensure_not_archived(conn, document_id)
+    except db.EventArchived as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    finally:
+        conn.close()
+
+
+router = APIRouter(prefix="/api/events/{document_id}", dependencies=[Depends(_not_archived)])
 events_router = APIRouter(prefix="/api")  # creating events, event templates
 
 RecordTypePath = Literal["wifi", "ethernet", "partner", "vlan_extension"]
@@ -136,10 +149,8 @@ def delete_template(template_id: int, conn: Conn, principal: Editor) -> None:
 def overview(document_id: int, conn: Conn, principal: Reader) -> dict[str, Any]:
     document = _document(conn, document_id)
     counts: dict[str, int] = {}
-    archived: dict[str, int] = {}
-    for record in store.records(conn, document_id, archived=None):
-        target = archived if record["archived_at"] else counts
-        target[record["type"]] = target.get(record["type"], 0) + 1
+    for record in store.records(conn, document_id):
+        counts[record["type"]] = counts.get(record["type"], 0) + 1
     last_publish = store.last_publish_log_id(conn, document_id)
     unpublished = [e for e in store.history(conn, document_id, after_id=last_publish or 0, limit=10_000)
                    if e["action"] not in ("reveal", "legacy", "publish")]
@@ -147,9 +158,8 @@ def overview(document_id: int, conn: Conn, principal: Reader) -> dict[str, Any]:
     lists = store.lists(conn, document_id)
     return {
         "document": document,
-        "has_records": bool(counts) or bool(archived),
+        "has_records": bool(counts),
         "counts": counts,
-        "archived": archived,
         "venues": store.venues(conn, document_id),
         "groups": store.groups(conn, document_id),
         "lists": lists,
@@ -214,10 +224,9 @@ def import_version(request: Request, document_id: int, conn: Conn, principal: Ed
 
 @router.get("/records/{record_type}")
 def list_records(document_id: int, record_type: RecordTypePath, conn: Conn, principal: Reader,
-                 archived: bool = False) -> list[dict[str, Any]]:
-    """Active records, or with ?archived=true the archived ones."""
+                 ) -> list[dict[str, Any]]:
     _document(conn, document_id)
-    return [service.public(r) for r in store.records(conn, document_id, record_type, archived=archived)]
+    return [service.public(r) for r in store.records(conn, document_id, record_type)]
 
 
 @router.post("/records/{record_type}", status_code=status.HTTP_201_CREATED)
@@ -245,26 +254,6 @@ def delete_record(document_id: int, record_type: RecordTypePath, record_id: int,
     _document(conn, document_id)
     _run(lambda: service.delete_record(conn, document_id, record_type, record_id, revision=revision,
                                        user=principal.user))
-
-
-class RevisionOnly(BaseModel):
-    revision: int = Field(ge=1)
-
-
-@router.post("/records/{record_type}/{record_id}/archive")
-def archive_record(document_id: int, record_type: RecordTypePath, record_id: int, body: RevisionOnly,
-                   conn: Conn, principal: Editor) -> dict[str, Any]:
-    _document(conn, document_id)
-    return service.public(_run(lambda: service.set_archived(
-        conn, document_id, record_type, record_id, revision=body.revision, archived=True, user=principal.user)))
-
-
-@router.post("/records/{record_type}/{record_id}/restore")
-def restore_record(document_id: int, record_type: RecordTypePath, record_id: int, body: RevisionOnly,
-                   conn: Conn, principal: Editor) -> dict[str, Any]:
-    _document(conn, document_id)
-    return service.public(_run(lambda: service.set_archived(
-        conn, document_id, record_type, record_id, revision=body.revision, archived=False, user=principal.user)))
 
 
 @router.post("/records/{record_type}/{record_id}/move")

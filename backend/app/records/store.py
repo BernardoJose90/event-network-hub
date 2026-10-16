@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS records (
     revision     INTEGER NOT NULL DEFAULT 1,
     updated_by   TEXT NOT NULL,
     updated_at   TEXT NOT NULL,
-    archived_at  TEXT,  -- archived records are hidden from lists, totals and publishing
+    archived_at  TEXT,  -- no longer set: archived records are deleted at start-up (see service.py)
     archived_by  TEXT
 );
 CREATE INDEX IF NOT EXISTS records_by_type ON records (document_id, type, venue_id, group_id, sort);
@@ -173,15 +173,6 @@ def insert_record(conn: sqlite3.Connection, *, doc: int, record_type: str, venue
         "INSERT INTO records (document_id, type, venue_id, group_id, sort, data, updated_by, updated_at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (doc, record_type, venue_id, group_id, sort, json.dumps(data), user, utcnow())).lastrowid
-
-
-def set_archived(conn: sqlite3.Connection, *, record_id: int, expected_revision: int, user: str,
-                 archived: bool) -> bool:
-    cur = conn.execute(
-        "UPDATE records SET archived_at = ?, archived_by = ?, revision = revision + 1, updated_by = ?, "
-        "updated_at = ? WHERE id = ? AND revision = ?",
-        (utcnow() if archived else None, user if archived else None, user, utcnow(), record_id, expected_revision))
-    return cur.rowcount == 1
 
 
 def update_record(conn: sqlite3.Connection, *, record_id: int, expected_revision: int, user: str,

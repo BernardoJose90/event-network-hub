@@ -45,9 +45,11 @@ export default function EventPage({ documentId }) {
     refresh()
   }, [refresh])
 
-  const notify = useCallback((message, tone = 'info', retry) => {
-    setNotice({ message, tone, retry })
-    if (tone === 'ok') setTimeout(() => setNotice((n) => (n?.message === message ? null : n)), 4000)
+  // action: { label, run } shows a button such as Undo; timeout (ms) hides the notice again.
+  const notify = useCallback((message, tone = 'info', retry, action, timeout) => {
+    setNotice({ message, tone, retry, action })
+    const ms = timeout ?? (tone === 'ok' ? 4000 : null)
+    if (ms) setTimeout(() => setNotice((n) => (n?.message === message ? null : n)), ms)
   }, [])
 
   function goTo(next) {
@@ -110,7 +112,9 @@ export default function EventPage({ documentId }) {
     )
   }
 
-  const props = { api, overview, isAdmin, notify, onChanged: refresh }
+  const archived = !!overview.document.archived_at
+  const canEdit = isAdmin && !archived // archived events are read-only, even for admins
+  const props = { api, overview, isAdmin: canEdit, notify, onChanged: refresh }
   return (
     <div className="event-page">
       <header className="sheet-bar">
@@ -118,7 +122,9 @@ export default function EventPage({ documentId }) {
         <button className="secondary" onClick={back}>← Events</button>
         <strong className="sheet-title">{overview.document.name}</strong>
         <span className="muted small">
-          {isTemplate ? <span className="tag">Template</span> : 'Requirements'}{isAdmin ? '' : ' · read only'}
+          {isTemplate ? <span className="tag">Template</span> : 'Requirements'}
+          {archived && <span className="tag"> Archived</span>}
+          {canEdit ? '' : ' · read only'}
         </span>
         <span className="sheet-status">
           {isTemplate ? '' : overview.unpublished_changes > 0 ? `${overview.unpublished_changes} unpublished change(s)` : overview.has_records ? 'All published' : ''}
@@ -126,7 +132,7 @@ export default function EventPage({ documentId }) {
         {isAdmin && !isTemplate && overview.has_records && (
           <button className="secondary" onClick={saveAsTemplate}>Save as template</button>
         )}
-        {isAdmin && !isTemplate && overview.has_records && (
+        {canEdit && !isTemplate && overview.has_records && (
           <button onClick={publish} disabled={publishing || overview.unpublished_changes === 0}>
             {publishing ? 'Publishing…' : `Publish V${(overview.latest_version || 0) + 1}`}
           </button>
@@ -138,7 +144,17 @@ export default function EventPage({ documentId }) {
           {notice.retry && (
             <button className="link" onClick={() => { notice.retry(); refresh(); setNotice(null) }}>Reload</button>
           )}
+          {notice.action && (
+            <button className="link" onClick={() => { notice.action.run(); setNotice(null) }}>{notice.action.label}</button>
+          )}
           <button className="link" onClick={() => setNotice(null)} aria-label="Dismiss">✕</button>
+        </div>
+      )}
+      {archived && (
+        <div className="notice info event-notice">
+          <span>
+            This event is archived and read-only.{isAdmin ? ' Restore it on the Events page to make changes.' : ''}
+          </span>
         </div>
       )}
       <div className="event-body">

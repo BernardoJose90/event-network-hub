@@ -211,6 +211,7 @@ PY
       summary='{counts, totals: [.totals.ethernet[] | {venue, total, sections: [.sections[].ports]}]}'
       a="$(curl -sS "${admin[@]}" "$ev/overview" | jq -c "$summary")"
       b="$(curl -sS "${admin[@]}" "$API/events/$rt_id/overview" | jq -c "$summary")"
+      curl -sS -o /dev/null -X POST "${admin[@]}" "$API/documents/$rt_id/archive"
       curl -sS -o /dev/null -X DELETE "${admin[@]}" "$API/documents/$rt_id"
     fi
     records="$(jq -r '[.counts[]] | add // 0' "$work/import.json")"
@@ -222,14 +223,18 @@ PY
   fi
   if [ "$h_ok" = yes ]; then pass "h) requirements: $h_detail"; else fail "h) requirements: $h_detail"; fi
 
-  # --- i) delete (also cleans up the smoke document) ---------------------------
+  # --- i) archive, then delete (also cleans up the smoke document) -------------
+  code_early="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE -H "X-Role: network-admin" \
+    "$API/documents/$doc_id")"
+  code_arch="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "X-Role: network-admin" \
+    "$API/documents/$doc_id/archive")"
   code_del="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE -H "X-Role: network-admin" \
     "$API/documents/$doc_id")"
   code_after="$(download "$doc_id" network-admin "$work/after.pdf")"
-  if [ "$code_del" = "204" ] && [ "$code_after" = "404" ]; then
-    pass "i) document deleted; its files are no longer downloadable"
+  if [ "$code_early" = "409" ] && [ "$code_arch" = "200" ] && [ "$code_del" = "204" ] && [ "$code_after" = "404" ]; then
+    pass "i) delete refused until archived; then deleted and its files are no longer downloadable"
   else
-    fail "i) delete returned HTTP $code_del, download afterwards HTTP $code_after (expected 204, 404)"
+    fail "i) delete before archive HTTP $code_early, archive HTTP $code_arch, delete HTTP $code_del, download afterwards HTTP $code_after (expected 409, 200, 204, 404)"
   fi
 done
 

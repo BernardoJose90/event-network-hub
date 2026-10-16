@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { TITLES } from './columns.js'
+import { usePendingDeletes } from './pendingDeletes.js'
 
 // --- Overview ----------------------------------------------------------------
 
@@ -97,10 +98,9 @@ export function Overview({ overview, api, isAdmin, notify, onChanged, onPublish,
               <p>
                 <strong>{totalPoints}</strong> points
                 <span className="muted small"> · {count(type)} item{count(type) === 1 ? '' : 's'}</span>
-                {overview.archived?.[type] ? <span className="muted small"> · {overview.archived[type]} archived</span> : null}
               </p>
             ) : (
-              <p><strong>{count(type)}</strong>{overview.archived?.[type] ? <span className="muted"> · {overview.archived[type]} archived</span> : null}</p>
+              <p><strong>{count(type)}</strong></p>
             )}
           </button>
         ))}
@@ -214,14 +214,12 @@ export function VlanMatrix({ api, overview, isAdmin, notify, onChanged }) {
     }
   }
 
-  async function archive(row) {
-    try {
-      await api.archive('vlan_extension', row.id, row.revision)
-      setRows((rs) => rs.filter((r) => r.id !== row.id))
-      onChanged()
-    } catch (err) {
-      notify(err.message, 'error')
-    }
+  const pending = usePendingDeletes(api, 'vlan_extension', notify, onChanged, load)
+
+  function remove(row) {
+    if (!window.confirm(`Delete the VLAN extension ${row.data.vlan || ''}?`.replace(' ?', '?'))) return
+    setRows((rs) => rs.filter((r) => r.id !== row.id))
+    pending.schedule(row, `Deleted VLAN extension ${row.data.vlan || ''}`.trim())
   }
 
   return (
@@ -235,7 +233,7 @@ export function VlanMatrix({ api, overview, isAdmin, notify, onChanged }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
+          {rows.filter((r) => !pending.isPending(r.id)).map((row) => (
             <tr key={row.id}>
               <td>
                 {isAdmin ? (
@@ -254,7 +252,7 @@ export function VlanMatrix({ api, overview, isAdmin, notify, onChanged }) {
                     onChange={(e) => save(row, { venues: { ...row.data.venues, [v.id]: e.target.checked } })} />
                 </td>
               ))}
-              {isAdmin && <td className="rec-actions"><button className="archive" onClick={() => archive(row)}>Archive</button></td>}
+              {isAdmin && <td className="rec-actions"><button className="danger" onClick={() => remove(row)}>Delete</button></td>}
             </tr>
           ))}
           {rows.length === 0 && <tr><td colSpan={overview.venues.length + 2} className="muted">No VLAN extensions.</td></tr>}

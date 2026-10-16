@@ -234,6 +234,7 @@ def test_put_file_rejects_non_xlsx(client: TestClient) -> None:
 def test_wopi_after_document_deleted(client: TestClient) -> None:
     doc_id = _doc(client)
     file_id, token = _start(client, doc_id)
+    client.post(f"/api/documents/{doc_id}/archive", headers=ADMIN)
     client.delete(f"/api/documents/{doc_id}", headers=ADMIN)
     assert client.get(f"/wopi/files/{file_id}", params={"access_token": token}).status_code == 404
     r = client.post(f"/wopi/files/{file_id}/contents", params={"access_token": token}, content=_wb("x"))
@@ -243,6 +244,7 @@ def test_wopi_after_document_deleted(client: TestClient) -> None:
 def test_session_rows_are_removed_with_document(client: TestClient) -> None:
     doc_id = _doc(client)
     _start(client, doc_id)
+    client.post(f"/api/documents/{doc_id}/archive", headers=ADMIN)
     client.delete(f"/api/documents/{doc_id}", headers=ADMIN)
     conn = db.connect(client.settings.db_path)
     assert conn.execute("SELECT COUNT(*) FROM edit_sessions").fetchone()[0] == 0

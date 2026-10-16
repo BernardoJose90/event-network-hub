@@ -164,21 +164,19 @@ def test_create_update_delete_are_logged(client: TestClient, event: int) -> None
                      json={"revision": created["revision"], "data": {"ports": 7, "notes": "BOH"}})
     assert r.status_code == 200 and r.json()["revision"] == created["revision"] + 1
     url = f"/api/events/{event}/records/ethernet/{created['id']}"
-    assert client.delete(f"{url}?revision={r.json()['revision']}", headers=ADMIN).status_code == 409  # archive first
-    r = client.post(f"{url}/archive", headers=ADMIN, json={"revision": r.json()["revision"]})
-    assert r.status_code == 200 and r.json()["archived_by"] == "alice"
+    assert client.delete(f"{url}?revision={created['revision']}", headers=ADMIN).status_code == 409  # stale
     r = client.delete(f"{url}?revision={r.json()['revision']}", headers=ADMIN)
     assert r.status_code == 204
 
     log = client.get(f"/api/events/{event}/history?entity=ethernet", headers=ADMIN).json()
     assert [(e["action"], e["field"], e["old"], e["new"]) for e in log] == [
         ("delete", None, '{"purpose": "Stage 3", "vlan": "General", "ports": 7, "notes": "BOH"}', None),
-        ("archive", None, None, None),
         ("update", "ports", "5", "7"),
         ("update", "notes", None, "BOH"),
         ("create", None, None, None),
     ]
-    assert log[2]["summary"] == "Changed Ethernet Points of Ethernet requirement 'Stage 3'"
+    assert log[0]["summary"] == "Deleted Ethernet requirement 'Stage 3'"
+    assert log[1]["summary"] == "Changed Ethernet Points of Ethernet requirement 'Stage 3'"
 
 
 def test_password_changes_are_logged_without_values(client: TestClient, event: int) -> None:
@@ -268,6 +266,7 @@ def test_venues_and_sections(client: TestClient, event: int) -> None:
 
 
 def test_deleting_the_document_removes_its_records(client: TestClient, event: int) -> None:
+    client.post(f"/api/documents/{event}/archive", headers=ADMIN)
     client.delete(f"/api/documents/{event}", headers=ADMIN)
     conn = db.connect(client.settings.db_path)
     counts = [conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
@@ -369,39 +368,36 @@ def test_report_escapes_text(client: TestClient, event: int) -> None:
 
 
 
-def test_archive_hides_and_restore_brings_back(client: TestClient, event: int) -> None:
+def test_delete_removes_from_totals_and_reports(client: TestClient, event: int) -> None:
     eth = _find(client, event, "ethernet", purpose="FoodTrucks / Bar")
     url = f"/api/events/{event}/records/ethernet/{eth['id']}"
-    r = client.post(f"{url}/archive", headers=ADMIN, json={"revision": eth["revision"]})
-    archived = r.json()
-
+    assert client.delete(f"{url}?revision={eth['revision']}", headers=VIEWER).status_code == 403
+    assert client.delete(f"{url}?revision={eth['revision']}", headers=ADMIN).status_code == 204
     assert all(x["id"] != eth["id"] for x in _records(client, event, "ethernet"))
-    assert [x["id"] for x in client.get(f"/api/events/{event}/records/ethernet?archived=true", headers=VIEWER).json()] == [eth["id"]]
     ov = client.get(f"/api/events/{event}/overview", headers=ADMIN).json()
     assert ov["totals"]["ethernet"][0]["sections"][0]["ports"] == 13  # 111 - 98
-    assert (ov["counts"]["ethernet"], ov["archived"]) == (6, {"ethernet": 1})
+    assert ov["counts"]["ethernet"] == 6 and "archived" not in ov
     client.post(f"/api/events/{event}/publish", headers=ADMIN)
     html = client.app.state.converter.html
     assert "<td>FoodTrucks / Bar</td>" not in html  # not in the tables…
-    assert "Archived Ethernet requirement &#x27;FoodTrucks / Bar&#x27;" in html  # …only in the change list
-
-    patch = client.patch(url, headers=ADMIN, json={"revision": archived["revision"], "data": {"ports": 1}})
-    assert patch.status_code == 409 and "Restore it" in patch.json()["detail"]
-    r = client.post(f"{url}/restore", headers=ADMIN, json={"revision": archived["revision"]})
-    assert r.status_code == 200 and r.json()["archived_at"] is None
-    assert client.get(f"/api/events/{event}/overview", headers=ADMIN).json()["totals"]["ethernet"][0]["sections"][0]["ports"] == 111
-    assert [e["action"] for e in client.get(f"/api/events/{event}/history?entity=ethernet", headers=ADMIN).json()[:2]] == [
-        "restore", "archive"]
-    assert client.post(f"{url}/archive", headers=VIEWER, json={"revision": 1}).status_code == 403
+    assert "Deleted Ethernet requirement &#x27;FoodTrucks / Bar&#x27;" in html  # …only in the change list
+    assert client.post(f"{url}/archive", headers=ADMIN, json={"revision": 1}).status_code in (404, 405)
 
 
-def test_archived_records_still_block_list_and_section_deletes(client: TestClient, event: int) -> None:
+def test_records_archived_before_the_change_are_deleted_at_start_up(client: TestClient, event: int) -> None:
     eth = _find(client, event, "ethernet", purpose="FoodTrucks / Bar")
-    client.post(f"/api/events/{event}/records/ethernet/{eth['id']}/archive", headers=ADMIN, json={"revision": eth["revision"]})
-    lists = client.get(f"/api/events/{event}/overview", headers=ADMIN).json()["lists"]
-    catering = next(i for i in lists if i["value"] == "Operational_Catering")
-    assert client.delete(f"/api/events/{event}/lists/item/{catering['id']}", headers=ADMIN).status_code == 409
-
+    conn = db.connect(client.settings.db_path)
+    with conn:
+        conn.execute("UPDATE records SET archived_at = '2026-01-01T00:00:00+00:00', archived_by = 'bob' WHERE id = ?",
+                     (eth["id"],))
+    conn.close()
+    db.init_db(client.settings.db_path)
+    conn = db.connect(client.settings.db_path)
+    assert conn.execute("SELECT COUNT(*) FROM records WHERE id = ?", (eth["id"],)).fetchone()[0] == 0
+    conn.close()
+    entry = client.get(f"/api/events/{event}/history?entity=ethernet", headers=ADMIN).json()[0]
+    assert (entry["action"], entry["user"]) == ("delete", "bob")
+    assert "FoodTrucks / Bar" in entry["old"] and "it was archived" in entry["summary"]
 
 
 def test_vlan_extension_ticks_are_logged_by_venue_name(client: TestClient, event: int) -> None:
@@ -505,9 +501,6 @@ def _save_template(client, event, name="LIS", headers=ADMIN):
 
 
 def test_save_template(client: TestClient, event: int) -> None:
-    wifi = _records(client, event, "wifi")
-    client.post(f"/api/events/{event}/records/wifi/{wifi[0]['id']}/archive", headers=ADMIN,
-                json={"revision": wifi[0]["revision"]})
     r = _save_template(client, event, "lis")
     assert r.status_code == 201, r.text
     tpl = r.json()
@@ -523,7 +516,7 @@ def test_save_template(client: TestClient, event: int) -> None:
     assert [v["name"] for v in new["venues"]] == [v["name"] for v in src["venues"]]
     assert [(g["kind"], g["name"]) for g in new["groups"]] == [(g["kind"], g["name"]) for g in src["groups"]]
     assert [(i["kind"], i["value"]) for i in new["lists"]] == [(i["kind"], i["value"]) for i in src["lists"]]
-    assert new["counts"] == {k: v for k, v in src["counts"].items() if k != "partner"}  # active, no partners
+    assert new["counts"] == {k: v for k, v in src["counts"].items() if k != "partner"}  # no partners
     assert all(t["total"] == 0 for t in new["totals"]["ethernet"])
     assert all(r["data"]["ports"] == 0 for r in _records(client, tpl["id"], "ethernet"))
     assert not any(r["has_password"] for r in _records(client, tpl["id"], "wifi"))
@@ -634,3 +627,55 @@ def test_templates_keep_points_at_zero_and_notes_empty(client: TestClient, event
     r = client.patch(f"/api/events/{doc}/records/ethernet/{rec['id']}", headers=ADMIN,
                      json={"revision": rec["revision"], "data": {"ports": 3, "notes": "two desks"}})
     assert r.status_code == 200
+
+
+# --- archived events ------------------------------------------------------------------
+
+
+def test_archive_event_makes_it_read_only(client: TestClient, event: int) -> None:
+    assert client.delete(f"/api/documents/{event}", headers=ADMIN).status_code == 409  # archive first
+    assert client.post(f"/api/documents/{event}/archive", headers=VIEWER).status_code == 403
+    r = client.post(f"/api/documents/{event}/archive", headers=ADMIN)
+    assert r.status_code == 200 and r.json()["archived_by"] == "alice" and r.json()["archived_at"]
+    # still listed (flagged) and readable by everyone
+    assert client.get("/api/documents").json()[0]["archived_at"]
+    assert client.get(f"/api/events/{event}/overview", headers=VIEWER).status_code == 200
+    rec = _records(client, event, "wifi", headers=VIEWER)[0]
+    assert client.post(f"/api/events/{event}/records/wifi/{rec['id']}/reveal", headers=VIEWER).status_code == 200
+
+    # every change is refused
+    ov = client.get(f"/api/events/{event}/overview", headers=ADMIN).json()
+    refused = [
+        client.patch(f"/api/events/{event}/records/wifi/{rec['id']}", headers=ADMIN,
+                     json={"revision": rec["revision"], "data": {"ssid": "x"}}),
+        client.delete(f"/api/events/{event}/records/wifi/{rec['id']}?revision={rec['revision']}", headers=ADMIN),
+        client.post(f"/api/events/{event}/lists/vlan", headers=ADMIN, json={"value": "New"}),
+        client.post(f"/api/events/{event}/venues", headers=ADMIN, json={"name": "Hall 9"}),
+        client.post(f"/api/events/{event}/publish", headers=ADMIN),
+        client.post(f"/api/events/{event}/import", headers=ADMIN, json={"replace": True}),
+        client.post(f"/api/documents/{event}/versions/1/edit", headers=ADMIN),
+        client.post(f"/api/documents/{event}/sheet", headers=ADMIN, json={}),
+        client.post("/api/documents/upload", headers=ADMIN,
+                    files={"file": ("LIS26 _ Event_Network_Requirements_V2.xlsx", records_workbook(), XLSX)}),
+    ]
+    assert [r.status_code for r in refused] == [409] * len(refused), [r.text for r in refused]
+    assert "archived and read-only" in refused[0].json()["detail"]
+    assert ov["counts"] == client.get(f"/api/events/{event}/overview", headers=ADMIN).json()["counts"]
+
+    # a template can still be made from it
+    assert _save_template(client, event).status_code == 201
+
+    # restore makes it editable again; delete needs archiving again
+    assert client.post(f"/api/documents/{event}/restore", headers=ADMIN).json()["archived_at"] is None
+    r = client.patch(f"/api/events/{event}/records/wifi/{rec['id']}", headers=ADMIN,
+                     json={"revision": rec["revision"], "data": {"ssid": "x"}})
+    assert r.status_code == 200
+    assert client.delete(f"/api/documents/{event}", headers=ADMIN).status_code == 409
+    client.post(f"/api/documents/{event}/archive", headers=ADMIN)
+    assert client.delete(f"/api/documents/{event}", headers=ADMIN).status_code == 204
+
+
+def test_templates_are_not_archived_and_delete_directly(client: TestClient, event: int) -> None:
+    tpl = _save_template(client, event).json()["id"]
+    assert client.post(f"/api/documents/{tpl}/archive", headers=ADMIN).status_code == 409
+    assert client.delete(f"/api/templates/{tpl}", headers=ADMIN).status_code == 204

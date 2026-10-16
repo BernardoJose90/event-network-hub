@@ -902,15 +902,6 @@ th {
   font-size: 0.9rem;
 }
 
-.rec-archived-toggle {
-  margin-left: auto;
-  font-size: 0.85rem;
-  color: var(--muted);
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-
 .rec-scroll {
   overflow-x: auto;
 }
@@ -992,16 +983,6 @@ button.icon {
   color: var(--text);
   border-color: var(--border);
   padding: 2px 7px;
-}
-
-button.archive {
-  background: #fbe9e7;
-  color: #9a3412;
-  border-color: #f5c6bd;
-}
-
-button.archive:hover:not(:disabled) {
-  background: #f8d7d0;
 }
 
 button.link {
@@ -1373,4 +1354,17 @@ tr.rec-group.wifi td {
 
 .sheet-bar .brand-mark {
   height: 24px;
+}
+
+.archived-events {
+  margin-top: 8px;
+}
+
+.archived-events summary {
+  cursor: pointer;
+  margin-bottom: 4px;
+}
+
+.archived-events .doc-item {
+  opacity: 0.75;
 }

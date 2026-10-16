@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CHOICE_LABELS, COLUMNS, recordName } from './columns.js'
+import { usePendingDeletes } from './pendingDeletes.js'
 
 const GROUPED = { wifi: 'wifi', ethernet: 'ethernet' }
 
@@ -75,7 +76,6 @@ export default function RecordTable({ type, api, overview, isAdmin, notify, onCh
   const groups = groupKind ? overview.groups.filter((g) => g.kind === groupKind) : [null]
   const [venueId, setVenueId] = useState(venues[0]?.id ?? null)
   const [records, setRecords] = useState([])
-  const [archivedMode, setArchivedMode] = useState(false)
   const [search, setSearch] = useState('')
   const [editing, setEditing] = useState(null) // { id, field }
   const [revealed, setRevealed] = useState({})
@@ -90,13 +90,13 @@ export default function RecordTable({ type, api, overview, isAdmin, notify, onCh
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      setRecords(await api.records(type, archivedMode))
+      setRecords(await api.records(type))
     } catch (err) {
       notify(err.message, 'error')
     } finally {
       setLoading(false)
     }
-  }, [api, type, archivedMode, notify])
+  }, [api, type, notify])
 
   useEffect(() => {
     load()
@@ -105,7 +105,6 @@ export default function RecordTable({ type, api, overview, isAdmin, notify, onCh
   useEffect(() => {
     setEditing(null)
     setSearch('')
-    setArchivedMode(false)
   }, [type])
 
   const replace = (updated) => setRecords((rs) => rs.map((r) => (r.id === updated.id ? updated : r)))
@@ -165,24 +164,13 @@ export default function RecordTable({ type, api, overview, isAdmin, notify, onCh
     if (await act(() => api.move(type, record.id, record.revision, beforeId))) load()
   }
 
-  async function archive(record) {
-    if (await act(() => api.archive(type, record.id, record.revision), `Archived ${recordName(type, record.data)}`)) {
-      setRecords((rs) => rs.filter((r) => r.id !== record.id))
-    }
-  }
+  const pending = usePendingDeletes(api, type, notify, onChanged, load)
 
-  async function restore(record) {
-    if (await act(() => api.restore(type, record.id, record.revision), `Restored ${recordName(type, record.data)}`)) {
-      setRecords((rs) => rs.filter((r) => r.id !== record.id))
-    }
-  }
-
-  async function destroy(record) {
-    const ok = window.confirm(`Permanently delete ${recordName(type, record.data)}? This can't be undone.`)
-    if (!ok) return
-    if (await act(() => api.remove(type, record.id, record.revision), 'Deleted permanently')) {
-      setRecords((rs) => rs.filter((r) => r.id !== record.id))
-    }
+  function remove(record) {
+    if (!window.confirm(`Delete ${recordName(type, record.data)}?`)) return
+    setEditing(null)
+    setRecords((rs) => rs.filter((r) => r.id !== record.id))
+    pending.schedule(record, `Deleted ${recordName(type, record.data)}`)
   }
 
   async function reveal(record) {
@@ -198,8 +186,9 @@ export default function RecordTable({ type, api, overview, isAdmin, notify, onCh
     }
   }
 
-  const visible = records.filter((r) => (!groupKind || archivedMode || r.venue_id === venueId) && matches(r, search))
-  const canEdit = isAdmin && !archivedMode
+  const visible = records.filter((r) => !pending.isPending(r.id) && (!groupKind || r.venue_id === venueId)
+    && matches(r, search))
+  const canEdit = isAdmin
   const isTemplate = overview.document.kind === 'template'
   const totalCol = columns.find((c) => c.total)
   const sum = (rows) => rows.reduce((t, r) => t + (Number(r.data[totalCol?.field]) || 0), 0)
@@ -245,19 +234,10 @@ export default function RecordTable({ type, api, overview, isAdmin, notify, onCh
         {columns.map((col) => cell(record, col))}
         {isAdmin && (
           <td className="rec-actions">
-            {archivedMode ? (
-              <>
-                <button className="secondary" onClick={() => restore(record)}>Restore</button>
-                <button className="danger" onClick={() => destroy(record)}>Delete</button>
-              </>
-            ) : (
-              <>
-                <button className="icon" title="Move up" disabled={index <= 0 || !!search} onClick={() => move(record, -1)}>↑</button>
-                <button className="icon" title="Move down" disabled={index === list.length - 1 || !!search}
-                  onClick={() => move(record, 1)}>↓</button>
-                <button className="archive" onClick={() => archive(record)}>Archive</button>
-              </>
-            )}
+            <button className="icon" title="Move up" disabled={index <= 0 || !!search} onClick={() => move(record, -1)}>↑</button>
+            <button className="icon" title="Move down" disabled={index === list.length - 1 || !!search}
+              onClick={() => move(record, 1)}>↓</button>
+            <button className="danger" onClick={() => remove(record)}>Delete</button>
           </td>
         )}
       </tr>
@@ -270,7 +250,7 @@ export default function RecordTable({ type, api, overview, isAdmin, notify, onCh
   return (
     <div className="rec-panel">
       <div className="rec-toolbar">
-        {groupKind && !archivedMode && (
+        {groupKind && (
           <div className="venue-tabs" role="tablist">
             {venues.map((v) => (
               <button key={v.id} role="tab" className={v.id === venueId ? 'active' : ''} onClick={() => setVenueId(v.id)}>
@@ -281,18 +261,15 @@ export default function RecordTable({ type, api, overview, isAdmin, notify, onCh
         )}
         <input className="rec-search" type="search" placeholder="Search…" value={search}
           onChange={(e) => setSearch(e.target.value)} />
-        {totalCol && !archivedMode && (
+        {totalCol && (
           <span className="rec-total">Total {totalCol.label.toLowerCase()}: <strong>{sum(visible)}</strong></span>
         )}
-        <label className="rec-archived-toggle">
-          <input type="checkbox" checked={archivedMode} onChange={(e) => setArchivedMode(e.target.checked)} /> Show archived
-        </label>
       </div>
       <div className="rec-scroll">
         <table className="rec-table">
           <colgroup>
             {columns.map((c) => <col key={c.field} style={{ width: c.width }} />)}
-            {isAdmin && <col style={{ width: archivedMode ? 150 : 140 }} />}
+            {isAdmin && <col style={{ width: 140 }} />}
           </colgroup>
           <thead>
             <tr>
@@ -302,11 +279,7 @@ export default function RecordTable({ type, api, overview, isAdmin, notify, onCh
           </thead>
           <tbody>
             {loading && <tr><td colSpan={span} className="muted">Loading…</td></tr>}
-            {!loading && archivedMode && visible.length === 0 && (
-              <tr><td colSpan={span} className="muted">Nothing archived.</td></tr>
-            )}
-            {!loading && archivedMode && visible.map(row)}
-            {!loading && !archivedMode && groups.map((group) => {
+            {!loading && groups.map((group) => {
               const rows = visible.filter((r) => (group ? r.group_id === group.id : true))
               return [
                 group && (
@@ -330,7 +303,7 @@ export default function RecordTable({ type, api, overview, isAdmin, notify, onCh
                 ...rows.map(row),
               ]
             })}
-            {!loading && !archivedMode && !groupKind && visible.length === 0 && (
+            {!loading && !groupKind && visible.length === 0 && (
               <tr><td colSpan={span} className="muted">No {type === 'partner' ? 'partner orders' : 'items'} yet.</td></tr>
             )}
           </tbody>

@@ -106,6 +106,7 @@ def upload_file(
     """
     warnings = find_formula_errors(data)
     document = find_or_create_document(conn, parsed.document_name)
+    db.ensure_not_archived(conn, document["id"])
     version = _claim_version(
         conn, storage, document=document, version=parsed.version, sha256=sha256_hex(data),
         uploaded_by=uploaded_by, warnings=warnings,
@@ -160,6 +161,7 @@ def allocate_next_version(
     warnings: list[dict[str, str]], edited_from: int | None, source: str,
 ) -> dict[str, Any]:
     """Insert the version after the newest one, retrying if a concurrent save or upload took it."""
+    db.ensure_not_archived(conn, document_id)
     for _ in range(MAX_VERSION_ALLOCATION_ATTEMPTS):
         number = db.max_version(conn, document_id) + 1
         try:

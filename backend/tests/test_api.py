@@ -180,6 +180,8 @@ def test_admin_deletes_document_with_everything(client: TestClient) -> None:
     files_dir = client.settings.files_dir / "documents" / str(doc_id)
     assert files_dir.exists()
 
+    client.post(f"/api/documents/{doc_id}/archive", headers=ADMIN)
+
     r = client.delete(f"/api/documents/{doc_id}", headers=ADMIN)
 
     assert r.status_code == 204
@@ -196,6 +198,7 @@ def test_admin_deletes_document_with_everything(client: TestClient) -> None:
 
 def test_after_delete_the_event_can_start_again_at_v1(client: TestClient) -> None:
     doc_id = _doc_with_version(client)
+    client.post(f"/api/documents/{doc_id}/archive", headers=ADMIN)
     client.delete(f"/api/documents/{doc_id}", headers=ADMIN)
     assert _upload(client).status_code == 201
 
@@ -203,6 +206,8 @@ def test_after_delete_the_event_can_start_again_at_v1(client: TestClient) -> Non
 def test_delete_leaves_other_documents_alone(client: TestClient) -> None:
     keep = _upload(client, filename="LIS26 _ Event_Network_Requirements_V1.xlsx").json()["document"]["id"]
     drop = _upload(client, filename="LIS27 _ Event_Network_Requirements_V1.xlsx").json()["document"]["id"]
+
+    client.post(f"/api/documents/{drop}/archive", headers=ADMIN)
 
     assert client.delete(f"/api/documents/{drop}", headers=ADMIN).status_code == 204
     assert [d["id"] for d in client.get("/api/documents").json()] == [keep]

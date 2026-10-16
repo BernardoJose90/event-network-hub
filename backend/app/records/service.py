@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import Any
 
@@ -34,7 +35,7 @@ def public(record: dict[str, Any]) -> dict[str, Any]:
     for field in SECRET_FIELDS.get(record["type"], ()):
         flags[f"has_{field}"] = bool(data.pop(field, None))
     return {k: record.get(k) for k in ("id", "type", "venue_id", "group_id", "sort", "revision", "updated_by",
-                                       "updated_at", "archived_at", "archived_by")} | {"data": data} | flags
+                                       "updated_at")} | {"data": data} | flags
 
 
 def _list_values(conn: sqlite3.Connection, doc: int) -> dict[str, set[str]]:
@@ -148,17 +149,11 @@ def _conflict(record: dict[str, Any]) -> RecordError:
                             "Reload to see the latest values.")
 
 
-def _active(record: dict[str, Any]) -> None:
-    if record.get("archived_at"):
-        raise RecordError(409, "This record is archived. Restore it before changing it.")
-
-
 def update_record(conn: sqlite3.Connection, doc: int, record_type: str, record_id: int, *, revision: int,
                   changes: dict[str, Any], user: str) -> dict[str, Any]:
     record = _existing(conn, doc, record_id, record_type)
     if record["revision"] != revision:
         raise _conflict(record)
-    _active(record)
     merged = dict(record["data"])
     for field, value in changes.items():
         merged[field] = value
@@ -194,37 +189,16 @@ def update_record(conn: sqlite3.Connection, doc: int, record_type: str, record_i
     return store.get_record(conn, doc, record_id)  # type: ignore[return-value]
 
 
-def set_archived(conn: sqlite3.Connection, doc: int, record_type: str, record_id: int, *, revision: int,
-                 archived: bool, user: str) -> dict[str, Any]:
-    """Archive (hide from lists, totals and publishing) or restore a record."""
-    record = _existing(conn, doc, record_id, record_type)
-    if record["revision"] != revision:
-        raise _conflict(record)
-    if bool(record.get("archived_at")) == archived:
-        return record
-    if not archived:  # its values must still be valid (e.g. a VLAN removed from the list meanwhile)
-        _check_lists(conn, doc, record_type, record["data"])
-    with conn:
-        if not store.set_archived(conn, record_id=record_id, expected_revision=revision, user=user, archived=archived):
-            raise _conflict(store.get_record(conn, doc, record_id) or record)
-        store.log(conn, doc=doc, entity=record_type, record_id=record_id, user=user,
-                  action="archive" if archived else "restore",
-                  summary=f"{'Archived' if archived else 'Restored'} {_describe(record_type, record['data'])}")
-    return store.get_record(conn, doc, record_id)  # type: ignore[return-value]
-
-
 def delete_record(conn: sqlite3.Connection, doc: int, record_type: str, record_id: int, *, revision: int,
                   user: str) -> None:
-    """Permanently delete an archived record (active records are archived instead)."""
+    """Delete a record. The change log keeps its values (except secrets)."""
     record = _existing(conn, doc, record_id, record_type)
-    if not record.get("archived_at"):
-        raise RecordError(409, "Archive the record before deleting it permanently.")
     with conn:
         if not store.delete_record(conn, record_id, revision):
             raise _conflict(store.get_record(conn, doc, record_id) or record)
         shown = {k: v for k, v in record["data"].items() if k not in SECRET_FIELDS.get(record_type, ())}
         store.log(conn, doc=doc, entity=record_type, record_id=record_id, action="delete", user=user,
-                  old=shown, summary=f"Permanently deleted {_describe(record_type, record['data'])}")
+                  old=shown, summary=f"Deleted {_describe(record_type, record['data'])}")
 
 
 def move_record(conn: sqlite3.Connection, doc: int, record_type: str, record_id: int, *, revision: int,
@@ -232,7 +206,6 @@ def move_record(conn: sqlite3.Connection, doc: int, record_type: str, record_id:
     record = _existing(conn, doc, record_id, record_type)
     if record["revision"] != revision:
         raise _conflict(record)
-    _active(record)
     target_group = group_id if group_id is not None else record["group_id"]
     _place(conn, doc, record_type, record["venue_id"], target_group)
     if before_id == record_id:
@@ -245,6 +218,21 @@ def move_record(conn: sqlite3.Connection, doc: int, record_type: str, record_id:
         store.log(conn, doc=doc, entity=record_type, record_id=record_id, action="move", user=user,
                   summary=f"Moved {_describe(record_type, record['data'])}")
     return store.get_record(conn, doc, record_id)  # type: ignore[return-value]
+
+
+def purge_archived_records(conn: sqlite3.Connection) -> int:
+    """Delete records archived before item archiving was removed, logging what they held."""
+    rows = list(conn.execute("SELECT id, document_id, type, data, archived_by FROM records WHERE archived_at IS NOT NULL"))
+    with conn:
+        for row in rows:
+            data = json.loads(row["data"])
+            shown = {k: v for k, v in data.items() if k not in SECRET_FIELDS.get(row["type"], ())}
+            conn.execute("DELETE FROM records WHERE id = ?", (row["id"],))
+            store.log(conn, doc=row["document_id"], entity=row["type"], record_id=row["id"], action="delete",
+                      user=row["archived_by"] or "system", old=shown,
+                      summary=f"Deleted {_describe(row['type'], data)} (it was archived; archiving items was "
+                              "replaced by deleting)")
+    return len(rows)
 
 
 def reveal_secret(conn: sqlite3.Connection, doc: int, record_id: int, *, user: str) -> str | None:
@@ -260,7 +248,7 @@ def reveal_secret(conn: sqlite3.Connection, doc: int, record_id: int, *, user: s
 
 def _list_usage(conn: sqlite3.Connection, doc: int, kind: str, value: str) -> list[tuple[dict, str]]:
     used = []
-    for record in store.records(conn, doc, archived=None):  # archived records keep their values too
+    for record in store.records(conn, doc):
         for field, kinds in LIST_FIELDS[record["type"]].items():
             if kind in kinds and record["data"].get(field) == value:
                 used.append((record, field))
@@ -358,8 +346,8 @@ def delete_named(conn: sqlite3.Connection, doc: int, what: str, item_id: int, *,
         raise RecordError(404, f"{what.capitalize()} not found")
     count = conn.execute(f"SELECT COUNT(*) FROM records WHERE {column} = ?", (item_id,)).fetchone()[0]
     if count:
-        raise RecordError(409, f"'{item['name']}' still has {count} record(s), including archived ones. "
-                               "Move or permanently delete them first.")
+        raise RecordError(409, f"'{item['name']}' still has {count} record(s). "
+                               "Move or delete them first.")
     with conn:
         conn.execute(f"DELETE FROM {table} WHERE id = ?", (item_id,))
         store.log(conn, doc=doc, entity=what, action=what, user=user, old=item["name"],

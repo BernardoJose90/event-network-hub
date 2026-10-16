@@ -124,6 +124,8 @@ async def put_file(request: Request, file_id: str, access_token: Token) -> JSONR
                 version = save_edit(conn, storage, converter, session=session, data=data, user=grant.user)
             except DocumentGone:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "File not found")
+            except db.EventArchived as exc:
+                raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
             log.info(
                 "edit session %s saved document %s as V%s (%s, autosave=%s, exit=%s)",
                 file_id, session["document_id"], version["version"], version["status"],

@@ -136,7 +136,7 @@ def upload(
         result = upload_file(
             conn, storage, converter, parsed=parsed, data=data, uploaded_by=principal.user
         )
-    except VersionExists as exc:
+    except (VersionExists, db.EventArchived) as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     return _upload_response(result)
 
@@ -153,9 +153,14 @@ def delete_document(
     principal: CurrentPrincipal,
     storage: Annotated[Storage, Depends(get_storage)],
 ) -> Response:
-    """Delete a document with all its versions, stored files and download log rows."""
+    """Delete a document with all its versions, stored files and download log rows.
+
+    Events must be archived first, so deleting is always a deliberate second step.
+    """
     require_admin(principal, "delete documents")
-    _document_or_404(conn, document_id)
+    document = _document_or_404(conn, document_id)
+    if document["kind"] == "event" and not document["archived_at"]:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Archive the event before deleting it.")
     # Database first: once the rows are gone nothing can reference the files, so
     # a failure while removing files leaves orphans rather than broken links.
     db.delete_document(conn, document_id)
@@ -165,6 +170,29 @@ def delete_document(
         log.exception("document %s deleted but its files could not be removed", document_id)
     log.info("document %s deleted by %s", document_id, principal.user)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/documents/{document_id}/archive")
+def archive_document(document_id: int, conn: Conn, principal: CurrentPrincipal) -> dict[str, Any]:
+    """Archive an event: it leaves the main list and becomes read-only. Nothing is deleted."""
+    require_admin(principal, "archive events")
+    document = _document_or_404(conn, document_id)
+    if document["kind"] != "event":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Only events can be archived")
+    if not document["archived_at"]:
+        db.set_document_archived(conn, document_id, user=principal.user)
+        log.info("document %s archived by %s", document_id, principal.user)
+    return db.get_document(conn, document_id)  # type: ignore[return-value]
+
+
+@router.post("/documents/{document_id}/restore")
+def restore_document(document_id: int, conn: Conn, principal: CurrentPrincipal) -> dict[str, Any]:
+    require_admin(principal, "restore events")
+    document = _document_or_404(conn, document_id)
+    if document["archived_at"]:
+        db.set_document_archived(conn, document_id, user=None)
+        log.info("document %s restored by %s", document_id, principal.user)
+    return db.get_document(conn, document_id)  # type: ignore[return-value]
 
 
 @router.get("/documents/{document_id}/versions")
@@ -186,6 +214,10 @@ def start_edit(request: Request, document_id: int, version: int, conn: Conn, pri
     """
     require_admin(principal, "edit documents")
     _document_or_404(conn, document_id)
+    try:
+        db.ensure_not_archived(conn, document_id)
+    except db.EventArchived as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     row = db.get_version(conn, document_id, version)
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Version {version} not found")

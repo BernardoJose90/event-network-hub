@@ -13,6 +13,7 @@ from . import db
 from .config import Settings, load_settings
 from .converter import GotenbergConverter
 from .collabora import CollaboraDiscovery
+from .records.routes import router as records_router
 from .routes import router
 from .sheet_routes import router as sheet_router
 from .service import DocumentGone
@@ -65,6 +66,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(router)
     app.include_router(wopi_router)
     app.include_router(sheet_router)
+    app.include_router(records_router)
 
     @app.exception_handler(DocumentGone)
     async def document_gone(_: Request, __: DocumentGone) -> JSONResponse:

@@ -97,6 +97,9 @@ def init_db(path: Path) -> None:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.executescript(SCHEMA)
         _migrate(conn)
+        from .records import store as records_store  # records tables reference documents/versions
+
+        records_store.init(conn)
         conn.commit()
     finally:
         conn.close()

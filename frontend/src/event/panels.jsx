@@ -62,7 +62,7 @@ export function Overview({ overview, api, isAdmin, notify, onChanged, onPublish,
         ) : overview.latest_version ? (
           isAdmin ? (
             <>
-              <p className="muted">Bring in the workbook uploaded as V{overview.latest_version}: venues, Wi-Fi networks, Ethernet requirements, partner orders, VLAN extensions and the Setup lists.</p>
+              <p className="muted">Bring in the workbook uploaded as V{overview.latest_version}: venues, Wi-Fi networks, Ethernet requirements, partner orders and the Setup lists.</p>
               <button onClick={() => importLatest(false)} disabled={busy}>
                 {busy ? 'Importing…' : `Import from V${overview.latest_version}`}
               </button>

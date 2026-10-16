@@ -12,7 +12,10 @@
 #   f) the in-browser editor opens (Collabora page loads and can read the file)
 #   g) the live sheet: create it, edit a cell via the API, a stale save is
 #      refused, and the downloaded PDF shows the edit
-#   h) deleting the document works and removes its files (this also cleans up)
+#   h) requirements: import the workbook into records, publish the next
+#      version (PDF report in Overpass, no DejaVu), and re-importing the
+#      published Excel gives the same records and totals
+#   i) deleting the document works and removes its files (this also cleans up)
 #
 # Downloaded PDFs live in a private temp dir that is deleted on exit.
 #
@@ -186,14 +189,47 @@ PY
     fail "g) creating the live sheet returned HTTP $code_ls"
   fi
 
-  # --- h) delete (also cleans up the smoke document) ---------------------------
+  # --- h) structured requirements: import -> publish -> re-import round trip ----------
+  ev="$API/events/$doc_id"
+  admin=(-H "X-Role: network-admin" -H "X-User: smoke-test")
+  code_imp="$(curl -sS -o "$work/import.json" -w '%{http_code}' -X POST "${admin[@]}" \
+    -H 'Content-Type: application/json' -d '{}' "$ev/import")"
+  code_pub="$(curl -sS -o "$work/publish.json" -w '%{http_code}' -X POST "${admin[@]}" "$ev/publish")"
+  pub_version="$(jq -r '.version.version // empty' "$work/publish.json" 2>/dev/null)"
+  h_ok=no; h_detail="import HTTP $code_imp, publish HTTP $code_pub"
+  if [ "$code_imp" = "200" ] && [ "$code_pub" = "201" ] && [ -n "$pub_version" ]; then
+    curl -sS -o "$work/report.pdf" "${admin[@]}" "$API/documents/$doc_id/download?version=$pub_version"
+    curl -sS -o "$work/published.xlsx" "${admin[@]}" "$API/documents/$doc_id/download?version=$pub_version&format=xlsx"
+    pdftotext "$work/report.pdf" "$work/report.txt" 2>/dev/null || true
+    pdffonts "$work/report.pdf" > "$work/report.fonts" 2>/dev/null || true
+    # Re-import the published Excel into a throwaway event and compare.
+    rt_name="SMOKERT$$${RANDOM} _ Event_Network_Requirements_V1.xlsx"
+    rt_id="$(curl -sS "${admin[@]}" -F "file=@$work/published.xlsx;type=$XLSX_TYPE;filename=$rt_name" \
+      "$API/documents/upload" | jq -r '.document.id // empty')"
+    if [ -n "$rt_id" ]; then
+      curl -sS -o /dev/null -X POST "${admin[@]}" -H 'Content-Type: application/json' -d '{}' "$API/events/$rt_id/import"
+      summary='{counts, totals: [.totals.ethernet[] | {venue, total, sections: [.sections[].ports]}]}'
+      a="$(curl -sS "${admin[@]}" "$ev/overview" | jq -c "$summary")"
+      b="$(curl -sS "${admin[@]}" "$API/events/$rt_id/overview" | jq -c "$summary")"
+      curl -sS -o /dev/null -X DELETE "${admin[@]}" "$API/documents/$rt_id"
+    fi
+    records="$(jq -r '[.counts[]] | add // 0' "$work/import.json")"
+    if [ "${records:-0}" -gt 0 ] && [ -s "$work/report.txt" ] && grep -qi overpass "$work/report.fonts" \
+       && ! grep -qi dejavu "$work/report.fonts" && [ -n "${a:-}" ] && [ "$a" = "${b:-}" ]; then
+      h_ok=yes
+    fi
+    h_detail="$records records, published V$pub_version, report fonts: $(awk 'NR > 2 {sub(/^[A-Z]+\+/, "", $1); print $1}' "$work/report.fonts" | sort -u | tr '\n' ' ')round trip $([ "${a:-}" = "${b:-x}" ] && echo identical || echo DIFFERENT)"
+  fi
+  if [ "$h_ok" = yes ]; then pass "h) requirements: $h_detail"; else fail "h) requirements: $h_detail"; fi
+
+  # --- i) delete (also cleans up the smoke document) ---------------------------
   code_del="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE -H "X-Role: network-admin" \
     "$API/documents/$doc_id")"
   code_after="$(download "$doc_id" network-admin "$work/after.pdf")"
   if [ "$code_del" = "204" ] && [ "$code_after" = "404" ]; then
-    pass "h) document deleted; its files are no longer downloadable"
+    pass "i) document deleted; its files are no longer downloadable"
   else
-    fail "h) delete returned HTTP $code_del, download afterwards HTTP $code_after (expected 204, 404)"
+    fail "i) delete returned HTTP $code_del, download afterwards HTTP $code_after (expected 204, 404)"
   fi
 done
 

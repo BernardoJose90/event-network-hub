@@ -53,7 +53,8 @@ For each `samples/*.xlsx`, the script uploads the file, downloads the PDF as eac
 - **e)** uploading the same version number again is rejected;
 - **f)** the in-browser editor opens: Collabora's page loads and it can read the file through WOPI;
 - **g)** the live sheet: it's created, an edit saved through the API appears in its PDF, and a stale save is refused;
-- **h)** deleting the document works and removes its files. This also cleans up, so smoke runs leave no documents behind.
+- **h)** requirements: the workbook imports into records, publishing gives the next version (PDF report in Overpass, no DejaVu), and re-importing the published Excel gives identical records and totals;
+- **i)** deleting the document works and removes its files. This also cleans up, so smoke runs leave no documents behind.
 
 The smoke test uploads your file under a throwaway `SMOKE<n>` event code, so it never touches your real documents.
 
@@ -106,6 +107,49 @@ backend/app/
 - **Print gridlines are turned off for conversion.** With `singlePageSheets=true`, LibreOffice draws "print gridlines" at the wrong positions, so lines cut through the text. Seen with LibreOffice 26.8.0.3 (gotenberg 8.37.0) and 26.8.1.1 (gotenberg 8.38.1). `app/pdf_prep.py` removes the flag from the copy sent to Gotenberg; the stored original is untouched, and cell borders still render.
 - **Formula errors may look different in the PDF.** LibreOffice recalculates formulas, so a broken formula such as `sum(#REF!)`, saved as `#REF!`, can appear as `#NAME?`. Both are errors in the source workbook and are listed as upload warnings.
 - **Clipped text.** Text wider than its column is cut off in the PDF, exactly as Excel prints it. Widen the column in the source workbook if a value must be readable in full.
+
+## Requirements (the app as the master copy)
+
+**Open requirements** on a document opens `/event/<document id>`. There, an event's network requirements are kept as structured records instead of spreadsheet cells:
+
+- **Overview:** totals per venue and section, counts, list values to review, unpublished changes, and **Publish V<n>** (admins).
+- **Wi-Fi networks, Ethernet requirements, Partner orders:**
+  - venue tabs, with section rows showing live subtotals;
+  - click a cell to edit; VLAN and location come from the managed lists; numbers are checked;
+  - **+ Add** per section, move up and down, search.
+  - **Archive** hides an item from lists, totals and published versions. Archived items can be restored, or deleted permanently.
+  - Wi-Fi passwords are masked until **Reveal**, and every reveal is logged.
+- **VLAN extensions:** a tick matrix per venue.
+- **Lists:** venues, Ethernet sections, Wi-Fi groups, VLANs, locations, buildings, bandwidths. A value in use can't be removed, and renaming a value updates every record that uses it.
+- **History:** every change is recorded automatically (who, when, old → new), so nobody keeps a change log by hand. Password values are never logged. An imported workbook's old "Changes - Log" appears here as legacy entries.
+
+Viewers see the same pages read-only. Editing and publishing are for network admins. Each record has a revision, so concurrent edits get "X changed this record, reload" instead of overwriting each other.
+
+**Getting started:** upload the event's workbook, then click Overview → **Import from V<n>**. Two layouts are recognised:
+- per-venue sheets (`<Venue> - Wi-Fi Req`, `<Venue> Ethernet Req`), e.g. LIS25;
+- single-venue sheets (`Wi-Fi Requirements`, `Ethernet Requirements`), e.g. VAN26; these go into "Main venue", which you can rename under Lists.
+
+The importer also reads Partners Custom Orders, Extending Vlans, the Setup or settings lists, and the old Changes - Log. Anything it can't place is reported as an import note: unrecognised sheets, columns with no matching field, and non-numeric points such as "TBC".
+
+**Publishing** creates the next version:
+- an **Excel file in the familiar workbook layout**, with real `SUM` totals and dropdowns, which re-imports to the same records;
+- a **PDF report** rendered by Gotenberg's Chromium route: A4 landscape, a cover page, section subtotals, and the changes since the previous version.
+
+Versions show whether they were uploaded, edited or published.
+
+Code: `backend/app/records/` (models, store, service, importer, publish, routes) and `frontend/src/event/`.
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/api/events/{id}/overview` | totals, counts, lists, unpublished changes |
+| POST | `/api/events/{id}/import` | `{replace}`; from the latest ready version |
+| GET/POST | `/api/events/{id}/records/{type}` | type: `wifi`, `ethernet`, `partner`, `vlan_extension`; `?archived=true` |
+| PATCH/DELETE | `/api/events/{id}/records/{type}/{rid}` | revision checked; DELETE only for archived records |
+| POST | `/api/events/{id}/records/{type}/{rid}/archive`, `/restore`, `/move` | |
+| POST | `/api/events/{id}/records/wifi/{rid}/reveal` | logged |
+| POST/PATCH/DELETE | `/api/events/{id}/lists/…`, `/venues/…`, `/groups/…` | |
+| GET | `/api/events/{id}/history`, `/changes` | |
+| POST | `/api/events/{id}/publish` | next version (Excel + PDF report) |
 
 ## Editing in the browser
 

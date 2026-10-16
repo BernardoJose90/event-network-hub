@@ -2,10 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   deleteDocument,
   downloadFile,
+  fetchFile,
   listDocuments,
   listVersions,
   uploadNewDocument,
-  uploadVersion,
 } from './api.js'
 
 // TEST ONLY: role switcher standing in for real authentication.
@@ -212,59 +212,7 @@ function DocumentHeader({ document, identity, onDeleted }) {
   )
 }
 
-function UploadForm({ documentId, identity, onUploaded }) {
-  const inputRef = useRef(null)
-  const [file, setFile] = useState(null)
-  const [busy, setBusy] = useState(false)
-  const [result, setResult] = useState(null)
-  const [error, setError] = useState(null)
-
-  useEffect(() => {
-    setResult(null)
-    setError(null)
-  }, [documentId])
-
-  async function submit(e) {
-    e.preventDefault()
-    if (!file) return
-    setBusy(true)
-    setResult(null)
-    setError(null)
-    try {
-      const res = await uploadVersion(documentId, file, identity)
-      setResult(res)
-      setFile(null)
-      if (inputRef.current) inputRef.current.value = ''
-      onUploaded()
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <section className="panel">
-      <h3>Upload a new version</h3>
-      <form onSubmit={submit} className="row">
-        <input
-          ref={inputRef}
-          type="file"
-          accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          onChange={(e) => setFile(e.target.files[0] || null)}
-        />
-        <button type="submit" disabled={!file || busy}>
-          {busy ? 'Converting…' : 'Upload'}
-        </button>
-      </form>
-      <p className="muted small">.xlsx only, up to 10 MB. Conversion can take up to 90 seconds.</p>
-      {error && <p className="error">{error}</p>}
-      {result && <UploadResult result={result} />}
-    </section>
-  )
-}
-
-function VersionTable({ documentId, versions, identity }) {
+function VersionTable({ documentId, versions, identity, onView }) {
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
 
@@ -288,6 +236,9 @@ function VersionTable({ documentId, versions, identity }) {
         <h3>Versions</h3>
         <div className="row">
           <span className="muted small">Latest version:</span>
+          <button onClick={() => onView(null)} disabled={!hasReady || busy}>
+            View
+          </button>
           <button onClick={() => download(null, 'pdf')} disabled={!hasReady || busy}>
             Download PDF
           </button>
@@ -330,6 +281,13 @@ function VersionTable({ documentId, versions, identity }) {
                     <div className="row nowrap">
                       <button
                         className="secondary"
+                        onClick={() => onView(v.version)}
+                        disabled={v.status !== 'ready' || busy}
+                      >
+                        View
+                      </button>
+                      <button
+                        className="secondary"
                         onClick={() => download(v.version, 'pdf')}
                         disabled={v.status !== 'ready' || busy}
                       >
@@ -354,6 +312,25 @@ function VersionTable({ documentId, versions, identity }) {
   )
 }
 
+function PdfViewer({ preview, onClose }) {
+  return (
+    <section className="panel viewer">
+      <div className="row space-between">
+        <h3>{preview.title}</h3>
+        <div className="row">
+          <a className="button secondary" href={preview.url} target="_blank" rel="noopener noreferrer">
+            Open in new tab
+          </a>
+          <button className="secondary" onClick={onClose}>
+            Close
+          </button>
+        </div>
+      </div>
+      <iframe className="pdf-frame" src={preview.url} title={preview.title} />
+    </section>
+  )
+}
+
 export default function App() {
   const [identity, setIdentity] = useState(loadIdentity)
 
@@ -362,6 +339,34 @@ export default function App() {
   const [selectedId, setSelectedId] = useState(null)
   const [versions, setVersions] = useState([])
   const [error, setError] = useState(null)
+  const [preview, setPreview] = useState(null) // { url, title } of the PDF shown on the page
+
+  const closePreview = useCallback(() => {
+    setPreview((p) => {
+      if (p?.url) URL.revokeObjectURL(p.url)
+      return null
+    })
+  }, [])
+
+  // Viewing fetches the PDF with the role header (like a download) and shows it on the page.
+  const viewPdf = useCallback(
+    async (documentId, documentName, version) => {
+      setError(null)
+      try {
+        const file = await fetchFile(documentId, version, 'pdf', identity)
+        const url = URL.createObjectURL(file.blob)
+        setPreview((p) => {
+          if (p?.url) URL.revokeObjectURL(p.url)
+          return { url, title: `${documentName} · v${file.version}` }
+        })
+      } catch (err) {
+        setError(err.message)
+      }
+    },
+    [identity],
+  )
+
+  useEffect(closePreview, [selectedId, closePreview])
 
   const refreshDocuments = useCallback(async () => {
     try {
@@ -418,15 +423,13 @@ export default function App() {
                   refreshDocuments()
                 }}
               />
-              <UploadForm
+              <VersionTable
                 documentId={selected.id}
+                versions={versions}
                 identity={identity}
-                onUploaded={() => {
-                  refreshVersions()
-                  refreshDocuments()
-                }}
+                onView={(version) => viewPdf(selected.id, selected.name, version)}
               />
-              <VersionTable documentId={selected.id} versions={versions} identity={identity} />
+              {preview && <PdfViewer preview={preview} onClose={closePreview} />}
             </>
           ) : (
             <p className="muted">

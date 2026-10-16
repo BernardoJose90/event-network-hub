@@ -95,12 +95,12 @@ def test_old_json_create_endpoint_is_gone(client: TestClient) -> None:
     assert client.post("/api/documents", json={"name": "A"}, headers=ADMIN).status_code == 405
 
 
-def test_upload_rejects_xlsm(client: TestClient) -> None:
+def test_uploading_new_versions_is_not_possible(client: TestClient) -> None:
     doc_id = _doc_with_version(client)
     r = client.post(f"/api/documents/{doc_id}/versions",
-                    files={"file": ("x.xlsm", _wb("v2"), XLSX)})
-    assert r.status_code == 422
-    assert ".xlsm" in r.json()["detail"]
+                    files={"file": ("lis25.xlsx", _wb("v2"), XLSX)}, headers=ADMIN)
+    assert r.status_code == 405
+    assert len(client.get(f"/api/documents/{doc_id}/versions").json()) == 1
 
 
 def test_admin_deletes_document_with_everything(client: TestClient) -> None:
@@ -142,14 +142,6 @@ def test_only_admin_can_delete(client: TestClient, headers) -> None:
 
 def test_delete_missing_document_is_404(client: TestClient) -> None:
     assert client.delete("/api/documents/999", headers=ADMIN).status_code == 404
-
-
-def test_upload_unchanged_returns_200(client: TestClient) -> None:
-    doc_id = _doc_with_version(client)
-    r = client.post(f"/api/documents/{doc_id}/versions",
-                    files={"file": ("lis25.xlsx", _wb("v1"), XLSX)})
-    assert r.status_code == 200
-    assert r.json()["outcome"] == "unchanged"
 
 
 @pytest.mark.parametrize("role", ["viewer", "network-admin"])
@@ -202,15 +194,13 @@ def test_download_specific_and_missing_version(client: TestClient) -> None:
     assert client.get(f"/api/documents/{doc_id}/download?version=9", headers=h).status_code == 404
 
 
-def test_failed_version_not_downloadable_but_previous_is(client: TestClient) -> None:
-    doc_id = _doc_with_version(client)
+def test_failed_conversion_keeps_document_but_nothing_to_download(client: TestClient) -> None:
     client.app.state.converter.fail = True
-    r = client.post(f"/api/documents/{doc_id}/versions",
-                    files={"file": ("lis25.xlsx", _wb("v2"), XLSX)})
+    r = _upload_new(client)
     assert r.status_code == 502
     assert r.json()["version"]["status"] == "failed"
+    doc_id = r.json()["document"]["id"]
 
     h = {"X-Role": "viewer"}
-    assert client.get(f"/api/documents/{doc_id}/download?version=2", headers=h).status_code == 409
-    latest = client.get(f"/api/documents/{doc_id}/download", headers=h)
-    assert latest.headers["x-document-version"] == "1"
+    assert client.get(f"/api/documents/{doc_id}/download?version=1", headers=h).status_code == 409
+    assert client.get(f"/api/documents/{doc_id}/download", headers=h).status_code == 404

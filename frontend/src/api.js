@@ -68,17 +68,6 @@ export async function listVersions(documentId) {
 
 // Resolves with the upload result for created / unchanged / failed outcomes,
 // rejects for validation and other errors.
-export async function uploadVersion(documentId, file, identity) {
-  const form = new FormData()
-  form.append('file', file)
-  return uploadResult(
-    await fetch(`/api/documents/${documentId}/versions`, {
-      method: 'POST',
-      headers: identityHeaders(identity),
-      body: form,
-    }),
-  )
-}
 
 function filenameFrom(res, fallback) {
   const header = res.headers.get('Content-Disposition') || ''
@@ -86,19 +75,28 @@ function filenameFrom(res, fallback) {
   return match ? match[1] : fallback
 }
 
-// format: 'pdf' (converted PDF) or 'xlsx' (the original upload)
-export async function downloadFile(documentId, version, format, identity) {
+// format: 'pdf' (converted PDF) or 'xlsx' (the original upload).
+// Resolves with { blob, filename, version }; every fetch is logged by the backend.
+export async function fetchFile(documentId, version, format, identity) {
   const params = new URLSearchParams({ format })
   if (version) params.set('version', version)
   const res = await fetch(`/api/documents/${documentId}/download?${params}`, {
     headers: identityHeaders(identity),
   })
   if (!res.ok) throw new Error(await errorMessage(res))
-  const blob = await res.blob()
+  return {
+    blob: await res.blob(),
+    filename: filenameFrom(res, `document.${format}`),
+    version: res.headers.get('X-Document-Version'),
+  }
+}
+
+export async function downloadFile(documentId, version, format, identity) {
+  const { blob, filename } = await fetchFile(documentId, version, format, identity)
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = filenameFrom(res, `document.${format}`)
+  a.download = filename
   document.body.appendChild(a)
   a.click()
   a.remove()

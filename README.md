@@ -90,13 +90,12 @@ backend/app/
 | POST   | `/api/documents/upload`                       | multipart `file` (+ optional `name`). Needs `X-Role: network-admin`. Creates a document named after the file with the file as v1; 409 if the name exists |
 | DELETE | `/api/documents/{id}`                         | Needs `X-Role: network-admin`. Removes the document, all versions, stored files and download log rows. 204 |
 | GET    | `/api/documents/{id}/versions`                |                                                           |
-| POST   | `/api/documents/{id}/versions`                | multipart `file`. 201 created, 200 unchanged, 422 invalid, 502 conversion failed |
 | GET    | `/api/documents/{id}/download[?version=N][&format=pdf\|xlsx]` | needs `X-Role` (`viewer` or `network-admin`). `pdf` (default) is the converted PDF, `xlsx` the original upload |
 
 ### Behaviour notes
 
 - **TEST ONLY identity.** `X-Role` and `X-User` are trusted as sent. A missing or unknown role gets 403.
-- **Re-uploading after a failure.** Duplicate detection ignores `failed` versions, so re-uploading the same file retries a failed conversion.
+- **One upload per document.** New versions can't be added to an existing document. To replace a file, delete the document and upload the new file. If a conversion fails, the document keeps a `failed` v1; delete it and upload again.
 - **No redaction.** Viewers are trusted, so every role sees the workbook as-is, passwords included. The role header is kept so real authorization can be added later.
 - **Print gridlines are turned off for conversion.** With `singlePageSheets=true`, LibreOffice draws "print gridlines" at the wrong positions, so lines cut through the text. Seen with LibreOffice 26.8.0.3 (gotenberg 8.37.0) and 26.8.1.1 (gotenberg 8.38.1). `app/pdf_prep.py` removes the flag from the copy sent to Gotenberg; the stored original is untouched, and cell borders still render.
 - **Formula errors may look different in the PDF.** LibreOffice recalculates formulas, so a broken formula such as `sum(#REF!)`, saved as `#REF!`, can appear as `#NAME?`. Both are errors in the source workbook and are listed as upload warnings.

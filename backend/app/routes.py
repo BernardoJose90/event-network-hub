@@ -179,24 +179,6 @@ def list_versions(document_id: int, conn: Conn) -> list[dict[str, Any]]:
     return db.list_versions(conn, document_id)
 
 
-@router.post("/documents/{document_id}/versions")
-def upload(
-    request: Request,
-    document_id: int,
-    conn: Conn,
-    principal: CurrentPrincipal,
-    file: Annotated[UploadFile, File()],
-    storage: Annotated[Storage, Depends(get_storage)],
-    converter: Annotated[Converter, Depends(get_converter)],
-) -> JSONResponse:
-    document = _document_or_404(conn, document_id)
-    data = _read_validated_upload(request, file)
-    result = upload_version(
-        conn, storage, converter, document=document, data=data, uploaded_by=principal.user
-    )
-    return _upload_response(result, db.get_document(conn, document_id))  # type: ignore[arg-type]
-
-
 def _safe_filename(name: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("_") or "document"
 

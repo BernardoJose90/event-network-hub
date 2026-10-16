@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from functools import lru_cache
+
 import hashlib
 
 import pytest
@@ -13,6 +15,7 @@ from app.storage import ObjectNotFound, version_key
 from .conftest import xlsx_bytes
 
 
+@lru_cache(maxsize=None)  # same bytes every time: saved workbooks embed the current time
 def _wb(text: str) -> bytes:
     def build(wb: Workbook) -> None:
         wb.active["A1"] = text

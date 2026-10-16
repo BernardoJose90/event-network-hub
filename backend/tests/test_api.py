@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from functools import lru_cache
+
 from pathlib import Path
 
 import pytest
@@ -30,6 +32,7 @@ def client(tmp_path: Path):
         yield c
 
 
+@lru_cache(maxsize=None)  # same bytes every time: saved workbooks embed the current time
 def _wb(text: str) -> bytes:
     def build(wb: Workbook) -> None:
         wb.active["A1"] = text

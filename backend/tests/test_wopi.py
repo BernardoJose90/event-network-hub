@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from functools import lru_cache
+
 import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -44,6 +46,7 @@ def client(tmp_path: Path):
         yield c
 
 
+@lru_cache(maxsize=None)  # same bytes every time: saved workbooks embed the current time
 def _wb(text: str) -> bytes:
     def build(wb: Workbook) -> None:
         wb.active["A1"] = text

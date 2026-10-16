@@ -12,6 +12,7 @@ from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string, get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
+from ..xlsx_colors import resolve, theme_palette
 from .model import Cell, Column, Merge, Row, Sheet, Source, Style, Workbook
 
 # Empty rows that only carry a dropdown are kept up to this far past the content
@@ -39,14 +40,9 @@ def _row_id(index: int) -> str:
     return f"r{index}"
 
 
-def _hex(color: Any) -> str | None:
-    """'#RRGGBB' for an explicit ARGB colour; None for theme/indexed colours and 'no colour'."""
-    if color is None or getattr(color, "type", None) != "rgb":
-        return None
-    rgb = color.rgb
-    if not isinstance(rgb, str) or len(rgb) != 8 or rgb == "00000000":
-        return None
-    return "#" + rgb[2:].upper()
+def _hex(color: Any, palette: list[str]) -> str | None:
+    """'#RRGGBB' for an explicit RGB or theme colour; None for 'no colour'."""
+    return resolve(color, palette)
 
 
 def _font_key(cell) -> tuple[str | None, float | None]:
@@ -56,14 +52,14 @@ def _font_key(cell) -> tuple[str | None, float | None]:
     return font.name, (float(font.sz) if font.sz else None)
 
 
-def _style(cell, default_font: str, default_size: float) -> Style | None:
+def _style(cell, default_font: str, default_size: float, palette: list[str]) -> Style | None:
     fill = None
     if cell.fill is not None and cell.fill.fill_type == "solid":
-        fill = _hex(cell.fill.fgColor)
+        fill = _hex(cell.fill.fgColor, palette)
         if fill in _WHITE:
             fill = None
     font = cell.font
-    color = _hex(font.color) if font is not None else None
+    color = _hex(font.color, palette) if font is not None else None
     if color in _BLACK:
         color = None
     align = cell.alignment.horizontal if cell.alignment is not None else None
@@ -97,12 +93,12 @@ def _plain_value(value: Any) -> str | int | float | bool | None:
     return text if text.strip() else None
 
 
-def _bounds(ws: Worksheet) -> tuple[int, int]:
+def _bounds(ws: Worksheet, palette: list[str]) -> tuple[int, int]:
     last_row = last_col = 0
     for row in ws.iter_rows():
         for cell in row:
             has_value = cell.value is not None and str(cell.value).strip() != ""
-            has_fill = cell.fill is not None and cell.fill.fill_type == "solid" and _hex(cell.fill.fgColor) not in (None, *_WHITE)
+            has_fill = cell.fill is not None and cell.fill.fill_type == "solid" and _hex(cell.fill.fgColor, palette) not in (None, *_WHITE)
             if has_value or has_fill:
                 last_row = max(last_row, cell.row)
                 last_col = max(last_col, cell.column)
@@ -201,6 +197,7 @@ def _classify_formulas(formulas: dict[tuple[int, int], str]) -> dict[tuple[int, 
 def import_workbook(data: bytes) -> Workbook:
     wb = load_workbook(io.BytesIO(data))
     cached = load_workbook(io.BytesIO(data), data_only=True)
+    palette = theme_palette(wb)
     worksheets = [ws for ws in wb.worksheets if isinstance(ws, Worksheet)]
     sheet_ids = {ws.title: f"s{i + 1}" for i, ws in enumerate(worksheets)}
     warnings: list[str] = []
@@ -208,7 +205,7 @@ def import_workbook(data: bytes) -> Workbook:
 
     for ws in worksheets:
         values_ws = cached[ws.title]
-        last_row, last_col = _bounds(ws)
+        last_row, last_col = _bounds(ws, palette)
         # The sheet's default font: the most common one among cells with content.
         fonts = Counter(
             _font_key(cell) for row in ws.iter_rows(max_row=last_row, max_col=last_col)
@@ -237,7 +234,7 @@ def import_workbook(data: bytes) -> Workbook:
             cells: dict[str, Cell] = {}
             for c in range(1, last_col + 1):
                 cell = ws.cell(r, c)
-                style = _style(cell, default_font, default_size)
+                style = _style(cell, default_font, default_size, palette)
                 if (r, c) in formulas:
                     kind_expr = kinds.get((r, c))
                     if kind_expr is not None:

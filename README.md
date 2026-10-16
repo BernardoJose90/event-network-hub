@@ -128,11 +128,11 @@ backend/app/
 
 Viewers see the same pages read-only. Editing and publishing are for network admins. Each record has a revision, so concurrent edits get "X changed this record, reload" instead of overwriting each other.
 
-**Getting started:** network admins click **+ New event** on the documents page and enter an event code (e.g. `WEB26`). No workbook is needed. **Start from**:
+**Getting started:** network admins click **+ New event** on the Events page and enter an event code (e.g. `WEB26`). No workbook is needed. **Start from**:
 - **Empty:** one venue ("Main venue"), the usual Wi-Fi groups and Ethernet sections, and empty lists; or
 - **a template** (e.g. LIS, QATAR, RIO, VAN): the new event gets a copy of everything in it. Later changes to the template don't affect events already created.
 
-**Templates** are made with **Save as template** on an event's requirements page. A template keeps the event's venues, sections, lists, Wi-Fi networks, Ethernet items and VLAN extensions, with **every Ethernet point set to 0**, **Ethernet notes empty**, **no partner orders** and **no Wi-Fi passwords**. In a template, Ethernet points and notes can't be changed (they're set on the event). Templates are stored in the app (documents with `kind = 'template'`), not in `samples/`. They aren't in the documents list, have no versions and can't be published. Admins open or delete them under **Templates** in the sidebar, and edit them on the same requirements page.
+**Templates** are made with **Save as template** on an event's requirements page. A template keeps the event's venues, sections, lists, Wi-Fi networks, Ethernet items and VLAN extensions, with **every Ethernet point set to 0**, **Ethernet notes empty**, **no partner orders** and **no Wi-Fi passwords**. In a template, Ethernet points and notes can't be changed (they're set on the event). Templates are stored in the app (documents with `kind = 'template'`), not in `samples/`. They aren't in the Events list, have no versions and can't be published. Admins open or delete them under **Templates** in the sidebar, and edit them on the same requirements page.
 
 The event has no versions until the first **Publish**, which creates V1. Uploading a workbook for the same event code later adds a version to the same document.
 

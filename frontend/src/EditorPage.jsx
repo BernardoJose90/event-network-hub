@@ -7,7 +7,7 @@ import { loadIdentity } from './identity.js'
 // Embeds Collabora Online the standard WOPI way: POST the access token into a
 // named iframe. Talks to the editor over postMessage to know when the document
 // is loaded, whether it has unsaved changes, and when a save has finished.
-// "Back to documents" saves first, then returns to the document in the app.
+// "Back to events" saves first, then returns to the document in the app.
 
 function backToDocument(documentId) {
   window.location.assign(`/?doc=${documentId}`)
@@ -44,7 +44,7 @@ export default function EditorPage({ documentId, version }) {
         <div className="editor-message">
           <p className="error">{error}</p>
           <p className="muted small">Editing needs the Network admin role.</p>
-          <button onClick={() => backToDocument(documentId)}>Back to documents</button>
+          <button onClick={() => backToDocument(documentId)}>Back to events</button>
         </div>
       </div>
     )
@@ -160,7 +160,7 @@ function SpreadsheetEditor({ session, title, documentId }) {
         <strong>Editing {title}</strong>
         <span className="muted small editor-status">{status}</span>
         <button className="secondary" onClick={requestClose} disabled={closing}>
-          {closing ? 'Saving…' : 'Back to documents'}
+          {closing ? 'Saving…' : 'Back to events'}
         </button>
       </header>
       <form ref={formRef} action={session.editor_url} method="post" target="spreadsheet-editor">

@@ -71,7 +71,7 @@ export function Overview({ overview, api, isAdmin, notify, onChanged, onPublish,
             <p className="muted">A network admin needs to import them first.</p>
           )
         ) : (
-          <p className="muted">Upload a workbook on the documents page first.</p>
+          <p className="muted">Upload a workbook on the Events page first.</p>
         )}
       </div>
     )

@@ -126,7 +126,7 @@ function UploadForm({ identity, onCreated }) {
       </button>
       <p className="muted small">
         Excel (.xlsx) only, named like <code>LIS26 _ Event_Network_Requirements_V1.xlsx</code> (spaces,
-        _ or - between words; &ldquo;Event Network Matrix [V1]&rdquo; also works). A new V number updates that event&apos;s document; each V number can be
+        _ or - between words; &ldquo;Event Network Matrix [V1]&rdquo; also works). A new V number adds a version to that event; each V number can be
         uploaded once.
       </p>
       {error && <p className="error">{error}</p>}
@@ -236,7 +236,7 @@ function DocumentList({ documents, selectedId, viewing, onSelect, onViewVersion,
 
   return (
     <aside className="panel sidebar">
-      <h2>Documents</h2>
+      <h2>Events</h2>
       {isAdmin && (
         <div className="stack">
           <NewEventForm identity={identity} templates={templates} />
@@ -281,7 +281,7 @@ function DocumentList({ documents, selectedId, viewing, onSelect, onViewVersion,
             )}
           </li>
         ))}
-        {documents.length === 0 && <li className="muted">No documents yet.</li>}
+        {documents.length === 0 && <li className="muted">No events yet.</li>}
       </ul>
     </aside>
   )
@@ -293,7 +293,7 @@ function DocumentHeader({ document, identity, onDeleted }) {
 
   async function remove() {
     const ok = window.confirm(
-      `Delete "${document.name}"?\n\nThis permanently removes every version, its PDFs and Excel files, and its download history.`,
+      `Delete "${document.name}"?\n\nThis permanently removes the event's requirements, every version, its PDFs and Excel files, and its download history.`,
     )
     if (!ok) return
     setBusy(true)
@@ -327,7 +327,7 @@ function DocumentHeader({ document, identity, onDeleted }) {
                 </div>
               </details>
               <button className="danger" onClick={remove} disabled={busy}>
-                {busy ? 'Deleting…' : 'Delete document'}
+                {busy ? 'Deleting…' : 'Delete event'}
               </button>
             </>
           )}
@@ -608,8 +608,8 @@ export default function App() {
           ) : (
             <p className="muted">
               {identity.role === 'network-admin'
-                ? 'Create a new event or select a document to get started.'
-                : 'Select a document to get started.'}
+                ? 'Create a new event or select one to get started.'
+                : 'Select an event to get started.'}
             </p>
           )}
         </div>

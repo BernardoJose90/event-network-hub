@@ -37,7 +37,7 @@ export default function EventPage({ documentId }) {
       setOverview(ov)
       document.title = `${ov.document.name} · Event Network Hub`
     } catch (err) {
-      setError(err.status === 403 ? 'Choose a role on the documents page first.' : err.message)
+      setError(err.status === 403 ? 'Choose a role on the Events page first.' : err.message)
     }
   }, [api])
 
@@ -72,7 +72,7 @@ export default function EventPage({ documentId }) {
     setPublishing(true)
     try {
       const result = await api.publish()
-      notify(`${result.message} It's now the latest version on the documents page.`, 'ok')
+      notify(`${result.message} It's now the latest version on the Events page.`, 'ok')
       refresh()
     } catch (err) {
       notify(err.message, 'error')
@@ -103,7 +103,7 @@ export default function EventPage({ documentId }) {
     return (
       <div className="event-page">
         <header className="sheet-bar">
-          <button className="secondary" onClick={back}>← Documents</button>
+          <button className="secondary" onClick={back}>← Events</button>
         </header>
         <div className="sheet-message">{error ? <p className="error">{error}</p> : <p className="muted">Loading…</p>}</div>
       </div>
@@ -115,7 +115,7 @@ export default function EventPage({ documentId }) {
     <div className="event-page">
       <header className="sheet-bar">
         <img src="/websummit-mark.png" alt="Web Summit" className="brand-mark" />
-        <button className="secondary" onClick={back}>← Documents</button>
+        <button className="secondary" onClick={back}>← Events</button>
         <strong className="sheet-title">{overview.document.name}</strong>
         <span className="muted small">
           {isTemplate ? <span className="tag">Template</span> : 'Requirements'}{isAdmin ? '' : ' · read only'}

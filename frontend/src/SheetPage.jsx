@@ -253,7 +253,7 @@ export default function SheetPage({ documentId }) {
   const bar = (
     <header className="sheet-bar">
       <button className="secondary" onClick={phase === 'ready' ? back : () => backToDocument(documentId)}>
-        ← Documents
+        ← Events
       </button>
       <strong className="sheet-title">{docName || 'Document'}</strong>
       <span className="muted small">Live sheet</span>

@@ -110,7 +110,7 @@ def upload_file(
         conn, storage, document=document, version=parsed.version, sha256=sha256_hex(data),
         uploaded_by=uploaded_by, warnings=warnings,
     )
-    reason = _store_and_convert(conn, storage, converter, document_id=document["id"], version=version, data=data)
+    reason = store_and_convert(conn, storage, converter, document_id=document["id"], version=version, data=data)
     result = dict(
         document=db.get_document(conn, document["id"]),
         version=db.get_version_by_id(conn, version["id"]),
@@ -123,7 +123,7 @@ def upload_file(
     return UploadResult(outcome="created", message=f"V{n} added to {document['name']}.", **result)
 
 
-def _store_and_convert(
+def store_and_convert(
     conn: sqlite3.Connection,
     storage: Storage,
     converter: Converter,
@@ -155,9 +155,9 @@ def _store_and_convert(
 MAX_VERSION_ALLOCATION_ATTEMPTS = 5
 
 
-def _allocate_next_version(
+def allocate_next_version(
     conn: sqlite3.Connection, *, document_id: int, sha256: str, user: str,
-    warnings: list[dict[str, str]], edited_from: int,
+    warnings: list[dict[str, str]], edited_from: int | None, source: str,
 ) -> dict[str, Any]:
     """Insert the version after the newest one, retrying if a concurrent save or upload took it."""
     for _ in range(MAX_VERSION_ALLOCATION_ATTEMPTS):
@@ -165,7 +165,7 @@ def _allocate_next_version(
         try:
             return db.insert_version(
                 conn, document_id=document_id, version=number, sha256=sha256,
-                uploaded_by=user, warnings=warnings, edited_from=edited_from,
+                uploaded_by=user, warnings=warnings, edited_from=edited_from, source=source,
             )
         except sqlite3.IntegrityError:
             if db.get_document(conn, document_id) is None:
@@ -198,13 +198,13 @@ def save_edit(
     if session["saved_version"] is not None:
         version = db.get_version(conn, document_id, session["saved_version"])
     if version is None:
-        version = _allocate_next_version(
+        version = allocate_next_version(
             conn, document_id=document_id, sha256=sha, user=user,
-            warnings=warnings, edited_from=session["base_version"],
+            warnings=warnings, edited_from=session["base_version"], source="edit",
         )
         db.set_edit_session_saved_version(conn, session["id"], version["version"])
     else:
         db.update_version_content(conn, version["id"], sha256=sha, warnings=warnings)
 
-    _store_and_convert(conn, storage, converter, document_id=document_id, version=version, data=data)
+    store_and_convert(conn, storage, converter, document_id=document_id, version=version, data=data)
     return db.get_version_by_id(conn, version["id"])  # type: ignore[return-value]

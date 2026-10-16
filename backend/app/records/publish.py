@@ -1,0 +1,344 @@
+"""Publish an event's records as the next version: an Excel file in the familiar
+workbook layout plus a designed PDF report (Chromium via Gotenberg).
+
+The Excel file re-imports to the same records (records/importer.py), so it can
+be shared, edited elsewhere and brought back if needed.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import html
+import io
+import logging
+import sqlite3
+from datetime import datetime, timezone
+from typing import Any
+
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter, quote_sheetname
+from openpyxl.worksheet.datavalidation import DataValidation
+
+from .. import db
+from ..converter import ConversionError, Converter
+from ..service import FULL_PDF, ORIGINAL, allocate_next_version
+from ..storage import Storage, version_key
+from . import service, store
+from .models import LABELS
+
+log = logging.getLogger(__name__)
+
+FONT = "Overpass"
+BLACK = PatternFill(fill_type="solid", fgColor="FF1D1C1D")
+GREY = PatternFill(fill_type="solid", fgColor="FF666666")
+HEADER_FONT = Font(name=FONT, size=10, bold=True, color="FFFFFFFF")
+BODY_FONT = Font(name=FONT, size=10)
+
+WIFI_FIELDS = ["ref_id", "ssid", "coverage", "password_required", "broadcast", "vlan", "band", "password", "purpose"]
+WIFI_WIDTHS = [6, 28, 52, 13, 12, 24, 16, 20, 40]
+ETHERNET_FIELDS = ["purpose", "location", "vlan", "room", "bandwidth_ns", "bandwidth_ew", "capacity", "ports", "notes"]
+ETHERNET_WIDTHS = [30, 30, 28, 14, 18, 18, 12, 12, 58]
+PARTNER_FIELDS = ["partner", "pavilion", "stand", "solution", "bandwidth_mbps", "default_cables", "total_ports",
+                  "wifi", "vlans", "notes", "purchased"]
+PARTNER_WIDTHS = [40, 8, 14, 42, 18, 14, 18, 8, 8, 40, 12]
+SKIPPED_ACTIONS = ("reveal", "legacy", "publish")
+
+
+# --- snapshot --------------------------------------------------------------------
+
+
+def snapshot(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
+    """Everything a published version contains, with group/venue names resolved."""
+    venues = store.venues(conn, doc)
+    groups = store.groups(conn, doc)
+    group_name = {g["id"]: g["name"] for g in groups}
+    venue_name = {v["id"]: v["name"] for v in venues}
+    records = []
+    for r in store.records(conn, doc):
+        rec = {"id": r["id"], "type": r["type"], "venue": venue_name.get(r["venue_id"]),
+               "group": group_name.get(r["group_id"]), "data": r["data"]}
+        if r["type"] == "vlan_extension":  # stored by venue id; reports and Excel use names
+            rec["venue_ticks"] = {venue_name[int(k)]: on for k, on in r["data"].get("venues", {}).items()
+                                  if k.isdigit() and int(k) in venue_name}
+        records.append(rec)
+    return {
+        "venues": [v["name"] for v in venues],
+        "groups": {kind: [g["name"] for g in groups if g["kind"] == kind] for kind in ("wifi", "ethernet")},
+        "lists": {kind: [i["value"] for i in store.lists(conn, doc) if i["kind"] == kind]
+                  for kind in ("building", "location", "bandwidth", "vlan")},
+        "records": records,
+        "totals": service.totals(conn, doc),
+    }
+
+
+def _rows(snap: dict, record_type: str, venue: str | None = None, group: str | None = None) -> list[dict]:
+    return [r["data"] for r in snap["records"]
+            if r["type"] == record_type and (venue is None or r["venue"] == venue)
+            and (group is None or r["group"] == group)]
+
+
+def _display(field: str, value: Any) -> Any:
+    if value is None:
+        return None
+    if field == "purchased":
+        return {"yes": "Yes", "no": "No", "tbc": "TBC"}.get(value, value)
+    return value
+
+
+# --- Excel ---------------------------------------------------------------------------
+
+
+def _header(ws, labels: list[str], widths: list[int]) -> None:
+    for i, (label, width) in enumerate(zip(labels, widths), start=1):
+        cell = ws.cell(1, i, label)
+        cell.font, cell.fill = HEADER_FONT, BLACK
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        ws.column_dimensions[get_column_letter(i)].width = width
+    ws.freeze_panes = "A2"
+
+
+def _band(ws, row: int, name: str, fill: PatternFill, ncols: int) -> None:
+    for c in range(1, ncols + 1):
+        cell = ws.cell(row, c)
+        cell.fill, cell.font = fill, HEADER_FONT
+    ws.cell(row, 1, name)
+
+
+def _body(ws, row: int, values: list[Any]) -> None:
+    for c, value in enumerate(values, start=1):
+        cell = ws.cell(row, c, value)
+        cell.font = BODY_FONT
+
+
+def _dropdown(ws, formula: str, column: int, first: int, last: int) -> None:
+    if last < first:
+        return
+    dv = DataValidation(type="list", formula1=formula, allow_blank=True)
+    letter = get_column_letter(column)
+    dv.add(f"{letter}{first}:{letter}{last}")
+    ws.add_data_validation(dv)
+
+
+def build_workbook(snap: dict, changes: list[dict], *, version: int) -> bytes:
+    wb = Workbook()
+    wb.remove(wb.active)
+    setup_rows = {kind: len(values) + 1 for kind, values in snap["lists"].items()}
+    vlan_source = f"{quote_sheetname('Setup')}!$D$2:$D${max(setup_rows['vlan'], 2)}"
+    location_source = f"{quote_sheetname('Setup')}!$B$2:$B${max(setup_rows['location'], 2)}"
+
+    for venue in snap["venues"]:
+        ws = wb.create_sheet(f"{venue} - Wi-Fi Req"[:31])
+        _header(ws, [LABELS["wifi"][f] for f in WIFI_FIELDS], WIFI_WIDTHS)
+        row = 2
+        for group in snap["groups"]["wifi"]:
+            items = _rows(snap, "wifi", venue, group)
+            _band(ws, row, group, BLACK, len(WIFI_FIELDS))
+            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=len(WIFI_FIELDS))
+            row += 1
+            for data in items:
+                _body(ws, row, [_display(f, data.get(f)) for f in WIFI_FIELDS])
+                row += 1
+        _dropdown(ws, vlan_source, 6, 2, row - 1)
+
+        ws = wb.create_sheet(f"{venue} Ethernet Req"[:31])
+        _header(ws, [LABELS["ethernet"][f] for f in ETHERNET_FIELDS], ETHERNET_WIDTHS)
+        row, totals = 2, []
+        for section in snap["groups"]["ethernet"]:
+            items = _rows(snap, "ethernet", venue, section)
+            _band(ws, row, section, GREY, len(ETHERNET_FIELDS))
+            header_row = row
+            row += 1
+            for data in items:
+                _body(ws, row, [_display(f, data.get(f)) for f in ETHERNET_FIELDS])
+                row += 1
+            points = ws.cell(header_row, 8)
+            points.value = f"=SUM(H{header_row + 1}:H{row - 1})" if items else '=N("section total")'
+            points.alignment = Alignment(horizontal="center")
+            totals.append(f"H{header_row}")
+        _band(ws, row, "Total", GREY, len(ETHERNET_FIELDS))
+        ws.cell(row, 8, f"=SUM({','.join(totals)})" if totals else 0).alignment = Alignment(horizontal="center")
+        _dropdown(ws, vlan_source, 3, 2, row - 1)
+        _dropdown(ws, location_source, 2, 2, row - 1)
+
+    ws = wb.create_sheet("Partners Custom Orders")
+    _header(ws, [LABELS["partner"][f] for f in PARTNER_FIELDS], PARTNER_WIDTHS)
+    for i, data in enumerate(_rows(snap, "partner"), start=2):
+        _body(ws, i, [_display(f, data.get(f)) for f in PARTNER_FIELDS])
+    _dropdown(ws, '"Yes,No,TBC"', 11, 2, max(2, len(_rows(snap, "partner")) + 20))
+
+    ws = wb.create_sheet("Extending Vlans")
+    _header(ws, ["Vlan name", *snap["venues"]], [24] + [16] * len(snap["venues"]))
+    for i, rec in enumerate([r for r in snap["records"] if r["type"] == "vlan_extension"], start=2):
+        ticks = rec.get("venue_ticks", {})
+        _body(ws, i, [rec["data"].get("vlan"), *[bool(ticks.get(v, False)) for v in snap["venues"]]])
+
+    ws = wb.create_sheet("Changes - Log")
+    _header(ws, ["When", "Who", "Change"], [20, 18, 100])
+    for i, entry in enumerate(changes, start=2):
+        _body(ws, i, [entry["at"].replace("T", " ")[:16], entry["user"], entry["summary"]])
+
+    ws = wb.create_sheet("Setup")
+    for col, (kind, title) in enumerate([("building", "Building"), ("location", "Hall/Location/Area"),
+                                         ("bandwidth", "Bandwidth Allocation"), ("vlan", "VLANs")], start=1):
+        head = ws.cell(1, col, title)
+        head.font = Font(name=FONT, size=10, bold=True)
+        ws.column_dimensions[get_column_letter(col)].width = [32, 45, 20, 24][col - 1]
+        for r, value in enumerate(snap["lists"][kind], start=2):
+            ws.cell(r, col, value).font = BODY_FONT
+
+    wb.properties.title = f"Event Network Requirements V{version}"
+    out = io.BytesIO()
+    wb.save(out)
+    return out.getvalue()
+
+
+# --- PDF report -------------------------------------------------------------------------
+
+REPORT_CSS = """
+@page { size: A4 landscape; margin: 12mm 10mm 14mm; }
+* { box-sizing: border-box; }
+body { font-family: 'Overpass', 'Lato', sans-serif; font-size: 8.5pt; color: #111; margin: 0; }
+h1 { font-size: 20pt; margin: 0 0 4pt; }
+h2 { font-size: 13pt; margin: 0 0 6pt; break-after: avoid; }
+h3 { font-size: 10pt; margin: 10pt 0 4pt; break-after: avoid; }
+.cover { height: 170mm; display: flex; flex-direction: column; justify-content: center; }
+.meta { color: #555; font-size: 10pt; margin: 2pt 0; }
+.summary { margin-top: 18pt; border-collapse: collapse; }
+.summary td, .summary th { padding: 3pt 10pt 3pt 0; text-align: left; font-size: 9.5pt; }
+section { break-before: page; }
+table.data { width: 100%; border-collapse: collapse; table-layout: fixed; }
+table.data thead { display: table-header-group; }
+table.data th { background: #1d1c1d; color: #fff; text-align: left; padding: 4pt 4pt; font-size: 8pt; vertical-align: bottom; }
+table.data td { padding: 3pt 4pt; border-bottom: 0.5pt solid #ddd; vertical-align: top; overflow-wrap: break-word; }
+table.data th + th { padding-left: 6pt; }
+table.data tr { break-inside: avoid; }
+tr.group td { background: #1d1c1d; color: #fff; font-weight: 700; }
+tr.section td { background: #666; color: #fff; font-weight: 700; }
+tr.total td { background: #222; color: #fff; font-weight: 700; }
+td.num { text-align: right; }
+td.tick, table.matrix th:not(:first-child) { text-align: center; }
+.muted { color: #777; }
+.changes li { margin: 1pt 0; }
+"""
+
+
+def _e(value: Any) -> str:
+    return "" if value is None else html.escape(str(value))
+
+
+def _table(headers: list[str], widths: list[int], body: str, extra_class: str = "") -> str:
+    total = sum(widths)
+    cols = "".join(f'<col style="width:{w / total * 100:.2f}%">' for w in widths)
+    head = "".join(f"<th>{_e(h)}</th>" for h in headers)
+    return (f'<table class="data {extra_class}"><colgroup>{cols}</colgroup>'
+            f"<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>")
+
+
+def build_report(snap: dict, changes: list[dict], *, title: str, version: int, user: str, when: str) -> str:
+    totals = {t["venue"]: t for t in snap["totals"]["ethernet"]}
+    count = lambda t, v=None: len(_rows(snap, t, v))  # noqa: E731
+    summary = "".join(
+        f"<tr><th>{_e(v)}</th><td>{count('wifi', v)} Wi-Fi networks</td>"
+        f"<td>{count('ethernet', v)} Ethernet requirements</td><td>{_e(totals[v]['total'])} Ethernet points</td></tr>"
+        for v in snap["venues"]
+    )
+    parts = [f"""<div class="cover"><h1>{_e(title)}</h1>
+        <p class="meta">Network requirements · Version {version}</p>
+        <p class="meta">Published by {_e(user)} on {_e(when)}</p>
+        <table class="summary">{summary}<tr><th>All venues</th><td colspan="3">{count('partner')} partner orders ·
+        {count('vlan_extension')} VLAN extensions</td></tr></table></div>"""]
+
+    for venue in snap["venues"]:
+        rows = []
+        for group in snap["groups"]["wifi"]:
+            items = _rows(snap, "wifi", venue, group)
+            if not items:
+                continue
+            rows.append(f'<tr class="group"><td colspan="{len(WIFI_FIELDS)}">{_e(group)}</td></tr>')
+            rows += ["<tr>" + "".join(f"<td>{_e(_display(f, d.get(f)))}</td>" for f in WIFI_FIELDS) + "</tr>" for d in items]
+        body = "".join(rows) or f'<tr><td colspan="{len(WIFI_FIELDS)}" class="muted">No Wi-Fi networks</td></tr>'
+        parts.append(f"<section><h2>{_e(venue)} · Wi-Fi networks</h2>"
+                     + _table([LABELS["wifi"][f] for f in WIFI_FIELDS], WIFI_WIDTHS, body) + "</section>")
+
+        rows = []
+        for section in totals[venue]["sections"]:
+            items = _rows(snap, "ethernet", venue, section["section"])
+            rows.append(f'<tr class="section"><td colspan="7">{_e(section["section"])}</td>'
+                        f'<td class="num">{_e(section["ports"])}</td><td></td></tr>')
+            rows += ["<tr>" + "".join(
+                f'<td class="num">{_e(d.get(f))}</td>' if f == "ports" else f"<td>{_e(d.get(f))}</td>"
+                for f in ETHERNET_FIELDS) + "</tr>" for d in items]
+        rows.append(f'<tr class="total"><td colspan="7">Total</td><td class="num">{_e(totals[venue]["total"])}</td><td></td></tr>')
+        parts.append(f"<section><h2>{_e(venue)} · Ethernet requirements</h2>"
+                     + _table([LABELS["ethernet"][f] for f in ETHERNET_FIELDS], ETHERNET_WIDTHS, "".join(rows))
+                     + "</section>")
+
+    partner_rows = "".join(
+        "<tr>" + "".join(
+            f'<td class="num">{_e(_display(f, d.get(f)))}</td>' if f in ("bandwidth_mbps", "default_cables",
+                                                                       "total_ports", "wifi", "vlans")
+            else f"<td>{_e(_display(f, d.get(f)))}</td>" for f in PARTNER_FIELDS) + "</tr>"
+        for d in _rows(snap, "partner")
+    ) or f'<tr><td colspan="{len(PARTNER_FIELDS)}" class="muted">No partner orders</td></tr>'
+    parts.append("<section><h2>Partner custom orders</h2>"
+                 + _table([LABELS["partner"][f] for f in PARTNER_FIELDS], PARTNER_WIDTHS, partner_rows) + "</section>")
+
+    vlan_rows = "".join(
+        f"<tr><td>{_e(r['data'].get('vlan'))}</td>"
+        + "".join(f'<td class="tick">{"Yes" if r.get("venue_ticks", {}).get(v) else ""}</td>' for v in snap["venues"])
+        + "</tr>"
+        for r in snap["records"] if r["type"] == "vlan_extension"
+    ) or f'<tr><td colspan="{len(snap["venues"]) + 1}" class="muted">No VLAN extensions</td></tr>'
+    change_items = "".join(
+        f"<li>{_e(c['at'].replace('T', ' ')[:16])} · {_e(c['user'])} · {_e(c['summary'])}</li>" for c in changes[:300]
+    ) or '<li class="muted">No changes recorded since the previous version.</li>'
+    parts.append("<section><h2>VLAN extensions</h2>"
+                 + _table(["VLAN", *snap["venues"]], [24] + [12] * len(snap["venues"]), vlan_rows, "matrix")
+                 + f'<h3>Changes since the previous version</h3><ul class="changes">{change_items}</ul></section>')
+
+    return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{_e(title)} V{version}</title>'
+            f"<style>{REPORT_CSS}</style></head><body>{''.join(parts)}</body></html>")
+
+
+# --- publish -------------------------------------------------------------------------------
+
+
+def changes_since_last_publish(conn: sqlite3.Connection, doc: int) -> list[dict]:
+    after = store.last_publish_log_id(conn, doc) or 0
+    entries = store.history(conn, doc, after_id=after, limit=10_000)
+    return [e for e in reversed(entries) if e["action"] not in SKIPPED_ACTIONS]
+
+
+def publish(conn: sqlite3.Connection, storage: Storage, converter: Converter, *, doc: int,
+            user: str) -> tuple[dict[str, Any], str | None]:
+    """Create the next version from the records. Returns (version row, failure reason or None)."""
+    document = db.get_document(conn, doc)
+    if not store.has_records(conn, doc):
+        raise service.RecordError(409, "There is nothing to publish yet. Import or add requirements first.")
+    snap = snapshot(conn, doc)
+    changes = changes_since_last_publish(conn, doc)
+    version_hint = db.max_version(conn, doc) + 1
+    xlsx = build_workbook(snap, changes, version=version_hint)
+    version = allocate_next_version(conn, document_id=doc, sha256=hashlib.sha256(xlsx).hexdigest(), user=user,
+                                    warnings=[], edited_from=None, source="publish")
+    n = version["version"]
+    if n != version_hint:  # someone published or uploaded at the same moment
+        xlsx = build_workbook(snap, changes, version=n)
+    when = datetime.now(timezone.utc).strftime("%d %b %Y %H:%M UTC")
+    failure = None
+    try:
+        storage.put(version_key(doc, n, ORIGINAL), xlsx)
+        pdf = converter.html_to_pdf(build_report(snap, changes, title=document["name"], version=n, user=user, when=when))
+        storage.put(version_key(doc, n, FULL_PDF), pdf)
+        db.set_version_status(conn, version["id"], db.STATUS_READY)
+    except Exception as exc:
+        failure = str(exc) if isinstance(exc, ConversionError) else "Internal error while building the PDF"
+        log.exception("publishing document %s V%s failed", doc, n)
+        db.set_version_status(conn, version["id"], db.STATUS_FAILED, error=failure)
+    with conn:
+        store.save_snapshot(conn, version_id=version["id"], doc=doc, data=snap)
+        if failure is None:
+            store.log(conn, doc=doc, entity="event", action="publish", user=user, new=n,
+                      summary=f"Published V{n} ({len(changes)} change(s) since the previous version)")
+    return db.get_version_by_id(conn, version["id"]), failure  # type: ignore[return-value]

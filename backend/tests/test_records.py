@@ -270,3 +270,95 @@ def test_deleting_the_document_removes_its_records(client: TestClient, event: in
               for t in ("records", "event_lists", "event_venues", "event_groups", "change_log")]
     conn.close()
     assert counts == [0, 0, 0, 0, 0]
+
+
+# --- publish ---------------------------------------------------------------------------
+
+
+def _comparable(client, doc) -> Counter:
+    """Records as (type, venue, group, data) with venue/group names, for round-trip checks."""
+    ov = client.get(f"/api/events/{doc}/overview", headers=ADMIN).json()
+    venues = {v["id"]: v["name"] for v in ov["venues"]}
+    groups = {g["id"]: g["name"] for g in ov["groups"]}
+    out = Counter()
+    for rtype in ("wifi", "ethernet", "partner", "vlan_extension"):
+        for r in _records(client, doc, rtype):
+            data = dict(r["data"])
+            if rtype == "vlan_extension":
+                data["venues"] = dict(sorted((venues[int(k)], v) for k, v in data["venues"].items()))
+            if rtype == "wifi":
+                data["has_password"] = r["has_password"]
+            out[(rtype, venues.get(r["venue_id"]), groups.get(r["group_id"]), str(sorted(data.items())))] += 1
+    return out
+
+
+def test_publish_creates_next_version(client: TestClient, event: int) -> None:
+    assert client.get(f"/api/events/{event}/overview", headers=ADMIN).json()["unpublished_changes"] == 1  # the import
+    r = client.post(f"/api/events/{event}/publish", headers=ADMIN)
+    assert r.status_code == 201, r.text
+    version = r.json()["version"]
+    assert (version["version"], version["status"], version["source"], version["uploaded_by"]) == (2, "ready", "publish", "alice")
+
+    html = client.app.state.converter.html
+    assert "LIS26 | Event_Network_Requirements" in html and "Version 2" in html
+    assert "#Production" in html and "StaffPass1!" in html  # the published report shows passwords, as before
+    assert ">111<" in html and ">124<" in html  # section and venue totals
+    assert "Imported requirements from V1" in html
+
+    ov = client.get(f"/api/events/{event}/overview", headers=ADMIN).json()
+    assert (ov["unpublished_changes"], ov["latest_version"]) == (0, 2)
+    pdf = client.get(f"/api/documents/{event}/download?version=2", headers=VIEWER)
+    assert pdf.status_code == 200 and pdf.content == b"%PDF-1.7 fake report"
+
+
+def test_published_excel_reimports_to_the_same_records(client: TestClient, event: int) -> None:
+    before = _comparable(client, event)
+    client.post(f"/api/events/{event}/publish", headers=ADMIN)
+    xlsx = client.get(f"/api/documents/{event}/download?version=2&format=xlsx", headers=ADMIN)
+    assert xlsx.status_code == 200
+
+    r = client.post("/api/documents/upload", headers=ADMIN,
+                    files={"file": ("LIS27 _ Event_Network_Requirements_V1.xlsx", xlsx.content, XLSX)})
+    other = r.json()["document"]["id"]
+    imported = client.post(f"/api/events/{other}/import", headers=ADMIN, json={}).json()
+    assert _comparable(client, other) == before
+    assert not [w for w in imported["warnings"] if "not recognised" in w]
+    lists = lambda d: sorted((i["kind"], i["value"]) for i in client.get(f"/api/events/{d}/overview", headers=ADMIN).json()["lists"])  # noqa: E731
+    assert lists(other) == lists(event)
+
+
+def test_changes_since_publish(client: TestClient, event: int) -> None:
+    client.post(f"/api/events/{event}/publish", headers=ADMIN)
+    eth = _find(client, event, "ethernet", purpose="Photographers Office")
+    client.patch(f"/api/events/{event}/records/ethernet/{eth['id']}", headers=ADMIN,
+                 json={"revision": eth["revision"], "data": {"ports": 4}})
+    wifi = _find(client, event, "wifi", ssid="#Production")
+    client.post(f"/api/events/{event}/records/wifi/{wifi['id']}/reveal", headers=VIEWER)  # not a change
+    changes = client.get(f"/api/events/{event}/changes", headers=VIEWER).json()
+    assert [c["summary"] for c in changes] == ["Changed Ethernet Points of Ethernet requirement 'Photographers Office'"]
+    client.post(f"/api/events/{event}/publish", headers=ADMIN)
+    assert "Changed Ethernet Points" in client.app.state.converter.html
+
+
+def test_publish_rules(client: TestClient, event: int) -> None:
+    assert client.post(f"/api/events/{event}/publish", headers=VIEWER).status_code == 403
+    r = client.post("/api/documents/upload", headers=ADMIN,
+                    files={"file": ("LIS28 _ Event_Network_Requirements_V1.xlsx", records_workbook(), XLSX)})
+    empty = r.json()["document"]["id"]
+    assert client.post(f"/api/events/{empty}/publish", headers=ADMIN).status_code == 409
+
+    client.app.state.converter.fail = True
+    r = client.post(f"/api/events/{event}/publish", headers=ADMIN)
+    assert r.status_code == 502 and "Try publishing again" in r.json()["detail"]
+    versions = client.get(f"/api/documents/{event}/versions").json()
+    assert (versions[0]["version"], versions[0]["status"]) == (2, "failed")
+    assert client.get(f"/api/events/{event}/overview", headers=ADMIN).json()["unpublished_changes"] == 1
+
+
+def test_report_escapes_text(client: TestClient, event: int) -> None:
+    eth = _find(client, event, "ethernet", purpose="Photographers Office")
+    client.patch(f"/api/events/{event}/records/ethernet/{eth['id']}", headers=ADMIN,
+                 json={"revision": eth["revision"], "data": {"notes": "<script>alert(1)</script>"}})
+    client.post(f"/api/events/{event}/publish", headers=ADMIN)
+    html = client.app.state.converter.html
+    assert "<script>alert(1)</script>" not in html and "&lt;script&gt;" in html

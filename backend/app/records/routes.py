@@ -21,6 +21,7 @@ from ..storage import ObjectNotFound, version_key
 from . import service, store
 from .importer import import_workbook
 from .models import ListValue, NamedItem, NewRecord, RecordMove, RecordPatch
+from .publish import changes_since_last_publish, publish
 
 log = logging.getLogger(__name__)
 
@@ -272,3 +273,26 @@ def delete_group(document_id: int, group_id: int, conn: Conn, principal: Editor)
     _document(conn, document_id)
     _run(lambda: service.delete_named(conn, document_id, "group", group_id, user=principal.user))
     return store.groups(conn, document_id)
+
+
+# --- publish -----------------------------------------------------------------------------
+
+
+@router.post("/publish", status_code=status.HTTP_201_CREATED)
+def publish_version(request: Request, document_id: int, conn: Conn, principal: Editor) -> dict[str, Any]:
+    """Freeze the records as the next version (Excel in the workbook layout + PDF report)."""
+    _document(conn, document_id)
+    version, failure = _run(lambda: publish(conn, request.app.state.storage, request.app.state.converter,
+                                            doc=document_id, user=principal.user))
+    if failure:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY,
+                            f"V{version['version']} could not be finished: {failure}. Try publishing again.")
+    log.info("%s published document %s as V%s", principal.user, document_id, version["version"])
+    return {"version": version, "message": f"Published V{version['version']}."}
+
+
+@router.get("/changes")
+def unpublished_changes(document_id: int, conn: Conn, principal: Reader) -> list[dict[str, Any]]:
+    """Changes since the last publish, oldest first (what the next version will contain)."""
+    _document(conn, document_id)
+    return changes_since_last_publish(conn, document_id)

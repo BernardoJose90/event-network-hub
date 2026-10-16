@@ -37,6 +37,15 @@ class FakeConverter:
             raise ConversionError("PDF conversion failed (HTTP 503)")
         return b"%PDF-1.7 fake " + filename.encode()
 
+    def html_to_pdf(self, html: str) -> bytes:
+        from app.converter import ConversionError
+
+        self.calls.append("index.html")
+        self.html = html
+        if self.fail:
+            raise ConversionError("PDF conversion failed (HTTP 503)")
+        return b"%PDF-1.7 fake report"
+
 
 @pytest.fixture
 def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:

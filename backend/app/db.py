@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS document_versions (
     warnings     TEXT NOT NULL DEFAULT '[]',
     error        TEXT,
     edited_from  INTEGER,
+    source       TEXT NOT NULL DEFAULT 'upload',  -- upload | edit | publish
     UNIQUE (document_id, version)
 );
 
@@ -76,6 +77,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
     columns = {r["name"] for r in conn.execute("PRAGMA table_info(document_versions)")}
     if "edited_from" not in columns:
         conn.execute("ALTER TABLE document_versions ADD COLUMN edited_from INTEGER")
+    if "source" not in columns:
+        conn.execute("ALTER TABLE document_versions ADD COLUMN source TEXT NOT NULL DEFAULT 'upload'")
 
 
 def utcnow() -> str:
@@ -172,6 +175,7 @@ def insert_version(
     uploaded_by: str,
     warnings: list[dict[str, str]],
     edited_from: int | None = None,
+    source: str = "upload",
 ) -> dict[str, Any]:
     """Insert a version row in 'processing' state.
 
@@ -181,11 +185,11 @@ def insert_version(
         cur = conn.execute(
             """
             INSERT INTO document_versions
-                (document_id, version, sha256, uploaded_by, uploaded_at, status, warnings, edited_from)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (document_id, version, sha256, uploaded_by, uploaded_at, status, warnings, edited_from, source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (document_id, version, sha256, uploaded_by, utcnow(), STATUS_PROCESSING,
-             json.dumps(warnings), edited_from),
+             json.dumps(warnings), edited_from, source),
         )
     return get_version_by_id(conn, cur.lastrowid)  # type: ignore[return-value]
 

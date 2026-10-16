@@ -20,8 +20,10 @@ from openpyxl.worksheet.worksheet import Worksheet
 from ..xlsx_colors import luminance, resolve, theme_palette
 from .models import LIST_FIELDS
 
-WIFI_SHEET = re.compile(r"^(?P<venue>.*?)[\s\-]*wi-?fi\s+req\s*$", re.IGNORECASE)
-ETHERNET_SHEET = re.compile(r"^(?P<venue>.*?)[\s\-]*ethernet\s+req\s*$", re.IGNORECASE)
+WIFI_SHEET = re.compile(r"^(?P<venue>.*?)[\s\-]*wi-?fi\s+req(?:uirements)?\s*$", re.IGNORECASE)
+ETHERNET_SHEET = re.compile(r"^(?P<venue>.*?)[\s\-]*ethernet\s+req(?:uirements)?\s*$", re.IGNORECASE)
+# Single-venue workbooks name their sheets just "Wi-Fi Requirements"/"Ethernet Requirements".
+DEFAULT_VENUE = "Main venue"
 MAX_LEGACY_ROWS = 1000
 
 
@@ -85,8 +87,12 @@ def _norm(header: Any) -> str:
     return re.sub(r"\s+", "", str(header or "")).lower()
 
 
-def _header_map(ws: Worksheet, rules: list[tuple[str, str]], first_column: str | None = None) -> dict[int, str]:
-    """Map column index -> field, by header text containing a rule's key (first match wins)."""
+def _header_map(ws: Worksheet, rules: list[tuple[str, str]], result: ImportResult,
+                first_column: str | None = None) -> dict[int, str]:
+    """Map column index -> field, by header text containing a rule's key (first match wins).
+
+    Columns with data that no field takes are listed in an import note, so nothing is dropped silently.
+    """
     mapping: dict[int, str] = {}
     for cell in ws[1]:
         name = _norm(cell.value)
@@ -96,6 +102,11 @@ def _header_map(ws: Worksheet, rules: list[tuple[str, str]], first_column: str |
                 break
     if first_column and 1 not in mapping:
         mapping[1] = first_column  # e.g. the Ethernet "Purpose" header that was overwritten with a number
+    used = {c.column for row in ws.iter_rows(min_row=2) for c in row if c.value not in (None, "")}
+    skipped = [str(c.value if c.value is not None else f"column {c.column_letter}").replace("\n", " ").strip()
+               for c in ws[1] if c.column not in mapping and c.column in used]
+    if skipped:
+        result.warnings.append(f"{ws.title}: columns not imported (no matching field): {', '.join(skipped)}")
     return mapping
 
 
@@ -120,7 +131,7 @@ PARTNER_RULES = [("partner", "partner"), ("pav", "pavilion"), ("stand", "stand")
 
 
 def _wifi(ws: Worksheet, venue: str, result: ImportResult, palette: list[str]) -> None:
-    mapping = _header_map(ws, WIFI_RULES)
+    mapping = _header_map(ws, WIFI_RULES, result)
     group = None
     skipped = 0
     for row in ws.iter_rows(min_row=2):
@@ -157,7 +168,7 @@ def _wifi(ws: Worksheet, venue: str, result: ImportResult, palette: list[str]) -
 
 
 def _ethernet(ws: Worksheet, venue: str, result: ImportResult, palette: list[str]) -> None:
-    mapping = _header_map(ws, ETHERNET_RULES, first_column="purpose")
+    mapping = _header_map(ws, ETHERNET_RULES, result, first_column="purpose")
     section = None
     for row in ws.iter_rows(min_row=2):
         first = row[0]
@@ -188,7 +199,7 @@ def _ethernet(ws: Worksheet, venue: str, result: ImportResult, palette: list[str
 
 
 def _partners(ws: Worksheet, result: ImportResult) -> None:
-    mapping = _header_map(ws, PARTNER_RULES)
+    mapping = _header_map(ws, PARTNER_RULES, result)
     numbers = {"bandwidth_mbps", "default_cables", "total_ports", "wifi", "vlans"}
     for row in ws.iter_rows(min_row=2):
         raw = _row_values(row, mapping)
@@ -236,7 +247,7 @@ def _setup(ws: Worksheet, result: ImportResult) -> None:
     rules = [("building", "building"), ("hall", "location"), ("location", "location"),
              ("bandwidth", "bandwidth"), ("vlan", "vlan")]
     columns: dict[int, tuple[str, int]] = {}
-    for row in ws.iter_rows(min_row=1, max_row=3):
+    for row in ws.iter_rows(min_row=1, max_row=6):
         for cell in row:
             name = _norm(cell.value)
             for key, kind in rules:
@@ -265,23 +276,26 @@ def import_workbook(data: bytes) -> ImportResult:
     result = ImportResult()
     sheets = [ws for ws in wb.worksheets if isinstance(ws, Worksheet)]
 
+    def venue_of(m: re.Match) -> str:
+        return m.group("venue").strip(" -") or DEFAULT_VENUE
+
     # Venues first (in sheet order), so the VLAN matrix can refer to them.
     for ws in sheets:
-        m = WIFI_SHEET.match(ws.title) or ETHERNET_SHEET.match(ws.title)
-        if m and m.group("venue").strip():
-            result.add_unique(result.venues, m.group("venue").strip())
+        m = WIFI_SHEET.match(ws.title.strip()) or ETHERNET_SHEET.match(ws.title.strip())
+        if m:
+            result.add_unique(result.venues, venue_of(m))
 
     for ws in sheets:
         title = ws.title.strip()
-        if (m := WIFI_SHEET.match(title)) and m.group("venue").strip():
-            _wifi(ws, m.group("venue").strip(), result, palette)
-        elif (m := ETHERNET_SHEET.match(title)) and m.group("venue").strip():
-            _ethernet(ws, m.group("venue").strip(), result, palette)
+        if m := WIFI_SHEET.match(title):
+            _wifi(ws, venue_of(m), result, palette)
+        elif m := ETHERNET_SHEET.match(title):
+            _ethernet(ws, venue_of(m), result, palette)
         elif "partner" in title.lower() and "order" in title.lower():
             _partners(ws, result)
         elif "vlan" in title.lower() and "extend" in title.lower():
             _vlan_extensions(ws, result, result.venues)
-        elif title.lower() == "setup":
+        elif "setup" in title.lower() or "setting" in title.lower():
             _setup(ws, result)
         elif "change" in title.lower() and "log" in title.lower():
             _legacy_log(ws, result)

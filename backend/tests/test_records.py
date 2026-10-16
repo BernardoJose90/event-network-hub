@@ -414,3 +414,44 @@ def test_vlan_extension_ticks_are_logged_by_venue_name(client: TestClient, event
     entry = client.get(f"/api/events/{event}/history?entity=vlan_extension", headers=ADMIN).json()[0]
     assert (entry["summary"], entry["field"], entry["old"], entry["new"]) == (
         "Unticked FIL 1-5 for VLAN extension 'Operational_Prod'", "venue:FIL 1-5", "yes", "no")
+
+
+def _single_venue_workbook() -> bytes:
+    import io
+
+    from openpyxl import Workbook
+
+    from .records_fixture import BLACK, GREY, WHITE_BOLD
+
+    wb = Workbook()
+    wifi = wb.active
+    wifi.title = "Wi-Fi Requirements"
+    wifi.append(["ID", "SSID", "Coverage area", "Password?", "Broadcast?", "VLAN", "Band", "Password value", "Purpose"])
+    wifi["A2"] = "Core Networks"
+    wifi["A2"].fill, wifi["A2"].font = BLACK, WHITE_BOLD
+    wifi.append([1, "#WebSummitVancouver", "all areas", "open network", "yes", "General", "5 GHz", "none", "General"])
+    eth = wb.create_sheet("Ethernet Requirements")
+    eth.append(["Purpose", "Location", "VLAN", "Area/Room Number", "Type", "Bandwidth per device\nNorth - South",
+                "Bandwidth per device\nEast - West", "Capacity", "Ethernet Points", "CCTV", "#Production", "Notes"])
+    eth["A2"] = "INTERNAL WORKSPACES"
+    eth["A2"].fill, eth["A2"].font = GREY, WHITE_BOLD
+    eth.append(["Staff Office", "West Second Floor", "General", "202", "Office", "50 Mbps", "1 Gbps", 10, 4, "no", "yes", "x"])
+    settings = wb.create_sheet("0 SETTINGS DO NOT EDIT")
+    settings["A1"] = "Named Ranges"
+    settings["A3"], settings["B3"], settings["E3"], settings["F3"] = "Building", "Hall/Location/Area", "Bandwidth Allocation", "VLANs"
+    settings["B4"], settings["F4"] = "West Second Floor", "General"
+    out = io.BytesIO()
+    wb.save(out)
+    return out.getvalue()
+
+
+def test_single_venue_workbook_layout() -> None:
+    result = import_workbook(_single_venue_workbook())
+    assert result.venues == ["Main venue"]
+    assert Counter((r.type, r.venue, r.group) for r in result.records) == {
+        ("wifi", "Main venue", "Core Networks"): 1, ("ethernet", "Main venue", "INTERNAL WORKSPACES"): 1}
+    eth = next(r for r in result.records if r.type == "ethernet")
+    assert (eth.data["ports"], eth.data["capacity"], eth.data["notes"]) == (4, "10", "x")
+    assert result.lists["location"] == ["West Second Floor"] and result.lists["vlan"] == ["General"]
+    note = next(w for w in result.warnings if "columns not imported" in w)
+    assert note == "Ethernet Requirements: columns not imported (no matching field): Type, CCTV, #Production"

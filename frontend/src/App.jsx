@@ -7,6 +7,28 @@ const ROLES = [
   { value: 'network-admin', label: 'Network admin' },
 ]
 
+// TEST ONLY identity is remembered per browser so a page reload (e.g. a Vite
+// restart) does not silently switch the user back to the viewer role.
+const IDENTITY_KEY = 'portal-pdf-test.identity'
+
+function loadIdentity() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(IDENTITY_KEY) || 'null')
+    if (saved && ROLES.some((r) => r.value === saved.role) && typeof saved.user === 'string') return saved
+  } catch {
+    // storage unavailable or corrupt: fall back to defaults
+  }
+  return { role: 'viewer', user: '' }
+}
+
+function saveIdentity(identity) {
+  try {
+    localStorage.setItem(IDENTITY_KEY, JSON.stringify(identity))
+  } catch {
+    // storage unavailable: identity just won't survive reloads
+  }
+}
+
 function formatTime(iso) {
   return new Date(iso).toLocaleString()
 }
@@ -264,7 +286,9 @@ function VersionTable({ documentId, versions, identity }) {
 }
 
 export default function App() {
-  const [identity, setIdentity] = useState({ role: 'viewer', user: '' })
+  const [identity, setIdentity] = useState(loadIdentity)
+
+  useEffect(() => saveIdentity(identity), [identity])
   const [documents, setDocuments] = useState([])
   const [selectedId, setSelectedId] = useState(null)
   const [versions, setVersions] = useState([])

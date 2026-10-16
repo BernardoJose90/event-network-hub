@@ -357,7 +357,7 @@ function DocumentHeader({ document, identity, onDeleted, onChanged }) {
         <div className="row">
           <a className="button" href={`/event/${document.id}`}
             title={archived ? 'View the requirements (read-only)' : 'View and edit the requirements'}>
-            Open requirements
+            Open Network Requirements
           </a>
           {isAdmin && archived && (
             <>

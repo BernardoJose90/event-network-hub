@@ -113,7 +113,7 @@ backend/app/
 
 ## Requirements (the app as the master copy)
 
-**Open requirements** on a document opens `/event/<document id>`. There, an event's network requirements are kept as structured records instead of spreadsheet cells:
+**Open Network Requirements** on an event opens `/event/<document id>`. There, an event's network requirements are kept as structured records instead of spreadsheet cells:
 
 - **Overview:** totals per venue and section, counts, list values to review, unpublished changes, and **Publish V<n>** (admins).
 - **Wi-Fi networks, Ethernet requirements, Partner orders:**

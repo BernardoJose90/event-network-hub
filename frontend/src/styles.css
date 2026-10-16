@@ -1111,3 +1111,29 @@ button.link:hover:not(:disabled) {
   width: 220px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
 }
+
+/* New event form and legacy upload in the documents sidebar */
+.new-event {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.stack-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9rem;
+}
+
+.new-event .check {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: 0.85rem;
+}
+
+.legacy-upload summary {
+  cursor: pointer;
+  margin-bottom: 8px;
+}

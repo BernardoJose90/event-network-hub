@@ -33,7 +33,33 @@ export function Overview({ overview, api, isAdmin, notify, onChanged, onPublish,
     return (
       <div className="ov-empty panel">
         <h3>No requirements yet</h3>
-        {overview.latest_version ? (
+        {overview.venues.length > 0 && (
+          <>
+            <p className="muted">
+              Set up with {overview.venues.length === 1 ? 'one venue' : `${overview.venues.length} venues`} (
+              {overview.venues.map((v) => v.name).join(', ')}).{' '}
+              {isAdmin
+                ? 'Add requirements on each tab. VLANs and locations come from Lists, so add those values first. Publishing creates the next version.'
+                : 'A network admin is adding the requirements.'}
+            </p>
+            <div className="row">
+              {['wifi', 'ethernet', 'partner', 'vlan_extension', 'lists'].map((key) => (
+                <button key={key} className="secondary" onClick={() => goTo(key)}>{TITLES[key] || 'Lists'}</button>
+              ))}
+            </div>
+          </>
+        )}
+        {overview.venues.length > 0 ? (
+          isAdmin && overview.latest_version && (
+            <p className="muted small">
+              Or{' '}
+              <button className="link" onClick={() => importLatest(true)} disabled={busy}>
+                replace this setup with the workbook uploaded as V{overview.latest_version}
+              </button>
+              .
+            </p>
+          )
+        ) : overview.latest_version ? (
           isAdmin ? (
             <>
               <p className="muted">Bring in the workbook uploaded as V{overview.latest_version}: venues, Wi-Fi networks, Ethernet requirements, partner orders, VLAN extensions and the Setup lists.</p>

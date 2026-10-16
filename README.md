@@ -125,7 +125,13 @@ backend/app/
 
 Viewers see the same pages read-only. Editing and publishing are for network admins. Each record has a revision, so concurrent edits get "X changed this record, reload" instead of overwriting each other.
 
-**Getting started:** upload the event's workbook, then click Overview → **Import from V<n>**. Two layouts are recognised:
+**Getting started:** network admins click **+ New event** on the documents page and enter an event code (e.g. `WEB26`). No workbook is needed. The event can start:
+- **empty**, with one venue ("Main venue"), the usual Wi-Fi groups and Ethernet sections, and empty lists; or
+- **as a copy of another event**, which copies its venues, groups, sections and lists. Tick the box to copy its active requirements too (archived ones are left out). The copy is independent of the original.
+
+The event has no versions until the first **Publish**, which creates V1. Uploading a workbook for the same event code later adds a version to the same document.
+
+For an existing workbook, use **Legacy: upload a workbook** in the sidebar, then click Overview → **Import from V<n>**. Two layouts are recognised:
 - per-venue sheets (`<Venue> - Wi-Fi Req`, `<Venue> Ethernet Req`), e.g. LIS25;
 - single-venue sheets (`Wi-Fi Requirements`, `Ethernet Requirements`), e.g. VAN26; these go into "Main venue", which you can rename under Lists.
 
@@ -141,6 +147,8 @@ Code: `backend/app/records/` (models, store, service, importer, publish, routes)
 
 | Method | Path | Notes |
 |--------|------|-------|
+| GET | `/api/events` | events with requirements set up (to copy from) |
+| POST | `/api/events` | `{event_code, copy_from?, copy_records?}`; admin; 409 if the event exists |
 | GET | `/api/events/{id}/overview` | totals, counts, lists, unpublished changes |
 | POST | `/api/events/{id}/import` | `{replace}`; from the latest ready version |
 | GET/POST | `/api/events/{id}/records/{type}` | type: `wifi`, `ethernet`, `partner`, `vlan_extension`; `?archived=true` |

@@ -58,6 +58,22 @@ export async function uploadDocument(file, identity) {
   )
 }
 
+// Events with requirements set up, to copy from when creating a new event.
+export async function listEvents(identity) {
+  return json(await fetch('/api/events', { headers: identityHeaders(identity) }))
+}
+
+// Admin only: create an event without a workbook, empty or copied from another event.
+export async function createEvent({ eventCode, copyFrom, copyRecords }, identity) {
+  return json(
+    await fetch('/api/events', {
+      method: 'POST',
+      headers: { ...identityHeaders(identity), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event_code: eventCode, copy_from: copyFrom, copy_records: copyRecords }),
+    }),
+  )
+}
+
 // Admin only: deletes the document with all versions, files and download history.
 export async function deleteDocument(documentId, identity) {
   const res = await fetch(`/api/documents/${documentId}`, {

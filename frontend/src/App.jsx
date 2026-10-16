@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  createEvent,
   deleteDocument,
   downloadFile,
   fetchFile,
   listDocuments,
+  listEvents,
   listVersions,
   uploadDocument,
 } from './api.js'
@@ -129,11 +131,88 @@ function UploadForm({ identity, onCreated }) {
   )
 }
 
+function NewEventForm({ identity }) {
+  const [open, setOpen] = useState(false)
+  const [code, setCode] = useState('')
+  const [events, setEvents] = useState([])
+  const [copyFrom, setCopyFrom] = useState('')
+  const [copyRecords, setCopyRecords] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    if (!open) return
+    listEvents(identity).then(setEvents).catch((err) => setError(err.message))
+  }, [open, identity])
+
+  async function submit(e) {
+    e.preventDefault()
+    setBusy(true)
+    setError(null)
+    try {
+      const doc = await createEvent(
+        { eventCode: code.trim(), copyFrom: copyFrom ? Number(copyFrom) : null, copyRecords: !!copyFrom && copyRecords },
+        identity,
+      )
+      window.location.assign(`/event/${doc.id}`)
+    } catch (err) {
+      setError(err.message)
+      setBusy(false)
+    }
+  }
+
+  if (!open) {
+    return <button onClick={() => setOpen(true)}>+ New event</button>
+  }
+  return (
+    <form onSubmit={submit} className="stack new-event">
+      <label className="stack-label">
+        Event code
+        <input autoFocus value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. WEB26" maxLength={20} />
+      </label>
+      <label className="stack-label">
+        Start from
+        <select value={copyFrom} onChange={(e) => setCopyFrom(e.target.value)}>
+          <option value="">Empty (one venue, the usual sections)</option>
+          {events.map((ev) => (
+            <option key={ev.id} value={ev.id}>Copy of {ev.name.split(' | ')[0]}</option>
+          ))}
+        </select>
+      </label>
+      {copyFrom && (
+        <label className="check">
+          <input type="checkbox" checked={copyRecords} onChange={(e) => setCopyRecords(e.target.checked)} />
+          Also copy its requirements (Wi-Fi, Ethernet, partner orders, VLAN extensions)
+        </label>
+      )}
+      <p className="muted small">
+        {copyFrom
+          ? 'Venues, sections and lists are always copied.'
+          : 'Add venues, sections and list values on the requirements page.'}{' '}
+        Publishing creates V1.
+      </p>
+      <div className="row nowrap">
+        <button type="submit" disabled={busy || !code.trim()}>{busy ? 'Creating…' : 'Create'}</button>
+        <button type="button" className="secondary" onClick={() => { setOpen(false); setError(null) }}>Cancel</button>
+      </div>
+      {error && <p className="error">{error}</p>}
+    </form>
+  )
+}
+
 function DocumentList({ documents, selectedId, viewing, onSelect, onViewVersion, onCreated, identity }) {
   return (
     <aside className="panel sidebar">
       <h2>Documents</h2>
-      {identity.role === 'network-admin' && <UploadForm identity={identity} onCreated={onCreated} />}
+      {identity.role === 'network-admin' && (
+        <div className="stack">
+          <NewEventForm identity={identity} />
+          <details className="legacy-upload">
+            <summary className="muted small">Legacy: upload a workbook</summary>
+            <UploadForm identity={identity} onCreated={onCreated} />
+          </details>
+        </div>
+      )}
       <ul className="doc-list">
         {documents.map((d) => (
           <li key={d.id}>
@@ -269,7 +348,7 @@ function VersionTable({ documentId, versions, identity, onView, onEdit }) {
       </div>
       {error && <p className="error">{error}</p>}
       {versions.length === 0 ? (
-        <p className="muted">No versions uploaded yet.</p>
+        <p className="muted">No versions yet. Publishing the requirements creates V1.</p>
       ) : (
         <div className="table-wrap">
           <table>
@@ -495,7 +574,7 @@ export default function App() {
           ) : (
             <p className="muted">
               {identity.role === 'network-admin'
-                ? 'Upload a file or select a document to get started.'
+                ? 'Create a new event or select a document to get started.'
                 : 'Select a document to get started.'}
             </p>
           )}

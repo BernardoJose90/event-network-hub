@@ -31,6 +31,10 @@ export async function listDocuments() {
   return json(await fetch('/api/documents'))
 }
 
+export async function getDocument(documentId) {
+  return json(await fetch(`/api/documents/${documentId}`))
+}
+
 async function uploadResult(res) {
   // created / unchanged / failed (502) all carry an upload result body.
   if (res.ok || res.status === 502) {

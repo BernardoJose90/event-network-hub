@@ -3,39 +3,11 @@ import {
   deleteDocument,
   downloadFile,
   fetchFile,
-  startEdit,
   listDocuments,
   listVersions,
   uploadDocument,
 } from './api.js'
-
-// TEST ONLY: role switcher standing in for real authentication.
-const ROLES = [
-  { value: 'viewer', label: 'Viewer' },
-  { value: 'network-admin', label: 'Network admin' },
-]
-
-// TEST ONLY identity is remembered per browser so a page reload (e.g. a Vite
-// restart) does not silently switch the user back to the viewer role.
-const IDENTITY_KEY = 'portal-pdf-test.identity'
-
-function loadIdentity() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(IDENTITY_KEY) || 'null')
-    if (saved && ROLES.some((r) => r.value === saved.role) && typeof saved.user === 'string') return saved
-  } catch {
-    // storage unavailable or corrupt: fall back to defaults
-  }
-  return { role: 'viewer', user: '' }
-}
-
-function saveIdentity(identity) {
-  try {
-    localStorage.setItem(IDENTITY_KEY, JSON.stringify(identity))
-  } catch {
-    // storage unavailable: identity just won't survive reloads
-  }
-}
+import { ROLES, loadIdentity, saveIdentity } from './identity.js'
 
 function formatTime(iso) {
   return new Date(iso).toLocaleString()
@@ -356,115 +328,6 @@ function VersionTable({ documentId, versions, identity, onView, onEdit }) {
   )
 }
 
-// Embeds Collabora Online the standard WOPI way: POST the access token into a
-// named iframe. Talks to the editor over postMessage to know when the document
-// is loaded, whether it has unsaved changes, and when a save has finished.
-function SpreadsheetEditor({ session, onSaved, onClose }) {
-  const frameRef = useRef(null)
-  const formRef = useRef(null)
-  const modifiedRef = useRef(false)
-  const pendingCloseRef = useRef(null)
-  const [status, setStatus] = useState('Loading editor…')
-  const [closing, setClosing] = useState(false)
-  const editorOrigin = new URL(session.editor_url).origin
-
-  const post = useCallback(
-    (MessageId, Values = {}) =>
-      frameRef.current?.contentWindow?.postMessage(
-        JSON.stringify({ MessageId, SendTime: Date.now(), Values }),
-        editorOrigin,
-      ),
-    [editorOrigin],
-  )
-
-  useEffect(() => {
-    formRef.current.submit()
-  }, [session])
-
-  useEffect(() => {
-    function onMessage(event) {
-      if (event.origin !== editorOrigin || event.source !== frameRef.current?.contentWindow) return
-      let msg
-      try {
-        msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data
-      } catch {
-        return
-      }
-      const values = msg.Values || {}
-      switch (msg.MessageId) {
-        case 'App_LoadingStatus':
-          if (values.Status === 'Document_Loaded') {
-            post('Host_PostmessageReady')
-            setStatus(`Editing V${session.base_version}. Saving creates a new version.`)
-          }
-          break
-        case 'Doc_ModifiedStatus':
-          // Modified -> unmodified means a save (Ctrl+S, toolbar or autosave) finished.
-          if (modifiedRef.current && !values.Modified) onSaved()
-          modifiedRef.current = !!values.Modified
-          setStatus(values.Modified ? 'Unsaved changes' : 'All changes saved')
-          break
-        case 'Action_Save_Resp':
-          if (values.success) onSaved()
-          setStatus(values.success ? 'Saved as a new version' : `Save failed: ${values.result || 'unknown error'}`)
-          pendingCloseRef.current?.(values.success)
-          break
-        case 'UI_Close':
-          requestClose()
-          break
-        default:
-      }
-    }
-    window.addEventListener('message', onMessage)
-    return () => window.removeEventListener('message', onMessage)
-  })
-
-  // Save unsaved changes before closing, so closing never loses work.
-  async function requestClose() {
-    if (closing) return
-    setClosing(true)
-    if (modifiedRef.current) {
-      setStatus('Saving before closing…')
-      const saved = await new Promise((resolve) => {
-        pendingCloseRef.current = resolve
-        post('Action_Save', { DontTerminateEdit: true, DontSaveIfUnmodified: true, Notify: true })
-        setTimeout(() => resolve(false), 20000)
-      })
-      pendingCloseRef.current = null
-      if (!saved && !window.confirm('Saving did not finish. Close the editor anyway and lose unsaved changes?')) {
-        setClosing(false)
-        return
-      }
-    }
-    onClose()
-  }
-
-  return (
-    <section className="panel editor">
-      <div className="row space-between">
-        <div>
-          <h3>{session.title}</h3>
-          <p className="muted small">{status}</p>
-        </div>
-        <button className="secondary" onClick={requestClose} disabled={closing}>
-          {closing ? 'Closing…' : 'Close editor'}
-        </button>
-      </div>
-      <form ref={formRef} action={session.editor_url} method="post" target="spreadsheet-editor">
-        <input type="hidden" name="access_token" value={session.access_token} />
-        <input type="hidden" name="access_token_ttl" value={session.access_token_ttl} />
-      </form>
-      <iframe
-        ref={frameRef}
-        name="spreadsheet-editor"
-        className="editor-frame"
-        title={session.title}
-        allow="clipboard-read *; clipboard-write *; fullscreen"
-      />
-    </section>
-  )
-}
-
 function PdfViewer({ preview, onClose }) {
   return (
     <section className="panel viewer">
@@ -489,11 +352,14 @@ export default function App() {
 
   useEffect(() => saveIdentity(identity), [identity])
   const [documents, setDocuments] = useState([])
-  const [selectedId, setSelectedId] = useState(null)
+  // "/?doc=<id>" opens that document, e.g. when coming back from the editor page.
+  const [selectedId, setSelectedId] = useState(() => {
+    const id = Number(new URLSearchParams(window.location.search).get('doc'))
+    return Number.isInteger(id) && id > 0 ? id : null
+  })
   const [versions, setVersions] = useState([])
   const [error, setError] = useState(null)
   const [preview, setPreview] = useState(null) // { url, title } of the PDF shown on the page
-  const [editing, setEditing] = useState(null) // editor session, see SpreadsheetEditor
 
   const closePreview = useCallback(() => {
     setPreview((p) => {
@@ -521,21 +387,11 @@ export default function App() {
   )
 
   useEffect(closePreview, [selectedId, closePreview])
-  useEffect(() => setEditing(null), [selectedId])
 
-  const openEditor = useCallback(
-    async (documentId, documentName, version) => {
-      setError(null)
-      try {
-        const session = await startEdit(documentId, version, identity)
-        closePreview()
-        setEditing({ ...session, title: `${documentName} · editing V${version}` })
-      } catch (err) {
-        setError(err.message)
-      }
-    },
-    [identity, closePreview],
-  )
+  // The editor is its own full-screen page (see EditorPage.jsx).
+  const openEditor = useCallback((documentId, version) => {
+    window.location.assign(`/edit/${documentId}/${version}`)
+  }, [])
 
   const refreshDocuments = useCallback(async () => {
     try {
@@ -615,23 +471,8 @@ export default function App() {
                 versions={versions}
                 identity={identity}
                 onView={(version) => viewPdf(selected.id, selected.name, version)}
-                onEdit={(version) => openEditor(selected.id, selected.name, version)}
+                onEdit={(version) => openEditor(selected.id, version)}
               />
-              {editing && (
-                <SpreadsheetEditor
-                  key={editing.access_token}
-                  session={editing}
-                  onSaved={() => {
-                    refreshVersions()
-                    refreshDocuments()
-                  }}
-                  onClose={() => {
-                    setEditing(null)
-                    refreshVersions()
-                    refreshDocuments()
-                  }}
-                />
-              )}
               {preview && <PdfViewer preview={preview} onClose={closePreview} />}
             </>
           ) : (

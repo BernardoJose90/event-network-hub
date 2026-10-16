@@ -108,7 +108,7 @@ backend/app/
 
 ## Editing in the browser
 
-Network admins can click **Edit** on any ready version. The workbook opens in **Collabora Online**, a LibreOffice-based office suite, embedded in the page, with every sheet, the formatting, formulas and an Excel-style toolbar. **Saving creates a new version** numbered after the newest one, e.g. V6 becomes V7. It's marked "edited from V6", converted to PDF like any upload, and the opened version stays unchanged. Later saves in the same session, including autosaves, update that same new version, so one editing session produces one version. **Close editor** saves unsaved changes first.
+Network admins can click **Edit** on any ready version. That opens a full-screen editor page, `/edit/<document id>/<version>`, in the same tab. The workbook appears in **Collabora Online**, a LibreOffice-based office suite, with every sheet, the formatting, formulas and an Excel-style toolbar. **Saving creates a new version** numbered after the newest one, e.g. V6 becomes V7. It's marked "edited from V6", converted to PDF like any upload, and the opened version stays unchanged. Later saves in the same session, including autosaves, update that same new version, so one editing session produces one version. **Back to documents** saves unsaved changes first, then returns to that document (`/?doc=<id>`), where the new version is listed.
 
 How it fits together, using the standard WOPI protocol:
 

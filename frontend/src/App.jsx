@@ -198,16 +198,27 @@ function DocumentHeader({ document, identity, onDeleted }) {
     <div className="doc-header">
       <div className="row space-between">
         <h2>{document.name}</h2>
-        {identity.role === 'network-admin' && (
-          <div className="row">
-            <button onClick={() => window.location.assign(`/sheet/${document.id}`)} title="Edit the content in the app">
-              Open live sheet
-            </button>
-            <button className="danger" onClick={remove} disabled={busy}>
-              {busy ? 'Deleting…' : 'Delete document'}
-            </button>
-          </div>
-        )}
+        <div className="row">
+          <button onClick={() => window.location.assign(`/event/${document.id}`)} title="View and edit the requirements">
+            Open requirements
+          </button>
+          {identity.role === 'network-admin' && (
+            <>
+              <details className="legacy">
+                <summary>Legacy</summary>
+                <div className="legacy-menu">
+                  <button className="secondary" onClick={() => window.location.assign(`/sheet/${document.id}`)}>
+                    Open live sheet
+                  </button>
+                  <p className="muted small">The Excel-style editor is on each version: Edit.</p>
+                </div>
+              </details>
+              <button className="danger" onClick={remove} disabled={busy}>
+                {busy ? 'Deleting…' : 'Delete document'}
+              </button>
+            </>
+          )}
+        </div>
       </div>
       {error && <p className="error">{error}</p>}
     </div>
@@ -278,6 +289,7 @@ function VersionTable({ documentId, versions, identity, onView, onEdit }) {
                   <td>
                     V{v.version}
                     {v.edited_from && <div className="muted small">edited from V{v.edited_from}</div>}
+                    {v.source === 'publish' && <div className="muted small">published from requirements</div>}
                   </td>
                   <td>{v.uploaded_by}</td>
                   <td>{formatTime(v.uploaded_at)}</td>

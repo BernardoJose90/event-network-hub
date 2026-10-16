@@ -163,18 +163,22 @@ def test_create_update_delete_are_logged(client: TestClient, event: int) -> None
     r = client.patch(f"/api/events/{event}/records/ethernet/{created['id']}", headers=ADMIN,
                      json={"revision": created["revision"], "data": {"ports": 7, "notes": "BOH"}})
     assert r.status_code == 200 and r.json()["revision"] == created["revision"] + 1
-    r = client.delete(f"/api/events/{event}/records/ethernet/{created['id']}?revision={r.json()['revision']}",
-                      headers=ADMIN)
+    url = f"/api/events/{event}/records/ethernet/{created['id']}"
+    assert client.delete(f"{url}?revision={r.json()['revision']}", headers=ADMIN).status_code == 409  # archive first
+    r = client.post(f"{url}/archive", headers=ADMIN, json={"revision": r.json()["revision"]})
+    assert r.status_code == 200 and r.json()["archived_by"] == "alice"
+    r = client.delete(f"{url}?revision={r.json()['revision']}", headers=ADMIN)
     assert r.status_code == 204
 
     log = client.get(f"/api/events/{event}/history?entity=ethernet", headers=ADMIN).json()
     assert [(e["action"], e["field"], e["old"], e["new"]) for e in log] == [
         ("delete", None, '{"purpose": "Stage 3", "vlan": "General", "ports": 7, "notes": "BOH"}', None),
+        ("archive", None, None, None),
         ("update", "ports", "5", "7"),
         ("update", "notes", None, "BOH"),
         ("create", None, None, None),
     ]
-    assert log[1]["summary"] == "Changed Ethernet Points of Ethernet requirement 'Stage 3'"
+    assert log[2]["summary"] == "Changed Ethernet Points of Ethernet requirement 'Stage 3'"
 
 
 def test_password_changes_are_logged_without_values(client: TestClient, event: int) -> None:
@@ -362,3 +366,38 @@ def test_report_escapes_text(client: TestClient, event: int) -> None:
     client.post(f"/api/events/{event}/publish", headers=ADMIN)
     html = client.app.state.converter.html
     assert "<script>alert(1)</script>" not in html and "&lt;script&gt;" in html
+
+
+
+def test_archive_hides_and_restore_brings_back(client: TestClient, event: int) -> None:
+    eth = _find(client, event, "ethernet", purpose="FoodTrucks / Bar")
+    url = f"/api/events/{event}/records/ethernet/{eth['id']}"
+    r = client.post(f"{url}/archive", headers=ADMIN, json={"revision": eth["revision"]})
+    archived = r.json()
+
+    assert all(x["id"] != eth["id"] for x in _records(client, event, "ethernet"))
+    assert [x["id"] for x in client.get(f"/api/events/{event}/records/ethernet?archived=true", headers=VIEWER).json()] == [eth["id"]]
+    ov = client.get(f"/api/events/{event}/overview", headers=ADMIN).json()
+    assert ov["totals"]["ethernet"][0]["sections"][0]["ports"] == 13  # 111 - 98
+    assert (ov["counts"]["ethernet"], ov["archived"]) == (6, {"ethernet": 1})
+    client.post(f"/api/events/{event}/publish", headers=ADMIN)
+    html = client.app.state.converter.html
+    assert "<td>FoodTrucks / Bar</td>" not in html  # not in the tables…
+    assert "Archived Ethernet requirement &#x27;FoodTrucks / Bar&#x27;" in html  # …only in the change list
+
+    patch = client.patch(url, headers=ADMIN, json={"revision": archived["revision"], "data": {"ports": 1}})
+    assert patch.status_code == 409 and "Restore it" in patch.json()["detail"]
+    r = client.post(f"{url}/restore", headers=ADMIN, json={"revision": archived["revision"]})
+    assert r.status_code == 200 and r.json()["archived_at"] is None
+    assert client.get(f"/api/events/{event}/overview", headers=ADMIN).json()["totals"]["ethernet"][0]["sections"][0]["ports"] == 111
+    assert [e["action"] for e in client.get(f"/api/events/{event}/history?entity=ethernet", headers=ADMIN).json()[:2]] == [
+        "restore", "archive"]
+    assert client.post(f"{url}/archive", headers=VIEWER, json={"revision": 1}).status_code == 403
+
+
+def test_archived_records_still_block_list_and_section_deletes(client: TestClient, event: int) -> None:
+    eth = _find(client, event, "ethernet", purpose="FoodTrucks / Bar")
+    client.post(f"/api/events/{event}/records/ethernet/{eth['id']}/archive", headers=ADMIN, json={"revision": eth["revision"]})
+    lists = client.get(f"/api/events/{event}/overview", headers=ADMIN).json()["lists"]
+    catering = next(i for i in lists if i["value"] == "Operational_Catering")
+    assert client.delete(f"/api/events/{event}/lists/item/{catering['id']}", headers=ADMIN).status_code == 409

@@ -79,8 +79,10 @@ def _run(fn: Callable[[], T]) -> T:
 def overview(document_id: int, conn: Conn, principal: Reader) -> dict[str, Any]:
     document = _document(conn, document_id)
     counts: dict[str, int] = {}
-    for record in store.records(conn, document_id):
-        counts[record["type"]] = counts.get(record["type"], 0) + 1
+    archived: dict[str, int] = {}
+    for record in store.records(conn, document_id, archived=None):
+        target = archived if record["archived_at"] else counts
+        target[record["type"]] = target.get(record["type"], 0) + 1
     last_publish = store.last_publish_log_id(conn, document_id)
     unpublished = [e for e in store.history(conn, document_id, after_id=last_publish or 0, limit=10_000)
                    if e["action"] not in ("reveal", "legacy", "publish")]
@@ -88,8 +90,9 @@ def overview(document_id: int, conn: Conn, principal: Reader) -> dict[str, Any]:
     lists = store.lists(conn, document_id)
     return {
         "document": document,
-        "has_records": bool(counts),
+        "has_records": bool(counts) or bool(archived),
         "counts": counts,
+        "archived": archived,
         "venues": store.venues(conn, document_id),
         "groups": store.groups(conn, document_id),
         "lists": lists,
@@ -153,9 +156,11 @@ def import_version(request: Request, document_id: int, conn: Conn, principal: Ed
 
 
 @router.get("/records/{record_type}")
-def list_records(document_id: int, record_type: RecordTypePath, conn: Conn, principal: Reader) -> list[dict[str, Any]]:
+def list_records(document_id: int, record_type: RecordTypePath, conn: Conn, principal: Reader,
+                 archived: bool = False) -> list[dict[str, Any]]:
+    """Active records, or with ?archived=true the archived ones."""
     _document(conn, document_id)
-    return [service.public(r) for r in store.records(conn, document_id, record_type)]
+    return [service.public(r) for r in store.records(conn, document_id, record_type, archived=archived)]
 
 
 @router.post("/records/{record_type}", status_code=status.HTTP_201_CREATED)
@@ -183,6 +188,26 @@ def delete_record(document_id: int, record_type: RecordTypePath, record_id: int,
     _document(conn, document_id)
     _run(lambda: service.delete_record(conn, document_id, record_type, record_id, revision=revision,
                                        user=principal.user))
+
+
+class RevisionOnly(BaseModel):
+    revision: int = Field(ge=1)
+
+
+@router.post("/records/{record_type}/{record_id}/archive")
+def archive_record(document_id: int, record_type: RecordTypePath, record_id: int, body: RevisionOnly,
+                   conn: Conn, principal: Editor) -> dict[str, Any]:
+    _document(conn, document_id)
+    return service.public(_run(lambda: service.set_archived(
+        conn, document_id, record_type, record_id, revision=body.revision, archived=True, user=principal.user)))
+
+
+@router.post("/records/{record_type}/{record_id}/restore")
+def restore_record(document_id: int, record_type: RecordTypePath, record_id: int, body: RevisionOnly,
+                   conn: Conn, principal: Editor) -> dict[str, Any]:
+    _document(conn, document_id)
+    return service.public(_run(lambda: service.set_archived(
+        conn, document_id, record_type, record_id, revision=body.revision, archived=False, user=principal.user)))
 
 
 @router.post("/records/{record_type}/{record_id}/move")

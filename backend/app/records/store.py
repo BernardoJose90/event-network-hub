@@ -48,7 +48,9 @@ CREATE TABLE IF NOT EXISTS records (
     data         TEXT NOT NULL,
     revision     INTEGER NOT NULL DEFAULT 1,
     updated_by   TEXT NOT NULL,
-    updated_at   TEXT NOT NULL
+    updated_at   TEXT NOT NULL,
+    archived_at  TEXT,  -- archived records are hidden from lists, totals and publishing
+    archived_by  TEXT
 );
 CREATE INDEX IF NOT EXISTS records_by_type ON records (document_id, type, venue_id, group_id, sort);
 
@@ -79,6 +81,10 @@ CREATE TABLE IF NOT EXISTS published_snapshots (
 
 def init(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    columns = {r["name"] for r in conn.execute("PRAGMA table_info(records)")}
+    if "archived_at" not in columns:  # databases created before archiving existed
+        conn.execute("ALTER TABLE records ADD COLUMN archived_at TEXT")
+        conn.execute("ALTER TABLE records ADD COLUMN archived_by TEXT")
 
 
 # --- venues, groups, lists -------------------------------------------------
@@ -138,13 +144,17 @@ def _record(row: sqlite3.Row) -> dict[str, Any]:
     return out
 
 
-def records(conn: sqlite3.Connection, doc: int, record_type: str | None = None) -> list[dict[str, Any]]:
+def records(conn: sqlite3.Connection, doc: int, record_type: str | None = None, *,
+            archived: bool | None = False) -> list[dict[str, Any]]:
+    """Records in display order. archived: False = active only, True = archived only, None = all."""
     sql = """
         SELECT r.* FROM records r
           LEFT JOIN event_venues v ON v.id = r.venue_id
           LEFT JOIN event_groups g ON g.id = r.group_id
          WHERE r.document_id = ?"""
     args: list[Any] = [doc]
+    if archived is not None:
+        sql += " AND r.archived_at IS NOT NULL" if archived else " AND r.archived_at IS NULL"
     if record_type:
         sql += " AND r.type = ?"
         args.append(record_type)
@@ -163,6 +173,15 @@ def insert_record(conn: sqlite3.Connection, *, doc: int, record_type: str, venue
         "INSERT INTO records (document_id, type, venue_id, group_id, sort, data, updated_by, updated_at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (doc, record_type, venue_id, group_id, sort, json.dumps(data), user, utcnow())).lastrowid
+
+
+def set_archived(conn: sqlite3.Connection, *, record_id: int, expected_revision: int, user: str,
+                 archived: bool) -> bool:
+    cur = conn.execute(
+        "UPDATE records SET archived_at = ?, archived_by = ?, revision = revision + 1, updated_by = ?, "
+        "updated_at = ? WHERE id = ? AND revision = ?",
+        (utcnow() if archived else None, user if archived else None, user, utcnow(), record_id, expected_revision))
+    return cur.rowcount == 1
 
 
 def update_record(conn: sqlite3.Connection, *, record_id: int, expected_revision: int, user: str,

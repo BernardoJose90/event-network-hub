@@ -1,18 +1,21 @@
 import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from 'react'
 
-// Accessible confirm/prompt dialogs, replacing window.confirm/prompt.
+// Accessible confirm/prompt/form dialogs, replacing window.confirm/prompt.
 // Follows the WAI-ARIA APG modal dialog and alert dialog patterns:
 // - native <dialog> opened with showModal(): the rest of the page is inert and
 //   Escape closes it (Tab stays inside the dialog);
 // - role="alertdialog" for confirmations, labelled by the title and described by the body;
 // - focus starts on the least destructive action for destructive steps (Cancel),
-//   on the input for prompts, otherwise on the main action;
-// - focus returns to the element that opened the dialog.
+//   on the first field for prompts and forms, otherwise on the main action;
+// - focus returns to the element that opened the dialog;
+// - field errors are shown inline, linked with aria-describedby, and focus moves to the first one.
 //
 //   const dialog = useDialog()
 //   if (await dialog.confirm({ title: 'Delete event?', body: '…', confirmLabel: 'Delete', danger: true })) …
 //   const name = await dialog.prompt({ title: 'Template name', label: 'Name', initial: 'LIS' })  // null if cancelled
-//   validate: (value) => error message or null, shown inline under the field
+//     validate: (value) => error message or null, shown inline under the field
+//   const values = await dialog.form({ title, fields: [{ name, label, type, options, required, hint, list,
+//     initial, maxLength, validate, full }] })  // { name: value } or null; type: text | textarea | select | tel
 
 const DialogContext = createContext(null)
 
@@ -36,7 +39,15 @@ export function DialogProvider({ children }) {
 
   const api = useMemo(() => ({
     confirm: (options) => open('confirm', options),
-    prompt: (options) => open('prompt', options),
+    prompt: async (options) => {
+      const { label, initial, placeholder, hint, required = true, maxLength, validate, ...rest } = options
+      const values = await open('form', {
+        ...rest,
+        fields: [{ name: 'value', label, initial, placeholder, hint, required, maxLength, validate }],
+      })
+      return values ? values.value : null
+    },
+    form: (options) => open('form', options),
   }), [open])
 
   function close(value) {
@@ -60,52 +71,90 @@ export function useDialog() {
   return value
 }
 
+function Field({ field, value, error, onChange, inputRef, ids }) {
+  const { name, label, type = 'text', options = [], hint, list, placeholder, maxLength, required } = field
+  const describedBy = [hint && ids.hint, error && ids.error].filter(Boolean).join(' ') || undefined
+  const common = {
+    id: ids.input, name, value: value ?? '', ref: inputRef, maxLength, placeholder,
+    'aria-invalid': error ? 'true' : undefined, 'aria-describedby': describedBy, 'aria-required': required || undefined,
+    onChange: (e) => onChange(name, e.target.value),
+  }
+  return (
+    <div className={`field${error ? ' has-error' : ''}`}>
+      <label htmlFor={ids.input} className="field-label">
+        {label}{!required && <span className="muted"> (optional)</span>}
+      </label>
+      {hint && <p id={ids.hint} className="field-hint">{hint}</p>}
+      {error && <p id={ids.error} className="field-error"><span className="visually-hidden">Error: </span>{error}</p>}
+      {type === 'textarea' ? (
+        <textarea rows={4} {...common} />
+      ) : type === 'select' ? (
+        <select {...common}>
+          {!required && <option value="">—</option>}
+          {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      ) : (
+        <>
+          <input type={type === 'tel' ? 'tel' : 'text'} list={list?.length ? ids.list : undefined}
+            autoComplete="off" {...common} />
+          {list?.length > 0 && <datalist id={ids.list}>{list.map((v) => <option key={v} value={v} />)}</datalist>}
+        </>
+      )}
+    </div>
+  )
+}
+
 function DialogView({ request, onClose }) {
   const { kind, options } = request
-  const {
-    title, body, confirmLabel = 'OK', cancelLabel = 'Cancel', danger = false,
-    label, initial = '', placeholder, hint, required = true, maxLength, validate,
-  } = options
+  const { title, body, confirmLabel = 'OK', cancelLabel = 'Cancel', danger = false, fields = [], wide = false } = options
   const ref = useRef(null)
-  const inputRef = useRef(null)
   const cancelRef = useRef(null)
   const confirmRef = useRef(null)
-  const [value, setValue] = useState(initial)
-  const [error, setError] = useState(null)
+  const fieldRefs = useRef({})
+  const [values, setValues] = useState(() => Object.fromEntries(fields.map((f) => [f.name, f.initial ?? ''])))
+  const [errors, setErrors] = useState({})
   const titleId = useId()
   const bodyId = useId()
-  const inputId = useId()
-  const errorId = useId()
+  const baseId = useId()
 
   useEffect(() => {
-    const dialog = ref.current
-    dialog.showModal()
-    const target = kind === 'prompt' ? inputRef.current : danger ? cancelRef.current : confirmRef.current
+    ref.current.showModal()
+    const first = fields[0] && fieldRefs.current[fields[0].name]
+    const target = first || (danger ? cancelRef.current : confirmRef.current)
     target?.focus()
-    if (kind === 'prompt') inputRef.current?.select()
-  }, [kind, danger])
+    if (first?.select && fields.length === 1) first.select()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   function submit(e) {
     e.preventDefault()
-    if (kind === 'prompt') {
-      const v = value.trim()
-      const problem = required && !v ? `Enter ${label ? label.toLowerCase() : 'a value'}` : validate?.(v)
-      if (problem) {
-        setError(problem)
-        inputRef.current?.focus()
-        return
-      }
-      onClose(v)
-    } else {
+    if (kind !== 'form') {
       onClose(true)
+      return
     }
+    const out = {}
+    const problems = {}
+    for (const f of fields) {
+      const v = typeof values[f.name] === 'string' ? values[f.name].trim() : values[f.name]
+      out[f.name] = v === '' ? null : v
+    }
+    for (const f of fields) {
+      const v = out[f.name]
+      const problem = f.required && !v ? `Enter ${f.label.toLowerCase()}` : f.validate?.(v ?? '', out)
+      if (problem) problems[f.name] = problem
+    }
+    if (Object.keys(problems).length) {
+      setErrors(problems)
+      fieldRefs.current[fields.find((f) => problems[f.name]).name]?.focus()
+      return
+    }
+    onClose(out)
   }
 
-  const cancelValue = kind === 'prompt' ? null : false
+  const cancelValue = kind === 'form' ? null : false
   return (
     <dialog
       ref={ref}
-      className={`dialog${danger ? ' danger' : ''}`}
+      className={`dialog${danger ? ' danger' : ''}${wide ? ' wide' : ''}`}
       role={kind === 'confirm' ? 'alertdialog' : undefined}
       aria-labelledby={titleId}
       aria-describedby={body ? bodyId : undefined}
@@ -115,21 +164,20 @@ function DialogView({ request, onClose }) {
       <form method="dialog" onSubmit={submit} noValidate>
         <h2 id={titleId} className="dialog-title">{title}</h2>
         {body && <div id={bodyId} className="dialog-body">{typeof body === 'string' ? <p>{body}</p> : body}</div>}
-        {kind === 'prompt' && (
-          <div className={`field${error ? ' has-error' : ''}`}>
-            <label htmlFor={inputId} className="field-label">{label}</label>
-            {hint && <p className="field-hint">{hint}</p>}
-            {error && <p id={errorId} className="field-error"><span className="visually-hidden">Error: </span>{error}</p>}
-            <input
-              ref={inputRef}
-              id={inputId}
-              value={value}
-              placeholder={placeholder}
-              maxLength={maxLength}
-              aria-invalid={error ? 'true' : undefined}
-              aria-describedby={error ? errorId : undefined}
-              onChange={(e) => { setValue(e.target.value); setError(null) }}
-            />
+        {fields.length > 0 && (
+          <div className={`dialog-fields${fields.length > 3 ? ' grid' : ''}`}>
+            {fields.map((f, i) => (
+              <div key={f.name} className={f.full || f.type === 'textarea' ? 'span-all' : undefined}>
+                <Field field={f} value={values[f.name]} error={errors[f.name]}
+                  inputRef={(el) => { fieldRefs.current[f.name] = el }}
+                  ids={{ input: `${baseId}-${i}`, hint: `${baseId}-${i}-hint`, error: `${baseId}-${i}-error`,
+                    list: `${baseId}-${i}-list` }}
+                  onChange={(name, v) => {
+                    setValues((vs) => ({ ...vs, [name]: v }))
+                    setErrors((es) => ({ ...es, [name]: undefined }))
+                  }} />
+              </div>
+            ))}
           </div>
         )}
         <div className="dialog-actions">

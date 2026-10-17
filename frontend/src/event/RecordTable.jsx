@@ -343,7 +343,10 @@ export default function RecordTable({ type, api, overview, isAdmin, notify, onCh
   }
 
   const table = (
-    <div className="rec-scroll">
+    // An empty table has nothing focusable, so the scroll area itself takes focus (WCAG 2.1.1).
+    <div className="rec-scroll" tabIndex={!loading && visible.length === 0 ? 0 : undefined}
+      role={!loading && visible.length === 0 ? 'region' : undefined}
+      aria-label={!loading && visible.length === 0 ? `${TITLES[type]} table` : undefined}>
       <table
         ref={tableRef}
         className="rec-table"

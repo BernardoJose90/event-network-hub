@@ -12,7 +12,8 @@ import {
   listVersions,
   uploadDocument,
 } from './api.js'
-import { ROLES, loadIdentity, saveIdentity } from './identity.js'
+import { loadIdentity, saveIdentity } from './identity.js'
+import TopBar from './ui/TopBar.jsx'
 import { useDialog } from './ui/Dialog.jsx'
 
 function formatTime(iso) {
@@ -37,41 +38,6 @@ function Warnings({ warnings }) {
         ))}
       </ul>
     </details>
-  )
-}
-
-function IdentityBar({ identity, onChange }) {
-  return (
-    <header className="topbar">
-      <h1 className="brand">
-        <img src="/websummit-mark.png" alt="Web Summit" className="brand-mark" />
-        Event Network Hub
-      </h1>
-      <div className="identity">
-        <span className="badge" title="Fake identity for local testing; replaced by real auth in production">
-          TEST ONLY
-        </span>
-        <label>
-          Your name
-          <input
-            value={identity.user}
-            onChange={(e) => onChange({ ...identity, user: e.target.value })}
-            placeholder="e.g. alice"
-            maxLength={100}
-          />
-        </label>
-        <label>
-          Role
-          <select value={identity.role} onChange={(e) => onChange({ ...identity, role: e.target.value })}>
-            {ROLES.map((r) => (
-              <option key={r.value} value={r.value}>
-                {r.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-    </header>
   )
 }
 
@@ -645,7 +611,7 @@ export default function App() {
   return (
     <>
       <a className="skip-link" href="#main">Skip to main content</a>
-      <IdentityBar identity={identity} onChange={setIdentity} />
+      <TopBar identity={identity} onChange={setIdentity} current="events" />
       <div className="layout">
         <DocumentList
           identity={identity}
@@ -666,6 +632,7 @@ export default function App() {
           }}
         />
         <main id="main" className="content" tabIndex={-1}>
+          <h1 className="visually-hidden">Events</h1>
           {error && <p className="error" role="alert">{error}</p>}
           {selected ? (
             <>

@@ -12,6 +12,7 @@ import { createContext, useCallback, useContext, useEffect, useId, useMemo, useR
 //   const dialog = useDialog()
 //   if (await dialog.confirm({ title: 'Delete event?', body: '…', confirmLabel: 'Delete', danger: true })) …
 //   const name = await dialog.prompt({ title: 'Template name', label: 'Name', initial: 'LIS' })  // null if cancelled
+//   validate: (value) => error message or null, shown inline under the field
 
 const DialogContext = createContext(null)
 
@@ -63,7 +64,7 @@ function DialogView({ request, onClose }) {
   const { kind, options } = request
   const {
     title, body, confirmLabel = 'OK', cancelLabel = 'Cancel', danger = false,
-    label, initial = '', placeholder, hint, required = true, maxLength,
+    label, initial = '', placeholder, hint, required = true, maxLength, validate,
   } = options
   const ref = useRef(null)
   const inputRef = useRef(null)
@@ -88,8 +89,9 @@ function DialogView({ request, onClose }) {
     e.preventDefault()
     if (kind === 'prompt') {
       const v = value.trim()
-      if (required && !v) {
-        setError(`Enter ${label ? label.toLowerCase() : 'a value'}`)
+      const problem = required && !v ? `Enter ${label ? label.toLowerCase() : 'a value'}` : validate?.(v)
+      if (problem) {
+        setError(problem)
         inputRef.current?.focus()
         return
       }

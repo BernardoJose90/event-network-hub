@@ -331,22 +331,38 @@ function DocumentHeader({ document, identity, onDeleted, onChanged }) {
     }
   }
 
+  // Deleting can't be undone, so the event code must be typed to confirm. An active event
+  // is archived first: the API only deletes archived events.
   async function remove() {
-    const ok = await dialog.confirm({
-      title: `Delete ${document.name} permanently?`,
-      body: "This removes the event's requirements, every version, its PDFs and Excel files, and its download history. It can't be undone.",
+    const code = document.name.split(' | ')[0]
+    const typed = await dialog.prompt({
+      title: `Delete ${code} permanently?`,
+      body: (
+        <>
+          <p>
+            This removes the event&apos;s requirements, every version, its PDFs and Excel files, and its download history.
+            It can&apos;t be undone.
+          </p>
+          {!archived && <p>To keep it but hide it, use <strong>Archive event</strong> instead.</p>}
+        </>
+      ),
+      label: `Type ${code} to confirm`,
+      maxLength: 40,
+      validate: (v) => (v.toUpperCase() === code.toUpperCase() ? null : `Type ${code} exactly to confirm`),
       confirmLabel: 'Delete permanently',
       danger: true,
     })
-    if (!ok) return
+    if (!typed) return
     setBusy(true)
     setError(null)
     try {
+      if (!archived) await archiveDocument(document.id, identity)
       await deleteDocument(document.id, identity)
       onDeleted()
     } catch (err) {
       setError(err.message)
       setBusy(false)
+      onChanged() // it may have been archived before the delete failed
     }
   }
 
@@ -380,6 +396,9 @@ function DocumentHeader({ document, identity, onDeleted, onChanged }) {
               </details>
               <button className="secondary" onClick={() => setArchived(true)} disabled={busy}>
                 Archive event
+              </button>
+              <button className="danger" onClick={remove} disabled={busy}>
+                {busy ? 'Deleting…' : 'Delete event'}
               </button>
             </>
           )}

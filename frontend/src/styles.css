@@ -1370,7 +1370,8 @@ tr.rec-group.wifi td {
 }
 
 .archived-events .doc-item {
-  opacity: 0.75;
+  border-style: dashed;
+  border-color: var(--border);
 }
 
 /* --- Production foundations (WCAG 2.2 AA, WAI-ARIA APG, GOV.UK patterns) -------- */
@@ -1429,9 +1430,16 @@ button:focus-visible {
   outline-color: #fff;
 }
 
-main:focus,
-.view-title:focus {
+.view-title:focus,
+main:focus:not(:focus-visible) {
   outline: none;
+}
+
+/* Scrollable regions are focusable so keyboard users can scroll them (WCAG 2.1.1). */
+.event-main:focus-visible,
+.list-items:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: -3px;
 }
 
 /* Minimum target size 24×24 CSS px (2.5.8). */

@@ -148,7 +148,8 @@ export default function EventPage({ documentId }) {
           <a className="button secondary" href={backHref}>← Events</a>
         </header>
         <main id="main" className="sheet-message" aria-busy={!error}>
-          {error ? <p className="error" role="alert">{error}</p> : <div className="skeleton-block" aria-label="Loading" />}
+          <h1 className="view-title">{error ? "Couldn't open this event" : 'Loading event…'}</h1>
+          {error ? <p className="error" role="alert">{error}</p> : <div className="skeleton-block" aria-hidden="true" />}
         </main>
       </div>
     )
@@ -215,7 +216,7 @@ export default function EventPage({ documentId }) {
             )
           })}
         </nav>
-        <main id="main" className="event-main" tabIndex={-1}>
+        <main id="main" className="event-main" tabIndex={0} aria-label={viewLabel}>
           <h2 className="view-title" tabIndex={-1} ref={viewHeading}>{viewLabel}</h2>
           {view === 'overview' && <Overview {...props} onPublish={publish} goTo={goTo} />}
           {['wifi', 'ethernet', 'partner'].includes(view) && <RecordTable key={view} type={view} {...props} />}

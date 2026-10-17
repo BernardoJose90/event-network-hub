@@ -231,7 +231,7 @@ function ListBox({ title, items, isAdmin, onAdd, help }) {
           <button type="submit" disabled={!value.trim()}>Add</button>
         </form>
       )}
-      <ul className="list-items">{items}</ul>
+      <ul className="list-items" tabIndex={0} aria-label={`${title} list`}>{items}</ul>
     </section>
   )
 }

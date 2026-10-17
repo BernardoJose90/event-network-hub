@@ -174,9 +174,12 @@ COLUMNS = [
 _FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
 
 
+_PLAIN_NUMBER = re.compile(r"[+-]?[\d\s().-]+")  # phone numbers and numbers can't run formulas
+
+
 def _safe(value: Any) -> Any:
     """Neutralise spreadsheet formula injection: reporter text comes from WhatsApp."""
-    if isinstance(value, str) and value.startswith(_FORMULA_START):
+    if isinstance(value, str) and value.startswith(_FORMULA_START) and not _PLAIN_NUMBER.fullmatch(value):
         return "'" + value
     return value
 

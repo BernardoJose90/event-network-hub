@@ -329,11 +329,12 @@ def test_report_kpis(client: TestClient) -> None:
 
 def test_export_is_safe_and_complete(client: TestClient) -> None:
     event = _event(client)
-    _ticket(client, event_id=event, title="=HYPERLINK(\"http://evil\")", description="+cmd")
+    _ticket(client, event_id=event, title="=HYPERLINK(\"http://evil\")", description="+cmd", reporter_phone="+351 900 000 001")
     r = client.get("/api/tickets/export", headers=VIEWER, params={"event_id": event, "format": "csv"})
     assert r.status_code == 200 and 'filename="ICT_tickets_LIS26.csv"' in r.headers["content-disposition"]
     rows = list(csv.reader(io.StringIO(r.content.decode("utf-8-sig"))))
     assert rows[0][0] == "Ticket" and rows[1][3].startswith("'=") and rows[1][4] == "'+cmd"
+    assert rows[1][14] == "+351 900 000 001"  # phone numbers stay as they are
     r = client.get("/api/tickets/export", headers=VIEWER, params={"format": "xlsx"})
     ws = load_workbook(io.BytesIO(r.content)).active
     assert ws["A1"].value == "Ticket" and ws["D2"].value.startswith("'=") and ws.max_row == 2

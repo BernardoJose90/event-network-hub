@@ -151,8 +151,7 @@ The importer also reads Partners Custom Orders, the Setup or settings lists, and
 - It shows the **net result**: five edits to one item become one line, and a change that was undone doesn't appear. Wi-Fi password values never appear, only "password changed".
 
 Where to see it:
-- **What changed** on each published version (Events page).
-- **Compare versions…** for any two published versions, for example V3 → V6.
+- **Compare versions…** on the Events page, for any two published versions (the latest two by default), for example V3 → V6.
 - The publish dialog, before you publish.
 - Overview → "Not yet published".
 - Inside the published PDF ("Changes in this version") and Excel (the "Changes - Log" sheet).

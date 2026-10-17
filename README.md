@@ -165,6 +165,9 @@ Code: `backend/app/records/` (models, store, service, importer, publish, routes)
 | POST | `/api/events/{id}/records/wifi/{rid}/reveal` | logged |
 | POST/PATCH/DELETE | `/api/events/{id}/lists/…`, `/venues/…`, `/groups/…` | |
 | GET | `/api/events/{id}/history`, `/changes` | |
+| GET/POST/PUT/DELETE | `/api/events/{id}/dependencies[/{dep}]`, `POST …/{dep}/review` | dependency register |
+| GET/PUT/POST | `/api/events/{id}/ict-requests`, `…/settings`, `…/links`, `…/{rid}/approve`, `…/needs-info`, `…/decline` | ICT request review |
+| GET/POST/PUT | `/api/request-links/{token}`, `…/requests[/{rid}]` | public request form (the link is the credential) |
 | POST | `/api/events/{id}/publish` | next version (Excel + PDF report) |
 
 ## Editing in the browser
@@ -317,6 +320,50 @@ The integration is off until it's configured. Set the values in `.env` from a se
 - Answer with any 2xx. Failures are retried with backoff (10 s, 20 s, 40 s … up to 30 min) and marked failed after 10 attempts. Delivery counts are in `GET /api/tickets/meta` (`bot.outbox`).
 
 Code: `backend/app/tickets/` (models, store, service, report, outbox, routes) and `frontend/src/helpdesk/`.
+
+## Network dependency register
+
+**Dependencies**, on an event's or template's requirements page, records who and what relies on the network in each area. The aim is that delivery doesn't depend on one person's knowledge. It applies ITIL service configuration management (service mapping) and RACI.
+
+- **Each entry records:**
+  - the area or space;
+  - what depends on the network (for example a keynote live stream, badge printers or CCTV recorders);
+  - the team or process behind it;
+  - the **criticality**, on the help desk's P1–P4 scale;
+  - **RACI**: exactly one **Accountable** owner, the **Responsible** ICT team, and who is Consulted and Informed;
+  - when it's needed: build, live days and/or breakdown;
+  - the **VLANs** and **network items** (Wi-Fi networks, Ethernet items) it uses;
+  - **If it fails, do this**, a runbook anyone on shift can follow;
+  - the on-site contact, and notes.
+- **Impact view.** "If this VLAN fails" lists every area and service that would be affected.
+- **Kept current:**
+  - every entry shows when it was last reviewed and by whom; saving or **Still correct** marks it reviewed;
+  - entries older than 180 days, or without an accountable owner, are flagged under **Needs attention**;
+  - all changes are in History.
+- **Carried between events.** The register is copied into templates and new events. Links follow the copied network items; links to partner sections, which templates leave empty, are dropped.
+  - Renaming a VLAN in Setup updates the register.
+  - A VLAN the register uses can't be removed from Setup.
+  - Re-importing a workbook keeps the register but clears its links to the replaced rows.
+- **Help desk.** A ticket whose location or stand matches an entry's area shows "Affected in this area": the services, owner, contact and runbook. If the register has a more critical dependency there, a one-click button raises the ticket's severity to match.
+- **Published** with every version, as a "Network dependencies" sheet in the Excel file and a section in the PDF report.
+
+## ICT requests (wired and private Wi-Fi)
+
+Internal teams (AV, Photographers & Videographers, Engineering, CCTV) request connectivity per workspace using a standard form, instead of ICT guessing cable numbers. It follows the ITIL request catalogue: standard request models, plus GOV.UK form guidance.
+
+- **Links.** On **ICT requests**, an admin creates a link per team, then copies or turns it off. The link is the credential: anyone with it can submit for that team and see that team's requests. It holds a long random token, can be revoked, and stops working when the event is archived.
+- **Deadline and instructions.** Set per event. Requests after the deadline still arrive but are marked late, which feeds the "unknown requirements" measure.
+- **Public form** (`/request/<token>`): one or more workspaces, each either:
+  - a **wired connection**: area from the event's Setup lists, room, purpose, device (with suggestions from the team's template), number of cables, PoE (power over the cable), speed, and needed-by date; or
+  - a **private Wi-Fi network**: preferred name, number of devices, coverage, and password or open.
+
+  "Not sure yet" is a valid answer and shows as a gap to follow up. Errors appear in a summary at the top that links to each field, then next to the field. After sending, a confirmation shows the request numbers. Teams follow progress on the same page, and answer ICT's questions there.
+- **Review.**
+  - Per-team totals: requests, items to review, ports requested, "not sure" answers, late requests.
+  - Actions: **Approve…**, **Ask…** (needs more information), or **Decline…** with a reason the requester sees.
+  - **Approving creates the Ethernet item or Wi-Fi network** in the event's requirements. You choose the venue, section or group, VLAN and location; for a wired request where the team wasn't sure, you also enter the number of points.
+  - The new row's notes cite the request: "ICT request #n (team, requester)". It goes out with the next published version.
+- **Unpublished changes.** Submissions and reviews don't count as changes; approvals do, because they add rows.
 
 ## UI and accessibility
 

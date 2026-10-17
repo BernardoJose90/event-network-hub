@@ -15,7 +15,8 @@ import { createContext, useCallback, useContext, useEffect, useId, useMemo, useR
 //   const name = await dialog.prompt({ title: 'Template name', label: 'Name', initial: 'LIS' })  // null if cancelled
 //     validate: (value) => error message or null, shown inline under the field
 //   const values = await dialog.form({ title, fields: [{ name, label, type, options, required, hint, list,
-//     initial, maxLength, validate, full }] })  // { name: value } or null; type: text | textarea | select | tel
+//     initial, maxLength, validate, full }] })  // { name: value } or null
+//     type: text | textarea | select | tel | date | number | checkboxes (value is an array)
 
 const DialogContext = createContext(null)
 
@@ -79,6 +80,31 @@ function Field({ field, value, error, onChange, inputRef, ids }) {
     'aria-invalid': error ? 'true' : undefined, 'aria-describedby': describedBy, 'aria-required': required || undefined,
     onChange: (e) => onChange(name, e.target.value),
   }
+  if (type === 'checkboxes') {
+    const chosen = new Set(value || [])
+    return (
+      <fieldset className={`field checkbox-field${error ? ' has-error' : ''}`} aria-describedby={describedBy}>
+        <legend className="field-label">{label}{!required && <span className="muted"> (optional)</span>}</legend>
+        {hint && <p id={ids.hint} className="field-hint">{hint}</p>}
+        {error && <p id={ids.error} className="field-error"><span className="visually-hidden">Error: </span>{error}</p>}
+        <div className="checkbox-list">
+          {options.map((o, i) => (
+            <label key={o.value} className="checkbox-option">
+              <input type="checkbox" ref={i === 0 ? inputRef : undefined} checked={chosen.has(o.value)}
+                onChange={(e) => {
+                  const next = new Set(chosen)
+                  if (e.target.checked) next.add(o.value)
+                  else next.delete(o.value)
+                  onChange(name, options.map((x) => x.value).filter((v) => next.has(v)))
+                }} />
+              {o.label}
+            </label>
+          ))}
+          {options.length === 0 && <p className="muted small">Nothing to choose from yet.</p>}
+        </div>
+      </fieldset>
+    )
+  }
   return (
     <div className={`field${error ? ' has-error' : ''}`}>
       <label htmlFor={ids.input} className="field-label">
@@ -95,7 +121,7 @@ function Field({ field, value, error, onChange, inputRef, ids }) {
         </select>
       ) : (
         <>
-          <input type={type === 'tel' ? 'tel' : 'text'} list={list?.length ? ids.list : undefined}
+          <input type={['tel', 'date', 'number'].includes(type) ? type : 'text'} list={list?.length ? ids.list : undefined}
             autoComplete="off" {...common} />
           {list?.length > 0 && <datalist id={ids.list}>{list.map((v) => <option key={v} value={v} />)}</datalist>}
         </>
@@ -111,7 +137,8 @@ function DialogView({ request, onClose }) {
   const cancelRef = useRef(null)
   const confirmRef = useRef(null)
   const fieldRefs = useRef({})
-  const [values, setValues] = useState(() => Object.fromEntries(fields.map((f) => [f.name, f.initial ?? ''])))
+  const [values, setValues] = useState(() => Object.fromEntries(
+    fields.map((f) => [f.name, f.initial ?? (f.type === 'checkboxes' ? [] : '')])))
   const [errors, setErrors] = useState({})
   const titleId = useId()
   const bodyId = useId()
@@ -139,7 +166,10 @@ function DialogView({ request, onClose }) {
     }
     for (const f of fields) {
       const v = out[f.name]
-      const problem = f.required && !v ? `Enter ${f.label.toLowerCase()}` : f.validate?.(v ?? '', out)
+      const empty = Array.isArray(v) ? v.length === 0 : !v
+      const problem = f.required && empty
+        ? (f.type === 'checkboxes' || f.type === 'select' ? `Choose ${f.label.toLowerCase()}` : `Enter ${f.label.toLowerCase()}`)
+        : f.validate?.(v ?? '', out)
       if (problem) problems[f.name] = problem
     }
     if (Object.keys(problems).length) {

@@ -2431,3 +2431,172 @@ dialog.dialog.wide {
 .hd-sections button {
   white-space: nowrap;
 }
+
+/* --- Dependency register ------------------------------------------------------------- */
+
+.dep-area > h3 {
+  margin: 18px 0 8px;
+  font-size: 1.1rem;
+}
+
+.dep-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 12px;
+}
+
+.dep-card h4 {
+  margin: 0;
+  font-size: 1rem;
+  color: var(--navy);
+}
+
+.dep-card .facts {
+  margin-top: 10px;
+}
+
+.runbook {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #fff4d6;
+}
+
+.dep-foot {
+  margin-top: 6px;
+  gap: 8px;
+}
+
+.flag-text {
+  color: #8a3b00;
+  font-weight: 600;
+}
+
+.checkbox-field {
+  border: 0;
+  padding: 0;
+  margin: 6px 0 0;
+}
+
+.checkbox-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.checkbox-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+}
+
+/* --- ICT requests ---------------------------------------------------------------------- */
+
+.link-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.link-url {
+  flex-basis: 100%;
+  font-size: 0.8rem;
+}
+
+.req-head {
+  margin: 18px 0 8px;
+}
+
+.req-head h3 {
+  margin: 0;
+}
+
+.nowrap-cell {
+  white-space: nowrap;
+}
+
+/* Public request form */
+.request-page {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+}
+
+.request-page h1 {
+  font-size: 1.8rem;
+  margin: 4px 0 12px;
+}
+
+.caption {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.request-line {
+  margin: 16px 0;
+  border: 1px solid var(--border);
+}
+
+.request-line > legend {
+  padding: 0 6px;
+}
+
+.line-title {
+  font-size: 1.15rem;
+  margin: 0;
+}
+
+.radios {
+  border: 0;
+  padding: 0;
+  margin: 8px 0;
+}
+
+.error-summary {
+  margin: 16px 0;
+  padding: 14px 16px;
+  border: 4px solid var(--error);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.error-summary h2 {
+  margin: 0 0 6px;
+  color: var(--error);
+  font-size: 1.1rem;
+}
+
+.error-summary a {
+  color: var(--error);
+  font-weight: 600;
+}
+
+.confirmation {
+  border-top: 6px solid var(--ok);
+}
+
+.your-requests {
+  margin-top: 24px;
+}
+
+.affected {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid #c98a00;
+  border-radius: 10px;
+}
+
+.affected h3 {
+  margin: 0;
+}
+
+.affected-list li {
+  margin: 8px 0;
+}

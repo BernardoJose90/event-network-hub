@@ -5,7 +5,7 @@
 //   node scripts/a11y.mjs <event id> [<template id>]
 //
 // Env: APP_URL (default http://localhost:5173), CHROME (path to Chrome/Chromium),
-// TICKET_ID (help desk ticket to open, default 1).
+// TICKET_ID (help desk ticket to open, default 1), REQUEST_TOKEN (an ICT request link to audit the public form).
 // Exits 1 if any page has violations. Needs Node 22+ and `npm ci` in frontend/ (axe-core).
 
 import { spawn } from 'node:child_process'
@@ -35,12 +35,15 @@ const pages = [
   ['Partner orders', `/event/${eventId}?view=partner`],
   ['Setup', `/event/${eventId}?view=lists`],
   ['History', `/event/${eventId}?view=history`],
+  ['Dependencies', `/event/${eventId}?view=dependencies`],
+  ['ICT requests', `/event/${eventId}?view=requests`],
   ...(templateId ? [['Template', `/event/${templateId}?view=ethernet`]] : []),
   ['Help desk dashboard', '/helpdesk'],
   ['Help desk tickets', '/helpdesk?view=tickets&list=all'],
   ['Help desk ticket', `/helpdesk?view=tickets&list=all&ticket=${process.env.TICKET_ID || 1}`],
   ['Help desk reports', '/helpdesk?view=reports'],
   ['Help desk recurring issues', '/helpdesk?view=recurring'],
+  ...(process.env.REQUEST_TOKEN ? [['ICT request form', `/request/${process.env.REQUEST_TOKEN}`]] : []),
 ]
 
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'a11y-'))

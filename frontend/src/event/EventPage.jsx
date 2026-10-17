@@ -4,8 +4,10 @@ import { useDialog } from '../ui/Dialog.jsx'
 import { StatusMessages } from '../ui/Notice.jsx'
 import { eventApi } from './api.js'
 import { TITLES } from './columns.js'
+import { DependenciesPanel } from './dependencies.jsx'
 import { HistoryPanel, ListsPanel, Overview } from './panels.jsx'
 import RecordTable from './RecordTable.jsx'
+import { RequestsPanel } from './requests.jsx'
 
 // Requirements page, /event/<documentId>: the event's network requirements as
 // structured records. Viewers read; network admins edit and publish versions.
@@ -15,6 +17,8 @@ const VIEWS = [
   ['wifi', TITLES.wifi],
   ['ethernet', TITLES.ethernet],
   ['partner', TITLES.partner],
+  ['dependencies', 'Dependencies'],
+  ['requests', 'ICT requests'],
   ['lists', 'Setup'],
   ['history', 'History'],
 ]
@@ -195,7 +199,7 @@ export default function EventPage({ documentId }) {
       )}
       <div className="event-body">
         <nav className="event-nav" aria-label="Requirements sections">
-          {VIEWS.filter(([key]) => !(isTemplate && key === 'partner')).map(([key, label]) => {
+          {VIEWS.filter(([key]) => !(isTemplate && (key === 'partner' || key === 'requests'))).map(([key, label]) => {
             const count = key === 'ethernet' ? points : overview.counts?.[key]
             return (
               <button key={key} className={view === key ? 'active' : ''} onClick={() => goTo(key)}
@@ -220,6 +224,8 @@ export default function EventPage({ documentId }) {
           <h2 className="view-title" tabIndex={-1} ref={viewHeading}>{viewLabel}</h2>
           {view === 'overview' && <Overview {...props} onPublish={publish} goTo={goTo} />}
           {['wifi', 'ethernet', 'partner'].includes(view) && <RecordTable key={view} type={view} {...props} />}
+          {view === 'dependencies' && <DependenciesPanel {...props} />}
+          {view === 'requests' && !isTemplate && <RequestsPanel {...props} />}
           {view === 'lists' && <ListsPanel {...props} />}
           {view === 'history' && <HistoryPanel {...props} />}
         </main>

@@ -62,6 +62,19 @@ export function eventApi(documentId, identity) {
     },
     changes: () => call('GET', `${base}/changes`, identity),
     publish: () => call('POST', `${base}/publish`, identity),
+    dependencies: () => call('GET', `${base}/dependencies`, identity),
+    createDependency: (data) => call('POST', `${base}/dependencies`, identity, { data }),
+    updateDependency: (id, revision, data) => call('PUT', `${base}/dependencies/${id}`, identity, { revision, data }),
+    reviewDependency: (id, revision) => call('POST', `${base}/dependencies/${id}/review`, identity, { revision }),
+    deleteDependency: (id, revision) => call('DELETE', `${base}/dependencies/${id}?revision=${revision}`, identity),
+    ictRequests: () => call('GET', `${base}/ict-requests`, identity),
+    saveRequestSettings: (deadline, instructions) =>
+      call('PUT', `${base}/ict-requests/settings`, identity, { deadline, instructions }),
+    createRequestLink: (team) => call('POST', `${base}/ict-requests/links`, identity, { team }),
+    revokeRequestLink: (id) => call('POST', `${base}/ict-requests/links/${id}/revoke`, identity),
+    approveRequest: (id, body) => call('POST', `${base}/ict-requests/${id}/approve`, identity, body),
+    requestNeedsInfo: (id, revision, note) => call('POST', `${base}/ict-requests/${id}/needs-info`, identity, { revision, note }),
+    declineRequest: (id, revision, note) => call('POST', `${base}/ict-requests/${id}/decline`, identity, { revision, note }),
     saveAsTemplate: (name) => call('POST', '/api/templates', identity, { name, event_id: Number(documentId) }),
   }
 }

@@ -4,6 +4,7 @@ import App from './App.jsx'
 import EditorPage from './EditorPage.jsx'
 import SheetPage from './SheetPage.jsx'
 import EventPage from './event/EventPage.jsx'
+import HelpdeskPage from './helpdesk/HelpdeskPage.jsx'
 import { DialogProvider } from './ui/Dialog.jsx'
 import './styles.css'
 
@@ -12,11 +13,13 @@ import './styles.css'
 const editMatch = window.location.pathname.match(/^\/edit\/(\d+)\/(\d+)\/?$/)
 const sheetMatch = window.location.pathname.match(/^\/sheet\/(\d+)\/?$/)
 const eventMatch = window.location.pathname.match(/^\/event\/(\d+)\/?$/)
+const helpdeskMatch = /^\/helpdesk\/?$/.test(window.location.pathname)
 
 let page = <App />
 if (editMatch) page = <EditorPage documentId={Number(editMatch[1])} version={Number(editMatch[2])} />
 else if (sheetMatch) page = <SheetPage documentId={Number(sheetMatch[1])} />
 else if (eventMatch) page = <EventPage documentId={Number(eventMatch[1])} />
+else if (helpdeskMatch) page = <HelpdeskPage />
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

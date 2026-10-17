@@ -140,11 +140,3 @@ def test_compare_any_two_versions(client: TestClient, event: int) -> None:
     assert r.status_code == 422 and "wasn't published" in r.json()["detail"]  # V1 was an upload
     assert client.get(f"/api/events/{event}/changelog", headers=VIEWER, params={"to": "x"}).status_code == 422
     assert client.get(f"/api/events/{event}/changelog", headers={}).status_code == 403
-
-
-def test_dependency_changes_are_listed(client: TestClient, event: int) -> None:
-    client.post(f"/api/events/{event}/publish", headers=ADMIN)
-    client.post(f"/api/events/{event}/dependencies", headers=ADMIN, json={"data": {
-        "area": "Main stage", "service": "Live stream", "criticality": "P1", "accountable": "Head of AV"}})
-    dep = _section(_log(client, event), "dependency")
-    assert dep["added"][0]["name"] == "Live stream" and "P1" in dep["added"][0]["summary"]

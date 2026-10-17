@@ -14,19 +14,12 @@ from .models import LABELS, SECRET_FIELDS
 # Fields stored as codes (yes/no/tbc) that read better as words.
 CHOICE_FIELDS = {"wifi": ("password_required", "broadcast"), "partner": ("purchased",)}
 
-TYPES = [("wifi", "Wi-Fi networks"), ("ethernet", "Ethernet requirements"), ("partner", "Partner orders"),
-         ("dependency", "Network dependencies")]
+TYPES = [("wifi", "Wi-Fi networks"), ("ethernet", "Ethernet requirements"), ("partner", "Partner orders")]
 
-NAME_FIELD = {"wifi": "ssid", "ethernet": "purpose", "partner": "partner", "dependency": "service"}
+NAME_FIELD = {"wifi": "ssid", "ethernet": "purpose", "partner": "partner"}
 
-DEPENDENCY_LABELS = {
-    "area": "Area", "service": "Service", "team": "Team or process", "criticality": "Criticality",
-    "accountable": "Accountable", "responsible": "Responsible (ICT)", "consulted": "Consulted",
-    "informed": "Informed", "phase": "Needed during", "vlans": "VLANs", "linked": "Network items",
-    "runbook": "If it fails", "contact": "On-site contact", "notes": "Notes",
-}
-# Not compared: internal ids and bookkeeping.
-IGNORED = {"records", "last_reviewed_at"}
+# Not compared: IDs are assigned automatically and never change.
+IGNORED = {"ref_id"}
 
 
 def _items(snap: dict[str, Any] | None) -> dict[tuple[str, Any], dict[str, Any]]:
@@ -39,9 +32,6 @@ def _items(snap: dict[str, Any] | None) -> dict[tuple[str, Any], dict[str, Any]]
         out[(r["type"], r.get("id"))] = {
             "type": r["type"], "data": r["data"], "venue": r.get("venue"), "group": r.get("group"),
         }
-    for i, d in enumerate(snap.get("dependencies", [])):
-        key = d.get("id") or f"{d.get('area')}|{d.get('service')}|{i}"
-        out[("dependency", key)] = {"type": "dependency", "data": d, "venue": None, "group": d.get("area")}
     return out
 
 
@@ -55,8 +45,6 @@ def _where(item: dict[str, Any]) -> str:
 
 
 def _label(record_type: str, field: str) -> str:
-    if record_type == "dependency":
-        return DEPENDENCY_LABELS.get(field, field)
     return LABELS.get(record_type, {}).get(field, field)
 
 
@@ -78,11 +66,9 @@ def _summary(item: dict[str, Any]) -> str:
                 d.get("location"), d.get("vlan")]
     elif t == "wifi":
         bits = [d.get("vlan"), d.get("band"), d.get("coverage")]
-    elif t == "partner":
+    else:
         bits = [d.get("stand") and f"stand {d['stand']}", d.get("solution"),
                 d.get("total_ports") is not None and f"{d['total_ports']} ports"]
-    else:
-        bits = [d.get("criticality"), d.get("team"), d.get("accountable") and f"owner {d['accountable']}"]
     return " · ".join(str(b) for b in bits if b)
 
 
@@ -90,7 +76,7 @@ def _field_changes(old: dict[str, Any], new: dict[str, Any]) -> list[dict[str, s
     t = new["type"]
     secrets = SECRET_FIELDS.get(t, ())
     out = []
-    if (old["venue"], old["group"]) != (new["venue"], new["group"]) and t != "dependency":
+    if (old["venue"], old["group"]) != (new["venue"], new["group"]):
         out.append({"field": "location", "label": "Moved", "old": _where(old) or "—", "new": _where(new) or "—"})
     for field in sorted(set(old["data"]) | set(new["data"]), key=lambda f: list(new["data"]).index(f)
                         if f in new["data"] else 999):

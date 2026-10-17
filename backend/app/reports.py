@@ -4,9 +4,8 @@ One set of measures per event, grouped by objective, so events can be compared
 side by side ("event over event"):
 1. cable planning        — Ethernet points, how many came through ICT requests, what arrived late;
 2. ICT request adoption  — requests per team, on time, "not sure" answers, review time;
-3. dependency register   — coverage of the areas in use, owners, reviews, runbooks;
-4. live operations       — the help desk KPIs (see tickets/report.py);
-5. change and publishing — versions, and what changed from the first to the last version.
+3. live operations       — the help desk KPIs (see tickets/report.py);
+4. change and publishing — versions, and what changed from the first to the last version.
 """
 
 from __future__ import annotations
@@ -14,7 +13,6 @@ from __future__ import annotations
 import csv
 import io
 import logging
-import re
 import sqlite3
 from collections.abc import Iterator
 from datetime import datetime
@@ -30,14 +28,13 @@ from . import db
 from .auth import Principal, current_principal, require_known_role
 from .ictrequests import service as requests_service
 from .ictrequests.models import REQUEST_TEAMS
-from .records import changelog, dependencies, service as records_service, store as records_store
+from .records import changelog, service as records_service, store as records_store
 from .tickets import report as ticket_report, store as ticket_store
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/reports")
 
-GOALS = {"ack_within_target_pct": 90, "closure_quality_pct": 90, "requests_on_time_pct": 90,
-         "register_coverage_pct": 100}
+GOALS = {"ack_within_target_pct": 90, "closure_quality_pct": 90, "requests_on_time_pct": 90}
 
 # Where each section's numbers come from, and how each measure is calculated. Shown on the
 # page ("Sources and definitions") and in the export, so figures can be read without the code.
@@ -45,7 +42,6 @@ SOURCES = {
     "cable_planning": "The event's current Ethernet requirements (including unpublished changes), its approved ICT "
                       "requests, the change history and help desk tickets.",
     "requests": "ICT requests submitted through the team links for the event.",
-    "register": "The event's network dependency register and the locations used by its Ethernet requirements.",
     "operations": "Help desk tickets filed under the event. Duplicates merged into another ticket are left out.",
     "publishing": "The event's versions and the snapshots saved when each version was published.",
 }
@@ -60,8 +56,6 @@ DEFINITIONS = {
     "With 'not sure' answers": "Requests where the team didn't know the number of cables, PoE or speed (wired), or the "
                                "number of devices (Wi-Fi).",
     "Mean review time": "Average time from submission to the first review (approved, declined or asked for more information).",
-    "Areas covered": "Locations used by the event's Ethernet requirements that have at least one register entry. Goal 100%.",
-    "Needing review": "Register entries not reviewed in the last 180 days.",
     "Acknowledged within 5 min": "Tickets acknowledged within 5 minutes of being raised, as a share of tickets whose "
                                  "acknowledge time has passed. Goal 90%.",
     "Closed with root cause and fix": "Resolved or closed tickets with both a root cause and a resolution. Goal 90%.",
@@ -92,10 +86,6 @@ Reader = Annotated[Principal, Depends(_reader)]
 
 def _pct(part: float, whole: float) -> float | None:
     return round(100 * part / whole, 1) if whole else None
-
-
-def _norm(value: str | None) -> str:
-    return re.sub(r"\s+", " ", value or "").strip().lower()
 
 
 # --- measures -------------------------------------------------------------------------------
@@ -169,25 +159,6 @@ def request_adoption(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
     }
 
 
-def register_health(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
-    entries = dependencies.list_for(conn, doc)
-    areas_in_use = {_norm(r["data"].get("location")) for r in records_store.records(conn, doc, "ethernet")
-                    if r["data"].get("location")}
-    covered_areas = {_norm(e["data"]["area"]) for e in entries}
-    covered = {a for a in areas_in_use if any(a == c or a in c or c in a for c in covered_areas)}
-    return {
-        "entries": len(entries),
-        "areas_in_use": len(areas_in_use),
-        "areas_covered": len(covered),
-        "coverage_pct": _pct(len(covered), len(areas_in_use)),
-        "without_owner": sum(not e["data"].get("accountable") for e in entries),
-        "needs_review": sum(dependencies.needs_review(e) for e in entries),
-        "p1_without_runbook": sum(e["data"].get("criticality") == "P1" and not e["data"].get("runbook") for e in entries),
-        "by_criticality": {p: sum(e["data"].get("criticality") == p for e in entries) for p in ("P1", "P2", "P3", "P4")},
-        "uncovered_areas": sorted(a for a in areas_in_use - covered)[:20],
-    }
-
-
 def live_operations(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
     k = ticket_report.kpis(conn, doc)
     return {
@@ -234,7 +205,7 @@ def change_and_publishing(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
 def data_notes(report: dict[str, Any]) -> list[str]:
     """Things to check before comparing this event with others (data quality, not performance)."""
     notes = []
-    cp, rq, reg, ops, pub = (report[k] for k in ("cable_planning", "requests", "register", "operations", "publishing"))
+    cp, rq, ops, pub = (report[k] for k in ("cable_planning", "requests", "operations", "publishing"))
     if cp["items"] and not cp["points"]:
         notes.append(f"{cp['items']} Ethernet items but 0 points: points may not have been entered yet "
                      "(events started from a template begin at 0).")
@@ -242,8 +213,6 @@ def data_notes(report: dict[str, Any]) -> list[str]:
         notes.append("No ICT request deadline is set, so late additions can't be measured.")
     if not rq["requests"]:
         notes.append("No ICT requests yet.")
-    if not reg["entries"]:
-        notes.append("The dependency register is empty.")
     if not ops["tickets"]:
         notes.append("No help desk tickets filed under this event.")
     if not pub["published"]:
@@ -262,7 +231,6 @@ def event_report(conn: sqlite3.Connection, document: dict[str, Any]) -> dict[str
         "created_at": document["created_at"],
         "cable_planning": cable_planning(conn, doc),
         "requests": request_adoption(conn, doc),
-        "register": register_health(conn, doc),
         "operations": live_operations(conn, doc),
         "publishing": change_and_publishing(conn, doc),
     }
@@ -328,14 +296,6 @@ def _rows(reports_: list[dict[str, Any]]) -> list[tuple[str, list[tuple[str, Any
             ("Mean review time (hours)", lambda r: r["requests"]["review_hours"]),
             *[(f"{label}: requests", (lambda k: lambda r: r["requests"]["by_team"][k]["requests"])(key))
               for key, label in REQUEST_TEAMS.items()],
-        ]),
-        ("Dependency register", [
-            ("Entries", lambda r: r["register"]["entries"]),
-            ("Areas in use", lambda r: r["register"]["areas_in_use"]),
-            ("Areas covered", lambda r: pct(r["register"]["coverage_pct"])),
-            ("Without an accountable owner", lambda r: r["register"]["without_owner"]),
-            ("Needing review", lambda r: r["register"]["needs_review"]),
-            ("P1 without a runbook", lambda r: r["register"]["p1_without_runbook"]),
         ]),
         ("Live operations", [
             ("Tickets", lambda r: r["operations"]["tickets"]),

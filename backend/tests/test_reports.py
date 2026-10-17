@@ -64,12 +64,6 @@ def test_report_for_an_event(client: TestClient, event: int) -> None:
         "requester_name": "Ana", "requester_contact": "ana@x.com",
         "lines": [{"kind": "wired", "area": location, "purpose": "Spare", "ports": None}]})
 
-    # register: one complete P1, one P1 without owner or runbook
-    client.post(f"/api/events/{event}/dependencies", headers=ADMIN, json={"data": {
-        "area": location, "service": "Stream", "criticality": "P1", "accountable": "AV lead", "runbook": "4G"}})
-    client.post(f"/api/events/{event}/dependencies", headers=ADMIN, json={"data": {
-        "area": location, "service": "Talkback", "criticality": "P1"}})
-
     # help desk: a wired ticket, acknowledged straight away
     t = client.post("/api/tickets", headers=ADMIN, json={"title": "No link", "category": "wired", "event_id": event}).json()
     client.post(f"/api/tickets/{t['id']}/acknowledge", headers=ADMIN, json={"revision": t["revision"]})
@@ -85,15 +79,13 @@ def test_report_for_an_event(client: TestClient, event: int) -> None:
     rq = r["requests"]
     assert (rq["requests"], rq["teams_using"], rq["on_time_pct"], rq["not_sure_pct"]) == (2, 1, 50.0, 100.0)
     assert rq["by_team"]["av"]["approved"] == 1 and rq["by_team"]["av"]["ports_requested"] == 4 and rq["open"] == 1
-    reg = r["register"]
-    assert (reg["entries"], reg["without_owner"], reg["p1_without_runbook"], reg["by_criticality"]["P1"]) == (2, 1, 1, 2)
-    assert reg["areas_covered"] >= 1 and reg["coverage_pct"] is not None
+    assert "register" not in r  # the dependency register was removed
     ops = r["operations"]
     assert (ops["tickets"], ops["ack_within_target_pct"]) == (1, 100.0)
     pub = r["publishing"]
     assert (pub["versions"], pub["published"], pub["unpublished_changes"]) == (3, 2, 0)
     assert pub["first_to_last"]["from"] == 2 and pub["first_to_last"]["to"] == 3
-    assert pub["first_to_last"]["added"] == 3 and pub["first_to_last"]["points_delta"] == 4  # 1 item + 2 register entries
+    assert pub["first_to_last"]["added"] == 1 and pub["first_to_last"]["points_delta"] == 4
 
 
 def test_event_selection_and_roles(client: TestClient, event: int) -> None:
@@ -121,8 +113,7 @@ def test_export(client: TestClient, event: int) -> None:
     ws = load_workbook(io.BytesIO(r.content)).active
     assert [c.value for c in ws[1]] == ["Measure", "LIS26", "VAN26"]
     labels = [row[0].value for row in ws.iter_rows(min_row=2)]
-    for section in ("Cable planning", "ICT request adoption", "Dependency register", "Live operations",
-                    "Change and publishing"):
+    for section in ("Cable planning", "ICT request adoption", "Live operations", "Change and publishing"):
         assert section in labels
     points = next(row for row in ws.iter_rows(min_row=2) if row[0].value == "Ethernet points")
     assert [c.value for c in points[1:]] == [126, 0]  # both venues of the fixture

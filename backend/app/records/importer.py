@@ -98,7 +98,8 @@ def _header_map(ws: Worksheet, rules: list[tuple[str, str]], result: ImportResul
     for cell in ws[1]:
         name = _norm(cell.value)
         for key, target in rules:
-            if key in name and target not in mapping.values():
+            matches = name == key[1:] if key.startswith("=") else key in name
+            if matches and target not in mapping.values():
                 mapping[cell.column] = target
                 break
     if first_column and 1 not in mapping:
@@ -122,10 +123,11 @@ def _only_first_cell(row) -> bool:
 WIFI_RULES = [("passwordvalue", "password"), ("password?", "password_required"), ("broadcast", "broadcast"),
               ("coverage", "coverage"), ("ssid", "ssid"), ("vlan", "vlan"), ("band", "band"),
               ("purpose", "purpose"), ("id", "ref_id")]
-ETHERNET_RULES = [("purpose", "purpose"), ("location", "location"), ("vlan", "vlan"), ("room", "room"),
+# "=id": the header must be exactly "ID" (a substring match would catch e.g. "Wi-Fi (IDs)").
+ETHERNET_RULES = [("=id", "ref_id"), ("purpose", "purpose"), ("location", "location"), ("vlan", "vlan"), ("room", "room"),
                   ("north", "bandwidth_ns"), ("east", "bandwidth_ew"), ("capacity", "capacity"),
                   ("ethernetpoints", "ports"), ("points", "ports"), ("notes", "notes")]
-PARTNER_RULES = [("partner", "partner"), ("pav", "pavilion"), ("stand", "stand"), ("solution", "solution"),
+PARTNER_RULES = [("=id", "ref_id"), ("partner", "partner"), ("pav", "pavilion"), ("stand", "stand"), ("solution", "solution"),
                  ("bandwidth", "bandwidth_mbps"), ("defaultcable", "default_cables"),
                  ("totalethernetports", "total_ports"), ("wifi", "wifi"), ("vlan", "vlans"),
                  ("note", "notes"), ("purchased", "purchased")]
@@ -191,8 +193,8 @@ def _ethernet(ws: Worksheet, venue: str, result: ImportResult, palette: list[str
                     result.warnings.append(f"{ws.title}!{row[0].row}: '{_text(value)}' is not a number of points; left empty")
             elif (text := _text(value)) is not None:
                 data[key] = text
-        if not data:
-            continue
+        if not any(k != "ref_id" for k in data):
+            continue  # empty rows, or rows with only an ID
         if section is None:
             section = "Unsorted"
             result.add_unique(result.groups["ethernet"], section)
@@ -218,7 +220,7 @@ def _partners(ws: Worksheet, result: ImportResult) -> None:
                     data[key] = text
             elif (text := _text(value)) is not None:
                 data[key] = text
-        if data:
+        if any(k != "ref_id" for k in data):
             result.records.append(ImportedRecord("partner", data))
 
 

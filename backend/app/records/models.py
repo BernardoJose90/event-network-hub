@@ -68,6 +68,7 @@ class WifiData(_Data):
 
 
 class EthernetData(_Data):
+    ref_id: Text = None  # assigned automatically (service.next_ref_id)
     purpose: Text = None
     location: Text = None  # from the building/location lists
     vlan: Text = None  # from the VLAN list
@@ -80,6 +81,7 @@ class EthernetData(_Data):
 
 
 class PartnerData(_Data):
+    ref_id: Text = None  # assigned automatically (service.next_ref_id)
     partner: Text = None
     pavilion: Text = None
     stand: Text = None
@@ -130,12 +132,12 @@ LABELS: dict[str, dict[str, str]] = {
         "purpose": "Purpose",
     },
     "ethernet": {
-        "purpose": "Purpose", "location": "Location", "vlan": "VLAN", "room": "Area/Room Number",
+        "ref_id": "ID", "purpose": "Purpose", "location": "Location", "vlan": "VLAN", "room": "Area/Room Number",
         "bandwidth_ns": "Bandwidth per device North - South", "bandwidth_ew": "Bandwidth per device East - West",
         "capacity": "Capacity", "ports": "Ethernet Points", "notes": "Notes",
     },
     "partner": {
-        "partner": "Partner & Exhibitor", "pavilion": "Pav", "stand": "Stand Number",
+        "ref_id": "ID", "partner": "Partner & Exhibitor", "pavilion": "Pav", "stand": "Stand Number",
         "solution": "Network Solution", "bandwidth_mbps": "Bandwidth Amount", "default_cables": "Default Cable",
         "total_ports": "Total ethernet ports", "wifi": "WiFi", "vlans": "Vlan", "notes": "Note(s)",
         "purchased": "Purchased",

@@ -120,8 +120,65 @@ def _sort_before(conn: sqlite3.Connection, doc: int, record_type: str, venue_id:
     raise RecordError(422, "The record to insert before is not in this section")
 
 
+# --- IDs ----------------------------------------------------------------------------------
+# Every Wi-Fi network, Ethernet item and partner order has an ID, unique per event and type,
+# assigned automatically when the row is created and never changed or reused, so it can be
+# quoted in tickets and conversations.
+
+ID_TYPES = ("wifi", "ethernet", "partner")
+
+
+def _numeric(ref: Any) -> int | None:
+    return int(ref) if isinstance(ref, str) and ref.isdigit() else None
+
+
+def next_ref_id(conn: sqlite3.Connection, doc: int, record_type: str) -> str:
+    """The next free ID: one more than the highest numeric ID used for this type in this event,
+    including deleted rows (from the change log), so IDs are never reused."""
+    used = [_numeric(r["data"].get("ref_id")) for r in store.records(conn, doc, record_type, archived=None)]
+    used += [int(row[0]) for row in conn.execute(
+        "SELECT json_extract(old, '$.ref_id') FROM change_log WHERE document_id = ? AND entity = ? "
+        "AND action = 'delete' AND json_valid(old)", (doc, record_type)) if row[0] and str(row[0]).isdigit()]
+    return str(max([u for u in used if u is not None], default=0) + 1)
+
+
+def assign_ids(conn: sqlite3.Connection, doc: int) -> int:
+    """Give every row without a unique ID the next free one (inside the caller's transaction).
+    Existing unique IDs are kept; duplicates keep the first row's ID. Returns how many changed."""
+    changed = 0
+    for record_type in ID_TYPES:
+        rows = store.records(conn, doc, record_type, archived=None)
+        seen: set[str] = set()
+        todo = []
+        for r in rows:
+            ref = r["data"].get("ref_id")
+            if ref and ref not in seen:
+                seen.add(ref)
+            else:
+                todo.append(r)
+        if not todo:
+            continue
+        top = max([_numeric(x) or 0 for x in seen], default=0)
+        for r in todo:
+            top += 1
+            while str(top) in seen:
+                top += 1
+            seen.add(str(top))
+            data = dict(r["data"]) | {"ref_id": str(top)}
+            conn.execute("UPDATE records SET data = ?, revision = revision + 1 WHERE id = ?", (json.dumps(data), r["id"]))
+            changed += 1
+    return changed
+
+
+def assign_all_ids(conn: sqlite3.Connection) -> int:
+    """Start-up: make sure every event and template has unique IDs on every row."""
+    with conn:
+        return sum(assign_ids(conn, doc) for (doc,) in conn.execute("SELECT id FROM documents").fetchall())
+
+
 def create_record(conn: sqlite3.Connection, doc: int, record_type: str, *, venue_id: int | None,
                   group_id: int | None, before_id: int | None, data: dict[str, Any], user: str) -> dict[str, Any]:
+    data = {k: v for k, v in data.items() if k != "ref_id"}  # IDs are assigned, not chosen
     data = _validate(record_type, data)
     _place(conn, doc, record_type, venue_id, group_id)
     _check_lists(conn, doc, record_type, data)
@@ -129,6 +186,8 @@ def create_record(conn: sqlite3.Connection, doc: int, record_type: str, *, venue
     if record_type == "ethernet" and _is_template(conn, doc):
         data["ports"] = 0
     with conn:
+        if record_type in ID_TYPES:
+            data["ref_id"] = next_ref_id(conn, doc, record_type)
         sort = _sort_before(conn, doc, record_type, venue_id, group_id, before_id)
         record_id = store.insert_record(conn, doc=doc, record_type=record_type, venue_id=venue_id,
                                         group_id=group_id, sort=sort, data=data, user=user)
@@ -154,6 +213,8 @@ def update_record(conn: sqlite3.Connection, doc: int, record_type: str, record_i
     record = _existing(conn, doc, record_id, record_type)
     if record["revision"] != revision:
         raise _conflict(record)
+    if "ref_id" in changes and changes["ref_id"] != record["data"].get("ref_id"):
+        raise RecordError(422, "IDs are assigned automatically and can't be changed")
     merged = dict(record["data"])
     for field, value in changes.items():
         merged[field] = value
@@ -294,10 +355,7 @@ def rename_list_value(conn: sqlite3.Connection, doc: int, item_id: int, value: s
             data = dict(record["data"]) | {field: value}
             store.update_record(conn, record_id=record["id"], expected_revision=record["revision"], user=user,
                                 data=data)
-        if item["kind"] == "vlan":
-            from . import dependencies
 
-            dependencies.rename_vlan(conn, doc, item["value"], value)
         store.log(conn, doc=doc, entity="list", action="list", user=user, old=item["value"], new=value,
                   summary=f"Renamed '{item['value']}' to '{value}' in the {item['kind']} list and its records")
 
@@ -307,13 +365,7 @@ def delete_list_value(conn: sqlite3.Connection, doc: int, item_id: int, *, user:
     used = _list_usage(conn, doc, item["kind"], item["value"])
     if used:
         raise RecordError(409, f"'{item['value']}' is used by {len(used)} record(s). Change them first.")
-    if item["kind"] == "vlan":
-        from . import dependencies
 
-        deps = dependencies.using_vlan(conn, doc, item["value"])
-        if deps:
-            raise RecordError(409, f"'{item['value']}' is used by {len(deps)} dependency register entr"
-                                   f"{'y' if len(deps) == 1 else 'ies'}. Change them first.")
     with conn:
         conn.execute("DELETE FROM event_lists WHERE id = ?", (item_id,))
         store.log(conn, doc=doc, entity="list", action="list", user=user, old=item["value"],
@@ -437,6 +489,7 @@ def apply_import(conn: sqlite3.Connection, doc: int, result, *, user: str, sourc
                 group_id=group_ids.get((GROUP_KIND.get(rec.type), rec.group)) if rec.group else None,
                 sort=sort, data=data, user=user,
             )
+        assign_ids(conn, doc)
         for line in result.legacy_log:
             store.log(conn, doc=doc, entity="legacy", action="legacy", user=user, summary=line)
         warnings = list(result.warnings)
@@ -502,9 +555,7 @@ def _copy_event(conn: sqlite3.Connection, source: int, target: int, *, user: str
             conn, doc=target, record_type=r["type"], venue_id=venue_ids.get(r["venue_id"]),
             group_id=group_ids.get(r["group_id"]), sort=r["sort"], data=data, user=user)
         copied += 1
-    from . import dependencies
-
-    dependencies.copy(conn, source, target, record_ids, user=user)
+    assign_ids(conn, target)
     return copied
 
 

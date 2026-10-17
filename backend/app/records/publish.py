@@ -37,11 +37,17 @@ BODY_FONT = Font(name=FONT, size=10)
 
 WIFI_FIELDS = ["ref_id", "ssid", "coverage", "password_required", "broadcast", "vlan", "band", "password", "purpose"]
 WIFI_WIDTHS = [6, 28, 52, 13, 12, 24, 16, 20, 40]
-ETHERNET_FIELDS = ["purpose", "location", "vlan", "room", "bandwidth_ns", "bandwidth_ew", "capacity", "ports", "notes"]
-ETHERNET_WIDTHS = [30, 30, 28, 14, 18, 18, 12, 12, 58]
-PARTNER_FIELDS = ["partner", "pavilion", "stand", "solution", "bandwidth_mbps", "default_cables", "total_ports",
+ETHERNET_FIELDS = ["ref_id", "purpose", "location", "vlan", "room", "bandwidth_ns", "bandwidth_ew", "capacity", "ports",
+                   "notes"]
+ETHERNET_WIDTHS = [6, 30, 30, 28, 14, 18, 18, 12, 12, 58]
+PARTNER_FIELDS = ["ref_id", "partner", "pavilion", "stand", "solution", "bandwidth_mbps", "default_cables", "total_ports",
                   "wifi", "vlans", "notes", "purchased"]
-PARTNER_WIDTHS = [40, 8, 14, 42, 18, 14, 18, 8, 8, 40, 12]
+PARTNER_WIDTHS = [6, 40, 8, 14, 42, 18, 14, 18, 8, 8, 40, 12]
+
+
+def _col(fields: list[str], field: str) -> int:
+    """1-based spreadsheet column of a field."""
+    return fields.index(field) + 1
 SKIPPED_ACTIONS = ("reveal", "legacy", "publish", "request", "review")  # not changes to the requirements
 
 
@@ -65,32 +71,7 @@ def snapshot(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
                   for kind in ("building", "location", "bandwidth", "vlan")},
         "records": records,
         "totals": service.totals(conn, doc),
-        "dependencies": _dependency_snapshot(conn, doc),
     }
-
-
-def _dependency_snapshot(conn: sqlite3.Connection, doc: int) -> list[dict[str, Any]]:
-    from . import dependencies
-
-    names = {r["id"]: r["data"].get("ssid") or r["data"].get("purpose") or f"#{r['id']}"
-             for r in store.records(conn, doc) if r["type"] in ("wifi", "ethernet")}
-    return [dep["data"] | {"id": dep["id"], "linked": [names[i] for i in dep["data"].get("records", []) if i in names],
-                           "last_reviewed_at": dep["last_reviewed_at"]}
-            for dep in dependencies.list_for(conn, doc)]
-
-
-DEPENDENCY_COLUMNS = [("Area / space", 22), ("What depends on the network", 30), ("Team or process", 20),
-                      ("Criticality", 10), ("Accountable", 18), ("Responsible (ICT)", 14), ("Consulted", 16),
-                      ("Informed", 16), ("Needed during", 14), ("VLANs", 22), ("Network items", 28),
-                      ("If it fails", 40), ("On-site contact", 18)]
-
-
-def _dependency_row(d: dict[str, Any]) -> list[Any]:
-    teams = {"network": "Network team", "it_support": "IT Support"}
-    return [d["area"], d["service"], d.get("team"), d.get("criticality"), d.get("accountable"),
-            teams.get(d.get("responsible"), d.get("responsible")), d.get("consulted"), d.get("informed"),
-            ", ".join(d.get("phase", [])), ", ".join(d.get("vlans", [])), ", ".join(d.get("linked", [])),
-            d.get("runbook"), d.get("contact")]
 
 
 def _rows(snap: dict, record_type: str, venue: str | None = None, group: str | None = None) -> list[dict]:
@@ -160,9 +141,11 @@ def build_workbook(snap: dict, log: dict, *, version: int) -> bytes:
             for data in items:
                 _body(ws, row, [_display(f, data.get(f)) for f in WIFI_FIELDS])
                 row += 1
-        _dropdown(ws, vlan_source, 6, 2, row - 1)
+        _dropdown(ws, vlan_source, _col(WIFI_FIELDS, "vlan"), 2, row - 1)
 
         ws = wb.create_sheet(f"{venue} Ethernet Req"[:31])
+        points_col = _col(ETHERNET_FIELDS, "ports")
+        letter = get_column_letter(points_col)
         _header(ws, [LABELS["ethernet"][f] for f in ETHERNET_FIELDS], ETHERNET_WIDTHS)
         row, totals = 2, []
         for section in snap["groups"]["ethernet"]:
@@ -173,26 +156,20 @@ def build_workbook(snap: dict, log: dict, *, version: int) -> bytes:
             for data in items:
                 _body(ws, row, [_display(f, data.get(f)) for f in ETHERNET_FIELDS])
                 row += 1
-            points = ws.cell(header_row, 8)
-            points.value = f"=SUM(H{header_row + 1}:H{row - 1})" if items else '=N("section total")'
+            points = ws.cell(header_row, points_col)
+            points.value = f"=SUM({letter}{header_row + 1}:{letter}{row - 1})" if items else '=N("section total")'
             points.alignment = Alignment(horizontal="center")
-            totals.append(f"H{header_row}")
+            totals.append(f"{letter}{header_row}")
         _band(ws, row, "Total", GREY, len(ETHERNET_FIELDS))
-        ws.cell(row, 8, f"=SUM({','.join(totals)})" if totals else 0).alignment = Alignment(horizontal="center")
-        _dropdown(ws, vlan_source, 3, 2, row - 1)
-        _dropdown(ws, location_source, 2, 2, row - 1)
+        ws.cell(row, points_col, f"=SUM({','.join(totals)})" if totals else 0).alignment = Alignment(horizontal="center")
+        _dropdown(ws, vlan_source, _col(ETHERNET_FIELDS, "vlan"), 2, row - 1)
+        _dropdown(ws, location_source, _col(ETHERNET_FIELDS, "location"), 2, row - 1)
 
     ws = wb.create_sheet("Partners Custom Orders")
     _header(ws, [LABELS["partner"][f] for f in PARTNER_FIELDS], PARTNER_WIDTHS)
     for i, data in enumerate(_rows(snap, "partner"), start=2):
         _body(ws, i, [_display(f, data.get(f)) for f in PARTNER_FIELDS])
-    _dropdown(ws, '"Yes,No,TBC"', 11, 2, max(2, len(_rows(snap, "partner")) + 20))
-
-    if snap.get("dependencies"):
-        ws = wb.create_sheet("Network dependencies")
-        _header(ws, [c for c, _ in DEPENDENCY_COLUMNS], [w for _, w in DEPENDENCY_COLUMNS])
-        for i, dep in enumerate(snap["dependencies"], start=2):
-            _body(ws, i, _dependency_row(dep))
+    _dropdown(ws, '"Yes,No,TBC"', _col(PARTNER_FIELDS, "purchased"), 2, max(2, len(_rows(snap, "partner")) + 20))
 
     ws = wb.create_sheet("Changes - Log")
     _header(ws, ["Change", "Type", "Item", "Where", "Details"], [12, 22, 34, 34, 80])
@@ -300,6 +277,7 @@ def build_report(snap: dict, log: dict, *, title: str, version: int, user: str, 
         <p class="meta">Published by {_e(user)} on {_e(when)}</p>
         <table class="summary">{summary}<tr><th>All venues</th><td colspan="3">{count('partner')} partner orders</td></tr></table></div>"""]
 
+    before_points = ETHERNET_FIELDS.index("ports")
     for venue in snap["venues"]:
         rows = []
         for group in snap["groups"]["wifi"]:
@@ -315,12 +293,12 @@ def build_report(snap: dict, log: dict, *, title: str, version: int, user: str, 
         rows = []
         for section in totals[venue]["sections"]:
             items = _rows(snap, "ethernet", venue, section["section"])
-            rows.append(f'<tr class="section"><td colspan="7">{_e(section["section"])}</td>'
+            rows.append(f'<tr class="section"><td colspan="{before_points}">{_e(section["section"])}</td>'
                         f'<td class="num">{_e(section["ports"])}</td><td></td></tr>')
             rows += ["<tr>" + "".join(
                 f'<td class="num">{_e(d.get(f))}</td>' if f == "ports" else f"<td>{_e(d.get(f))}</td>"
                 for f in ETHERNET_FIELDS) + "</tr>" for d in items]
-        rows.append(f'<tr class="total"><td colspan="7">Total</td><td class="num">{_e(totals[venue]["total"])}</td><td></td></tr>')
+        rows.append(f'<tr class="total"><td colspan="{before_points}">Total</td><td class="num">{_e(totals[venue]["total"])}</td><td></td></tr>')
         parts.append(f"<section><h2>{_e(venue)} · Ethernet requirements</h2>"
                      + _table([LABELS["ethernet"][f] for f in ETHERNET_FIELDS], ETHERNET_WIDTHS, "".join(rows))
                      + "</section>")
@@ -334,16 +312,6 @@ def build_report(snap: dict, log: dict, *, title: str, version: int, user: str, 
     ) or f'<tr><td colspan="{len(PARTNER_FIELDS)}" class="muted">No partner orders</td></tr>'
     parts.append("<section><h2>Partner custom orders</h2>"
                  + _table([LABELS["partner"][f] for f in PARTNER_FIELDS], PARTNER_WIDTHS, partner_rows) + "</section>")
-
-    if snap.get("dependencies"):
-        dep_rows = "".join(
-            "<tr>" + "".join(f"<td>{_e(v)}</td>" for v in _dependency_row(d)) + "</tr>"
-            for d in sorted(snap["dependencies"], key=lambda d: (d.get("criticality", "P3"), d["area"].lower())))
-        parts.append("<section><h2>Network dependencies</h2>"
-                     '<p class="muted">Who and what relies on the network in each area, the accountable owner, '
-                     "and what to do if it fails.</p>"
-                     + _table([c for c, _ in DEPENDENCY_COLUMNS], [w for _, w in DEPENDENCY_COLUMNS], dep_rows)
-                     + "</section>")
 
     parts.append(f"<section><h2>Changes in this version</h2>{_changes_html(log)}</section>")
 

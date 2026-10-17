@@ -399,7 +399,21 @@ Internal teams (AV, Photographers & Videographers, Engineering, CCTV) request co
 4. **Live operations:** the help desk KPIs per event: acknowledged within 5 minutes (goal 90%), closure quality (goal 90%), time to resolve, partner-impacting tickets, and recurrence.
 5. **Change and publishing:** versions and published versions, first and last publish dates, the changelog from the first to the last published version (including the Ethernet point change), and unpublished changes.
 
-Figures show their goal as text ("on target" or "goal 90%"), never by colour alone. API: `GET /api/reports[?events=1,2]` and `GET /api/reports/export[?events=…]`. Code: `backend/app/reports.py` and `frontend/src/reports/`.
+**Presentation** follows the UK Government Analysis Function guidance on [charts](https://analysisfunction.civilservice.gov.uk/policy-store/data-visualisation-charts/) and [dashboards](https://analysisfunction.civilservice.gov.uk/policy-store/data-visualisation-building-and-managing-dashboards/), and the W3C guidance on [complex images](https://www.w3.org/WAI/tutorials/images/complex/):
+- **At a glance** comes first: the most recent selected event, compared with the one before it.
+- **Before you compare** lists data gaps that affect the figures, for example items with 0 points, no request deadline, or an empty register.
+- **Charts:**
+  - statement titles ("QATAR27 plans the most Ethernet points (200)") with a subtitle saying what the data is;
+  - bars ranked by value and starting at zero, with the goal marked on percentage charts;
+  - a written takeaway below each chart, which points to the data table, so the chart itself is decorative to screen readers.
+- **Goals** are shown as text ("meets goal" or "goal 90%"), never by colour alone.
+- **Formatting:** numbers have thousands separators; events are shown oldest first, so "event over event" reads left to right.
+- **Metadata:** the generated time, a source line for every section, and **Sources and definitions** explaining how each measure is calculated.
+- **Downloads:** Excel (with an "About" sheet holding the sources, definitions and data notes) and CSV.
+- **Sharing:** the selected events are kept in the URL, so a view can be bookmarked or shared.
+- **Print** gives a clean report without navigation or controls, with the details expanded.
+
+API: `GET /api/reports[?events=1,2]` and `GET /api/reports/export[?events=…][&format=xlsx|csv]`. Code: `backend/app/reports.py` and `frontend/src/reports/`.
 
 ## UI and accessibility
 

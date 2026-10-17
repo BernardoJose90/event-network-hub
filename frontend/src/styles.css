@@ -2707,19 +2707,60 @@ dialog.dialog.wide {
   font-weight: 700;
 }
 
+.report-meta {
+  margin: -4px 24px 8px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.report-actions {
+  margin-left: auto;
+}
+
+.headline-tiles .tile-value {
+  font-size: 1.6rem;
+}
+
+.headline-tiles .goal-ok,
+.headline-tiles .goal-miss {
+  font-size: 1.4rem;
+}
+
+.data-notes {
+  border-left: 5px solid #c98a00;
+}
+
+.report-figure {
+  margin: 12px 0 16px;
+  max-width: 760px;
+}
+
+.figure-title {
+  margin: 0;
+  font-size: 1.05rem;
+  color: var(--navy);
+}
+
+.figure-subtitle {
+  margin: 2px 0 8px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.figure-desc {
+  margin: 6px 0 0;
+  font-size: 0.85rem;
+}
+
 .bars {
-  list-style: none;
-  margin: 8px 0 12px;
-  padding: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-width: 720px;
 }
 
-.bars li {
+.bar-row {
   display: grid;
-  grid-template-columns: minmax(80px, 200px) 1fr 56px;
+  grid-template-columns: minmax(80px, 180px) 1fr 72px;
   align-items: center;
   gap: 8px;
   font-size: 0.88rem;
@@ -2732,23 +2773,58 @@ dialog.dialog.wide {
 }
 
 .bar-track {
-  height: 12px;
-  border-radius: 6px;
+  position: relative;
+  height: 14px;
+  border-radius: 4px;
   background: #ececee;
-  overflow: hidden;
 }
 
 .bar-fill {
   display: block;
   height: 100%;
-  border-radius: 6px;
+  border-radius: 4px;
   background: var(--teal);
+}
+
+.bar-goal {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--navy);
+}
+
+.bar-goal-key {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
 }
 
 .bar-value {
   text-align: right;
   font-variant-numeric: tabular-nums;
   font-weight: 600;
+}
+
+.report-source {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.definitions {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.definitions dt {
+  font-weight: 700;
+}
+
+.definitions dd {
+  margin: 0;
 }
 
 .report-more {
@@ -2765,4 +2841,31 @@ dialog.dialog.wide {
   cursor: pointer;
   font-weight: 600;
   color: var(--teal-text);
+}
+
+/* Printing a report: content only, no navigation or controls. */
+@media print {
+  .topbar,
+  .skip-link,
+  .event-picker,
+  .report-actions,
+  .hd-notice,
+  .report-section button {
+    display: none !important;
+  }
+
+  body,
+  .reports-page {
+    background: #fff;
+  }
+
+  .report-section {
+    break-inside: avoid;
+    box-shadow: none;
+    border-color: #999;
+  }
+
+  .report-table td {
+    white-space: normal;
+  }
 }

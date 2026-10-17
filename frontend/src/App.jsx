@@ -4,6 +4,7 @@ import {
   createEvent,
   deleteDocument,
   deleteTemplate,
+  getChangelog,
   downloadFile,
   fetchFile,
   listDocuments,
@@ -14,6 +15,7 @@ import {
 } from './api.js'
 import { loadIdentity, saveIdentity } from './identity.js'
 import TopBar from './ui/TopBar.jsx'
+import Changelog from './ui/Changelog.jsx'
 import { useDialog } from './ui/Dialog.jsx'
 
 function formatTime(iso) {
@@ -384,6 +386,33 @@ function DocumentHeader({ document, identity, onDeleted, onChanged }) {
 function VersionTable({ documentId, versions, identity, readOnly, onView, onEdit }) {
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
+  const dialog = useDialog()
+  const published = versions.filter((v) => v.source === 'publish' && v.status === 'ready').map((v) => v.version)
+    .sort((a, b) => a - b)
+
+  async function showChanges(params, title) {
+    setError(null)
+    try {
+      const log = await getChangelog(documentId, params, identity)
+      await dialog.confirm({ title, wide: true, cancelLabel: null, confirmLabel: 'Close',
+        body: <div className="dialog-changelog" tabIndex={0} role="region" aria-label="Changes"><Changelog log={log} /></div> })
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  async function compare() {
+    const options = published.map((n) => ({ value: String(n), label: `V${n}` }))
+    const values = await dialog.form({
+      title: 'Compare versions', confirmLabel: 'Compare',
+      fields: [
+        { name: 'from', label: 'From', type: 'select', required: true, options, initial: String(published[0]) },
+        { name: 'to', label: 'To', type: 'select', required: true, options, initial: String(published[published.length - 1]),
+          validate: (v, all) => (Number(v) > Number(all.from) ? null : 'Choose a later version than "From"') },
+      ],
+    })
+    if (values) await showChanges({ from: values.from, to: values.to }, `Changes from V${values.from} to V${values.to}`)
+  }
 
   async function download(version, format) {
     setError(null)
@@ -405,6 +434,9 @@ function VersionTable({ documentId, versions, identity, readOnly, onView, onEdit
     <section className="panel">
       <div className="row space-between">
         <h3>Versions</h3>
+        {published.length >= 2 && (
+          <button type="button" className="secondary" onClick={compare}>Compare versions…</button>
+        )}
         <div className="row">
           <span className="muted small">Latest version:</span>
           <button onClick={() => onView(null)} disabled={!hasReady || busy}>
@@ -459,6 +491,12 @@ function VersionTable({ documentId, versions, identity, readOnly, onView, onEdit
                   </td>
                   <td>
                     <div className="row nowrap">
+                      {v.source === 'publish' && v.status === 'ready' && (
+                        <button className="secondary" onClick={() => showChanges({ to: v.version }, `What changed in V${v.version}`)}
+                          aria-label={`What changed in V${v.version}`}>
+                          What changed
+                        </button>
+                      )}
                       <button
                         className="secondary"
                         onClick={() => onView(v.version)}

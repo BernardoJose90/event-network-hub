@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useId, useState } from 'react'
+import Changelog from '../ui/Changelog.jsx'
 import { useDialog } from '../ui/Dialog.jsx'
 import { TITLES } from './columns.js'
 
 // --- Overview ----------------------------------------------------------------
 
 export function Overview({ overview, api, isAdmin, notify, onChanged, onPublish, goTo }) {
-  const [changes, setChanges] = useState([])
+  const [draft, setDraft] = useState(null)
   const [busy, setBusy] = useState(false)
   const dialog = useDialog()
 
   useEffect(() => {
     if (!overview.has_records) return
-    api.changes().then(setChanges).catch((err) => notify(err.message, 'error'))
+    api.changelog({ to: 'draft' }).then(setDraft).catch((err) => notify(err.message, 'error'))
   }, [api, overview, notify])
 
   async function importLatest(replace) {
@@ -154,24 +155,18 @@ export function Overview({ overview, api, isAdmin, notify, onChanged, onPublish,
       <div className="panel">
         <div className="row space-between">
           <h3>
-            {changes.length} change{changes.length === 1 ? '' : 's'} not yet published
+            Not yet published
             {overview.latest_version ? <span className="muted"> · latest version V{overview.latest_version}</span> : null}
           </h3>
           {isAdmin && (
-            <button onClick={onPublish} disabled={!changes.length}>
+            <button onClick={onPublish} disabled={!overview.unpublished_changes}>
               Publish V{(overview.latest_version || 0) + 1}
             </button>
           )}
         </div>
-        {changes.length > 0 ? (
-          <ul className="ov-changes">
-            {changes.slice(-50).reverse().map((c) => (
-              <li key={c.id}><span className="muted">{c.at.replace('T', ' ').slice(0, 16)} · {c.user}</span> {c.summary}</li>
-            ))}
-          </ul>
-        ) : (
-          <p className="muted small">Everything is published.</p>
-        )}
+        {overview.unpublished_changes > 0
+          ? (draft ? <Changelog log={draft} compact limit={50} headingLevel={4} /> : <span className="skeleton" />)
+          : <p className="muted small">Everything is published.</p>}
       </div>
       )}
 

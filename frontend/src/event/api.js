@@ -61,7 +61,8 @@ export function eventApi(documentId, identity) {
       return call('GET', `${base}/history?${q}`, identity)
     },
     changes: () => call('GET', `${base}/changes`, identity),
-    publish: () => call('POST', `${base}/publish`, identity),
+    changelog: (params = {}) => call('GET', `${base}/changelog?${new URLSearchParams(params)}`, identity),
+    publish: (note) => call('POST', `${base}/publish`, identity, { note: note || null }),
     dependencies: () => call('GET', `${base}/dependencies`, identity),
     createDependency: (data) => call('POST', `${base}/dependencies`, identity, { data }),
     updateDependency: (id, revision, data) => call('PUT', `${base}/dependencies/${id}`, identity, { revision, data }),

@@ -58,6 +58,12 @@ export async function uploadDocument(file, identity) {
   )
 }
 
+// Item-level changelog of a published version (against the previous one, or `from`).
+export async function getChangelog(documentId, params, identity) {
+  return json(await fetch(`/api/events/${documentId}/changelog?${new URLSearchParams(params)}`,
+    { headers: identityHeaders(identity) }))
+}
+
 // Event templates, for "Start from" when creating a new event.
 export async function listTemplates(identity) {
   return json(await fetch('/api/templates', { headers: identityHeaders(identity) }))

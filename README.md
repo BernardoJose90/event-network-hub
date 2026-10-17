@@ -144,6 +144,21 @@ For an existing workbook, use **Legacy: upload a workbook** in the sidebar, then
 
 The importer also reads Partners Custom Orders, the Setup or settings lists, and the old Changes - Log. An "Extending Vlans" sheet is skipped with a note, because VLAN extensions are no longer tracked. Anything it can't place is reported as an import note: unrecognised sheets, columns with no matching field, and non-numeric points such as "TBC".
 
+**Changelog per version.** Each published version has an item-level changelog, built by comparing its snapshot with the previous published version's:
+- **Added**, **Removed** and **Changed** items, grouped by Wi-Fi networks, Ethernet requirements, partner orders and network dependencies, with old → new values per field. A move between sections shows as "Moved".
+- **Ethernet point totals** per venue, before and after.
+- An optional **note** written when publishing, shown at the top.
+- It shows the **net result**: five edits to one item become one line, and a change that was undone doesn't appear. Wi-Fi password values never appear, only "password changed".
+
+Where to see it:
+- **What changed** on each published version (Events page).
+- **Compare versions…** for any two published versions, for example V3 → V6.
+- The publish dialog, before you publish.
+- Overview → "Not yet published".
+- Inside the published PDF ("Changes in this version") and Excel (the "Changes - Log" sheet).
+
+Uploaded or Excel-edited versions have no item list, so they can't be compared. API: `GET /api/events/{id}/changelog?to=<version|draft>[&from=<version>]`.
+
 **Publishing** creates the next version:
 - an **Excel file in the familiar workbook layout**, with real `SUM` totals and dropdowns, which re-imports to the same records;
 - a **PDF report** rendered by Gotenberg's Chromium route: A4 landscape, a cover page, section subtotals, and the changes since the previous version.
@@ -168,7 +183,8 @@ Code: `backend/app/records/` (models, store, service, importer, publish, routes)
 | GET/POST/PUT/DELETE | `/api/events/{id}/dependencies[/{dep}]`, `POST …/{dep}/review` | dependency register |
 | GET/PUT/POST | `/api/events/{id}/ict-requests`, `…/settings`, `…/links`, `…/{rid}/approve`, `…/needs-info`, `…/decline` | ICT request review |
 | GET/POST/PUT | `/api/request-links/{token}`, `…/requests[/{rid}]` | public request form (the link is the credential) |
-| POST | `/api/events/{id}/publish` | next version (Excel + PDF report) |
+| POST | `/api/events/{id}/publish` | `{note?}`; next version (Excel + PDF report) |
+| GET | `/api/events/{id}/changelog?to=<version|draft>&from=<version>` | item-level changelog |
 
 ## Editing in the browser
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { loadIdentity } from '../identity.js'
 import { useDialog } from '../ui/Dialog.jsx'
+import Changelog from '../ui/Changelog.jsx'
 import { StatusMessages } from '../ui/Notice.jsx'
 import { eventApi } from './api.js'
 import { TITLES } from './columns.js'
@@ -85,35 +86,30 @@ export default function EventPage({ documentId }) {
   }
 
   async function publish() {
-    let changes = []
+    let draft
     try {
-      changes = await api.changes()
+      draft = await api.changelog({ to: 'draft' })
     } catch (err) {
       notify(err.message, 'error')
       return
     }
     const next = (overview.latest_version || 0) + 1
-    const shown = changes.slice(-8).reverse()
-    const ok = await dialog.confirm({
-      title: `Publish V${next}?`,
+    const values = await dialog.form({
+      title: `Publish V${next}?`, wide: true,
       body: (
         <>
-          <p>
-            {changes.length} change{changes.length === 1 ? '' : 's'} since the previous version. Everyone will see V{next} as
-            the latest version, as a PDF report and an Excel workbook.
-          </p>
-          <ul className="dialog-list">
-            {shown.map((c) => <li key={c.id}>{c.summary}</li>)}
-          </ul>
-          {changes.length > shown.length && <p className="muted small">…and {changes.length - shown.length} more</p>}
+          <p>Everyone will see V{next} as the latest version, as a PDF report and an Excel workbook, with this changelog:</p>
+          <div className="dialog-changelog" tabIndex={0} role="region" aria-label="Changes to publish"><Changelog log={draft} compact limit={40} /></div>
         </>
       ),
+      fields: [{ name: 'note', label: 'Note for this version', type: 'textarea', maxLength: 1000,
+        hint: 'Shown at the top of the changelog, e.g. "Added AV requests, moved registration"' }],
       confirmLabel: `Publish V${next}`,
     })
-    if (!ok) return
+    if (!values) return
     setPublishing(true)
     try {
-      const result = await api.publish()
+      const result = await api.publish(values.note)
       notify(`${result.message} It's now the latest version on the Events page.`, 'ok')
       refresh()
     } catch (err) {

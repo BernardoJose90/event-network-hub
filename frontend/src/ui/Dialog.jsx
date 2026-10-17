@@ -14,6 +14,7 @@ import { createContext, useCallback, useContext, useEffect, useId, useMemo, useR
 //   if (await dialog.confirm({ title: 'Delete event?', body: '…', confirmLabel: 'Delete', danger: true })) …
 //   const name = await dialog.prompt({ title: 'Template name', label: 'Name', initial: 'LIS' })  // null if cancelled
 //     validate: (value) => error message or null, shown inline under the field
+//   cancelLabel: null shows only the main button (information dialogs)
 //   const values = await dialog.form({ title, fields: [{ name, label, type, options, required, hint, list,
 //     initial, maxLength, validate, full }] })  // { name: value } or null
 //     type: text | textarea | select | tel | date | number | checkboxes (value is an array)
@@ -211,9 +212,11 @@ function DialogView({ request, onClose }) {
           </div>
         )}
         <div className="dialog-actions">
-          <button type="button" ref={cancelRef} className="secondary" onClick={() => onClose(cancelValue)}>
-            {cancelLabel}
-          </button>
+          {cancelLabel !== null && (
+            <button type="button" ref={cancelRef} className="secondary" onClick={() => onClose(cancelValue)}>
+              {cancelLabel}
+            </button>
+          )}
           <button type="submit" ref={confirmRef} className={danger ? 'danger-solid' : undefined}>{confirmLabel}</button>
         </div>
       </form>

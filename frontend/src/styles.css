@@ -2600,3 +2600,68 @@ dialog.dialog.wide {
 .affected-list li {
   margin: 8px 0;
 }
+
+/* --- Changelog ------------------------------------------------------------------------ */
+
+.changelog .cl-heading {
+  margin: 12px 0 4px;
+  font-size: 0.95rem;
+  color: var(--navy);
+}
+
+.changelog-note {
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--teal-soft);
+}
+
+.changelog-counts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.changelog-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.changelog-list > li {
+  padding: 4px 0 4px 10px;
+  border-left: 4px solid var(--border);
+  margin-bottom: 4px;
+}
+
+.changelog-list > li.cl-added { border-left-color: var(--ok); }
+.changelog-list > li.cl-removed { border-left-color: #b00d33; }
+.changelog-list > li.cl-changed { border-left-color: var(--navy); }
+
+.cl-kind {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.cl-fields {
+  margin: 2px 0 0;
+  padding-left: 18px;
+  font-size: 0.88rem;
+}
+
+.cl-fields del {
+  color: var(--muted);
+}
+
+.cl-fields ins {
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.dialog-changelog {
+  max-height: 55vh;
+  overflow: auto;
+  padding-right: 4px;
+}

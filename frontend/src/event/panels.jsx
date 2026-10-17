@@ -266,6 +266,8 @@ export function ListsPanel({ api, overview, isAdmin, notify, onChanged }) {
         items={overview.venues.map((v) => named(v, api.renameVenue, api.deleteVenue))} />
       <ListBox title="Ethernet sections" isAdmin={isAdmin} onAdd={(v) => run(() => api.addGroup('ethernet', v))}
         items={overview.groups.filter((g) => g.kind === 'ethernet').map((g) => named(g, api.renameGroup, api.deleteGroup))} />
+      <ListBox title="Wi-Fi sections" isAdmin={isAdmin} onAdd={(v) => run(() => api.addGroup('wifi', v))}
+        items={overview.groups.filter((g) => g.kind === 'wifi').map((g) => named(g, api.renameGroup, api.deleteGroup))} />
       {lists.map(([kind, title]) => (
         <ListBox key={kind} title={title} isAdmin={isAdmin} onAdd={(v) => run(() => api.addListValue(kind, v))}
           help={kind === 'vlan' ? 'Renaming a VLAN updates every record that uses it.' : undefined}

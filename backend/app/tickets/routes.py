@@ -181,6 +181,21 @@ def get_ticket(ticket_id: int, conn: Conn, principal: Reader) -> dict[str, Any]:
     }
 
 
+@router.get("/{ticket_id}/dependencies")
+def ticket_dependencies(ticket_id: int, conn: Conn, principal: Reader) -> dict[str, Any]:
+    """What depends on the network where this ticket is (from the event's dependency register),
+    with the severity the most critical match suggests."""
+    from ..records import dependencies
+
+    ticket = _run(lambda: service._get(conn, ticket_id))
+    if ticket["event_id"] is None:
+        return {"entries": [], "suggested_severity": None}
+    entries = [dependencies.view(d) for d in
+               dependencies.for_area(conn, ticket["event_id"], ticket["location"], ticket["stand"])]
+    suggested = min((d["data"]["criticality"] for d in entries), default=None)
+    return {"entries": entries, "suggested_severity": suggested}
+
+
 @router.patch("/{ticket_id}")
 def update_ticket(ticket_id: int, body: TicketPatch, conn: Conn, principal: Agent) -> dict[str, Any]:
     changes = body.changes.model_dump(exclude_unset=True)

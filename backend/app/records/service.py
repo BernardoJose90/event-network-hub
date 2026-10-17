@@ -294,6 +294,10 @@ def rename_list_value(conn: sqlite3.Connection, doc: int, item_id: int, value: s
             data = dict(record["data"]) | {field: value}
             store.update_record(conn, record_id=record["id"], expected_revision=record["revision"], user=user,
                                 data=data)
+        if item["kind"] == "vlan":
+            from . import dependencies
+
+            dependencies.rename_vlan(conn, doc, item["value"], value)
         store.log(conn, doc=doc, entity="list", action="list", user=user, old=item["value"], new=value,
                   summary=f"Renamed '{item['value']}' to '{value}' in the {item['kind']} list and its records")
 
@@ -303,6 +307,13 @@ def delete_list_value(conn: sqlite3.Connection, doc: int, item_id: int, *, user:
     used = _list_usage(conn, doc, item["kind"], item["value"])
     if used:
         raise RecordError(409, f"'{item['value']}' is used by {len(used)} record(s). Change them first.")
+    if item["kind"] == "vlan":
+        from . import dependencies
+
+        deps = dependencies.using_vlan(conn, doc, item["value"])
+        if deps:
+            raise RecordError(409, f"'{item['value']}' is used by {len(deps)} dependency register entr"
+                                   f"{'y' if len(deps) == 1 else 'ies'}. Change them first.")
     with conn:
         conn.execute("DELETE FROM event_lists WHERE id = ?", (item_id,))
         store.log(conn, doc=doc, entity="list", action="list", user=user, old=item["value"],
@@ -480,15 +491,20 @@ def _copy_event(conn: sqlite3.Connection, source: int, target: int, *, user: str
         store.insert_list_value(conn, target, item["kind"], item["value"], flagged=item["flagged"])
     group_names = {g["id"]: g["name"] for g in store.groups(conn, source)}
     copied = 0
+    record_ids: dict[int, int] = {}
     for r in store.records(conn, source):
         if as_template and is_partner_section(group_names.get(r["group_id"])):
             continue  # partner networks and stands differ per event
         data = _template_data(r) if as_template else dict(r["data"])
         if data is None:
             continue
-        store.insert_record(conn, doc=target, record_type=r["type"], venue_id=venue_ids.get(r["venue_id"]),
-                            group_id=group_ids.get(r["group_id"]), sort=r["sort"], data=data, user=user)
+        record_ids[r["id"]] = store.insert_record(
+            conn, doc=target, record_type=r["type"], venue_id=venue_ids.get(r["venue_id"]),
+            group_id=group_ids.get(r["group_id"]), sort=r["sort"], data=data, user=user)
         copied += 1
+    from . import dependencies
+
+    dependencies.copy(conn, source, target, record_ids, user=user)
     return copied
 
 

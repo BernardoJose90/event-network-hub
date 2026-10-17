@@ -272,6 +272,8 @@ def import_workbook(data: bytes) -> ImportResult:
             _ethernet(ws, venue_of(m), result, palette)
         elif "partner" in title.lower() and "order" in title.lower():
             _partners(ws, result)
+        elif "dependenc" in title.lower():
+            result.warnings.append(f"Sheet '{ws.title}' skipped: the dependency register is kept in the app")
         elif "vlan" in title.lower() and "extend" in title.lower():
             result.warnings.append(f"Sheet '{ws.title}' skipped: VLAN extensions are no longer tracked")
         elif "setup" in title.lower() or "setting" in title.lower():

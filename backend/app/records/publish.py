@@ -65,7 +65,32 @@ def snapshot(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
                   for kind in ("building", "location", "bandwidth", "vlan")},
         "records": records,
         "totals": service.totals(conn, doc),
+        "dependencies": _dependency_snapshot(conn, doc),
     }
+
+
+def _dependency_snapshot(conn: sqlite3.Connection, doc: int) -> list[dict[str, Any]]:
+    from . import dependencies
+
+    names = {r["id"]: r["data"].get("ssid") or r["data"].get("purpose") or f"#{r['id']}"
+             for r in store.records(conn, doc) if r["type"] in ("wifi", "ethernet")}
+    return [dep["data"] | {"linked": [names[i] for i in dep["data"].get("records", []) if i in names],
+                           "last_reviewed_at": dep["last_reviewed_at"]}
+            for dep in dependencies.list_for(conn, doc)]
+
+
+DEPENDENCY_COLUMNS = [("Area / space", 22), ("What depends on the network", 30), ("Team or process", 20),
+                      ("Criticality", 10), ("Accountable", 18), ("Responsible (ICT)", 14), ("Consulted", 16),
+                      ("Informed", 16), ("Needed during", 14), ("VLANs", 22), ("Network items", 28),
+                      ("If it fails", 40), ("On-site contact", 18)]
+
+
+def _dependency_row(d: dict[str, Any]) -> list[Any]:
+    teams = {"network": "Network team", "it_support": "IT Support"}
+    return [d["area"], d["service"], d.get("team"), d.get("criticality"), d.get("accountable"),
+            teams.get(d.get("responsible"), d.get("responsible")), d.get("consulted"), d.get("informed"),
+            ", ".join(d.get("phase", [])), ", ".join(d.get("vlans", [])), ", ".join(d.get("linked", [])),
+            d.get("runbook"), d.get("contact")]
 
 
 def _rows(snap: dict, record_type: str, venue: str | None = None, group: str | None = None) -> list[dict]:
@@ -162,6 +187,12 @@ def build_workbook(snap: dict, changes: list[dict], *, version: int) -> bytes:
     for i, data in enumerate(_rows(snap, "partner"), start=2):
         _body(ws, i, [_display(f, data.get(f)) for f in PARTNER_FIELDS])
     _dropdown(ws, '"Yes,No,TBC"', 11, 2, max(2, len(_rows(snap, "partner")) + 20))
+
+    if snap.get("dependencies"):
+        ws = wb.create_sheet("Network dependencies")
+        _header(ws, [c for c, _ in DEPENDENCY_COLUMNS], [w for _, w in DEPENDENCY_COLUMNS])
+        for i, dep in enumerate(snap["dependencies"], start=2):
+            _body(ws, i, _dependency_row(dep))
 
     ws = wb.create_sheet("Changes - Log")
     _header(ws, ["When", "Who", "Change"], [20, 18, 100])
@@ -271,6 +302,16 @@ def build_report(snap: dict, changes: list[dict], *, title: str, version: int, u
     ) or f'<tr><td colspan="{len(PARTNER_FIELDS)}" class="muted">No partner orders</td></tr>'
     parts.append("<section><h2>Partner custom orders</h2>"
                  + _table([LABELS["partner"][f] for f in PARTNER_FIELDS], PARTNER_WIDTHS, partner_rows) + "</section>")
+
+    if snap.get("dependencies"):
+        dep_rows = "".join(
+            "<tr>" + "".join(f"<td>{_e(v)}</td>" for v in _dependency_row(d)) + "</tr>"
+            for d in sorted(snap["dependencies"], key=lambda d: (d.get("criticality", "P3"), d["area"].lower())))
+        parts.append("<section><h2>Network dependencies</h2>"
+                     '<p class="muted">Who and what relies on the network in each area, the accountable owner, '
+                     "and what to do if it fails.</p>"
+                     + _table([c for c, _ in DEPENDENCY_COLUMNS], [w for _, w in DEPENDENCY_COLUMNS], dep_rows)
+                     + "</section>")
 
     change_items = "".join(
         f"<li>{_e(c['at'].replace('T', ' ')[:16])} · {_e(c['user'])} · {_e(c['summary'])}</li>" for c in changes[:300]

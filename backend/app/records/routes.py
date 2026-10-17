@@ -20,7 +20,7 @@ from ..validation import UploadRejected
 from ..auth import Principal, current_principal, require_admin, require_known_role
 from ..service import ORIGINAL
 from ..storage import ObjectNotFound, version_key
-from . import service, store
+from . import dependencies, service, store
 from .importer import import_workbook
 from .models import ListValue, NamedItem, NewRecord, RecordMove, RecordPatch
 from .publish import changes_since_last_publish, publish
@@ -271,6 +271,83 @@ def reveal_password(document_id: int, record_id: int, conn: Conn, principal: Rea
     """Return a Wi-Fi password and log who revealed it."""
     _document(conn, document_id)
     return {"password": _run(lambda: service.reveal_secret(conn, document_id, record_id, user=principal.user))}
+
+
+class RevisionOnly(BaseModel):
+    revision: int = Field(ge=1)
+
+
+# --- dependency register ---------------------------------------------------------------
+
+
+class DependencyBody(BaseModel):
+    data: dict[str, Any]
+
+
+class DependencyPatch(BaseModel):
+    revision: int = Field(ge=1)
+    data: dict[str, Any]
+
+
+def _deps(fn: Callable[[], T]) -> T:
+    try:
+        return fn()
+    except dependencies.DependencyError as exc:
+        raise HTTPException(exc.status, str(exc))
+
+
+def _dependency_views(conn: sqlite3.Connection, document_id: int, deps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Register entries with links to removed network items dropped and the linked items named."""
+    items = {r["id"]: r for r in store.records(conn, document_id) if r["type"] in ("wifi", "ethernet")}
+    out = []
+    for dep in deps:
+        view = dependencies.view(dep)
+        view["data"] = dict(dep["data"]) | {"records": [i for i in dep["data"].get("records", []) if i in items]}
+        view["linked"] = [{"id": i, "type": items[i]["type"],
+                           "name": items[i]["data"].get("ssid") or items[i]["data"].get("purpose") or f"#{i}"}
+                          for i in view["data"]["records"]]
+        out.append(view)
+    return out
+
+
+@router.get("/dependencies")
+def list_dependencies(document_id: int, conn: Conn, principal: Reader) -> dict[str, Any]:
+    _document(conn, document_id)
+    return {"entries": _dependency_views(conn, document_id, dependencies.list_for(conn, document_id)),
+            "team_suggestions": list(dependencies.TEAM_SUGGESTIONS),
+            "review_after_days": dependencies.REVIEW_AFTER_DAYS}
+
+
+@router.post("/dependencies", status_code=status.HTTP_201_CREATED)
+def create_dependency(document_id: int, body: DependencyBody, conn: Conn, principal: Editor) -> dict[str, Any]:
+    _document(conn, document_id)
+    dep = _deps(lambda: dependencies.create(conn, document_id, body.data, user=principal.user))
+    return _dependency_views(conn, document_id, [dep])[0]
+
+
+@router.put("/dependencies/{dep_id}")
+def update_dependency(document_id: int, dep_id: int, body: DependencyPatch, conn: Conn, principal: Editor
+                      ) -> dict[str, Any]:
+    _document(conn, document_id)
+    dep = _deps(lambda: dependencies.update(conn, document_id, dep_id, revision=body.revision, data=body.data,
+                                            user=principal.user))
+    return _dependency_views(conn, document_id, [dep])[0]
+
+
+@router.post("/dependencies/{dep_id}/review")
+def review_dependency(document_id: int, dep_id: int, body: RevisionOnly, conn: Conn, principal: Editor
+                      ) -> dict[str, Any]:
+    _document(conn, document_id)
+    dep = _deps(lambda: dependencies.mark_reviewed(conn, document_id, dep_id, revision=body.revision,
+                                                   user=principal.user))
+    return _dependency_views(conn, document_id, [dep])[0]
+
+
+@router.delete("/dependencies/{dep_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_dependency(document_id: int, dep_id: int, conn: Conn, principal: Editor,
+                      revision: Annotated[int, Query(ge=1)]) -> None:
+    _document(conn, document_id)
+    _deps(lambda: dependencies.delete(conn, document_id, dep_id, revision=revision, user=principal.user))
 
 
 # --- lists, venues, groups -------------------------------------------------------------

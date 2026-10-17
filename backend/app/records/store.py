@@ -81,6 +81,9 @@ CREATE TABLE IF NOT EXISTS published_snapshots (
 
 def init(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
+    from . import dependencies
+
+    dependencies.init(conn)
     columns = {r["name"] for r in conn.execute("PRAGMA table_info(records)")}
     if "archived_at" not in columns:  # databases created before archiving existed
         conn.execute("ALTER TABLE records ADD COLUMN archived_at TEXT")
@@ -207,6 +210,9 @@ def clear_event(conn: sqlite3.Connection, doc: int) -> None:
     """Remove all records, lists, venues and groups (before re-importing). History is kept."""
     for table in ("records", "event_lists", "event_groups", "event_venues"):
         conn.execute(f"DELETE FROM {table} WHERE document_id = ?", (doc,))
+    # The dependency register is kept, but its links to the replaced rows are not.
+    conn.execute("UPDATE event_dependencies SET data = json_set(data, '$.records', json('[]')) WHERE document_id = ?",
+                 (doc,))
 
 
 # --- change log, snapshots -----------------------------------------------------

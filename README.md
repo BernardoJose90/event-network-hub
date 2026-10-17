@@ -213,6 +213,111 @@ Code: `backend/app/sheets/` (model, importer, engine, exporter) and `backend/app
 | PUT  | `/api/documents/{id}/sheet` | `{data, revision}`; 409 if someone else saved first |
 | GET  | `/api/documents/{id}/sheet/download?format=xlsx\|pdf` | generated on demand |
 
+## Help desk (ICT tickets for live events)
+
+`/helpdesk` (the **Help desk** link in the top bar) is the system of record for ICT issues during build, live days and breakdown. It covers Wi-Fi, wired connectivity, network hardware, partner stand connectivity and venue-wide problems. Every issue becomes a ticket with an owner, severity, timestamps and a full audit trail. Tickets are never deleted, and they stay in the history across events, even if the event is deleted later.
+
+- **Dashboard:** live, refreshing every 10 seconds, with a **Big screen** mode.
+  - Counts: open, waiting to be acknowledged, overdue SLA, open P1/P2, partner stands, and per team.
+  - Lists: "Needs acknowledging" (oldest first), "Overdue SLA" and "Recently resolved".
+  - New unacknowledged tickets are announced to screen readers.
+- **Tickets:** a queue with saved views (All open, Needs acknowledging, My tickets, Unassigned, Partner stands, Overdue SLA, Resolved & closed, All).
+  - Search covers the title, area, partner, reporter and `#number`.
+  - Filters: severity, team and category.
+  - Clicking a ticket opens its detail. Admins (the ICT team) can:
+    - **Acknowledge**, **Start work**, mark **Waiting**, **Resolve…**, **Close…** or **Reopen**;
+    - **Assign to me**, **Assign…** (owner and team), **Edit…** or **Merge…** (merging closes the ticket as a duplicate);
+    - add an internal note, or reply to a WhatsApp reporter.
+  - Everyone else sees the same pages read-only.
+- **Raise ticket:** the manual route, for issues reported in person, by radio or by phone. Location and partner suggestions come from the event's Setup lists and partner orders.
+- **Reports:** per event or across all events.
+  - Share of tickets acknowledged within 5 minutes (goal 90%) and the median.
+  - Coverage, after you enter how many issues were handled outside the system (goal 90%).
+  - Share closed with a root cause and a fix (goal 90%).
+  - Partner-impacting issues, with mean time to resolve.
+  - Recurrence: an earlier ticket in the same category and area, in any event.
+  - Resolution against SLA per severity, tickets per category, and the busiest areas.
+  - **Export CSV / Excel**, ready for the post-event report. Text that could run as a spreadsheet formula is neutralised.
+- **Recurring issues:** problems seen more than once in the same category and area, across events, with the root causes and fixes recorded. This is the knowledge base.
+
+**Lifecycle:** New → Acknowledged → In progress ⇄ Waiting → Resolved → Closed. Reopening is allowed.
+- **Acknowledge** stamps the time and, if the ticket has no owner, assigns it to you. Moving a ticket on from New also counts as acknowledging it.
+- **Resolve** and **Close** require a root cause and a resolution, which feed the closure-quality KPI and the recurring-issues list.
+- **Merge** closes a duplicate as "Duplicate of #n". Its WhatsApp reporter then gets the main ticket's updates.
+- Each ticket has a revision, so two people changing it at once get "changed by someone else, reload" instead of overwriting each other.
+
+**Default severity and SLA matrix.** Change it in `backend/app/tickets/models.py` (`SEVERITIES`). Times are measured from creation.
+
+| Severity | Meaning | Acknowledge | Resolve |
+|---|---|---|---|
+| P1 Critical | Venue-wide, or a keynote, stage or registration outage | 5 min | 15 min |
+| P2 High | A partner stand or critical area is down | 5 min | 30 min |
+| P3 Medium | Degraded service in one area or stand | 5 min | 2 h |
+| P4 Low | A single user or device, or a request | 5 min | 8 h |
+
+**Teams:** Network team and IT Support. New tickets go to a team by category: Network hardware goes to IT Support, everything else to the Network team. They can be reassigned. These defaults are `TEAMS` and `DEFAULT_TEAM` in the same file.
+
+**Live event.** WhatsApp reports that don't name an event are filed under the live event. Set it on the help desk page: choose an event, then **Make this the live event**.
+
+### WhatsApp bot integration (for the bot developer)
+
+The integration is off until it's configured. Set the values in `.env` from a secret store; never commit them:
+
+| Variable | Purpose |
+|---|---|
+| `BOT_API_TOKEN` | The bot sends `Authorization: Bearer <token>` |
+| `BOT_CALLBACK_URL` | Where status updates for reporters are POSTed |
+| `BOT_CALLBACK_SECRET` | HMAC key for the `X-Signature` header (required with the URL) |
+| `APP_PUBLIC_URL` | Base of the ticket links returned to the bot |
+
+**Create a ticket:** `POST /api/bot/tickets`
+
+```json
+{
+  "external_id": "wamid.HBgM...",
+  "message": "No internet on stand A12",
+  "event_code": "LIS26",
+  "category": "partner_stand",
+  "severity": "P2",
+  "location": "Hall 2",
+  "stand": "A12",
+  "partner": "IBM",
+  "reporter_name": "Ana",
+  "reporter_phone": "+351900000000"
+}
+```
+
+- Only `external_id` (the bot's own id for the report) and `message` are required.
+- `category` is one of `wifi`, `wired`, `hardware`, `partner_stand`, `venue`. If it's left out, the ticket is "Not yet categorised", unless `partner` is given, which makes it `partner_stand`.
+- `severity` is `P1` to `P4`; P3 by default.
+- The first line of `message` becomes the title.
+- The reply is `201 {"ticket": 12, "status": "new", "status_label": "New", "url": ".../helpdesk?ticket=12", "created": true}`.
+- Sending the same `external_id` again returns the existing ticket with `200` and `"created": false`, so retries are safe.
+- Errors: `401` for a bad token, `503` if the integration isn't configured, `422` for invalid fields.
+
+**Check status:** `GET /api/bot/tickets/{external_id}` returns the same shape.
+
+**Updates to the reporter.** On acknowledge, status changes, merges and "Reply to reporter" notes, the app POSTs JSON to `BOT_CALLBACK_URL`:
+
+```json
+{
+  "type": "ticket.update",
+  "ticket": 12,
+  "reported_as": 12,
+  "external_id": "wamid...",
+  "reporter_phone": "+351...",
+  "status": "acknowledged",
+  "status_label": "Acknowledged",
+  "message": "Ticket #12: alice from the ICT team is on it."
+}
+```
+
+- `reported_as` differs from `ticket` when the report was merged into another ticket.
+- Verify the `X-Signature: sha256=<hex>` header: an HMAC-SHA256 of the raw body with `BOT_CALLBACK_SECRET`, compared in constant time.
+- Answer with any 2xx. Failures are retried with backoff (10 s, 20 s, 40 s … up to 30 min) and marked failed after 10 attempts. Delivery counts are in `GET /api/tickets/meta` (`bot.outbox`).
+
+Code: `backend/app/tickets/` (models, store, service, report, outbox, routes) and `frontend/src/helpdesk/`.
+
 ## UI and accessibility
 
 The interface follows these published standards:
@@ -273,3 +378,8 @@ Automated checks find only part of the problems. Keyboard use and screen-reader 
   - Run containers with a read-only root filesystem and drop all capabilities.
   - Scan images in CI.
   - Serve a production frontend build, static files from S3 and CloudFront or nginx, instead of the Vite dev server.
+- **Help desk.**
+  - Owners come from real accounts (SSO groups for the Network team and IT Support) instead of free-text names.
+  - Keep `BOT_API_TOKEN` and `BOT_CALLBACK_SECRET` in a secret store and rotate them; serve the bot endpoints over HTTPS only.
+  - Run the outbox worker in exactly one replica, or move it to a queue such as SQS, so updates aren't sent twice.
+  - Optionally push dashboard updates over server-sent events instead of polling every 10 s.

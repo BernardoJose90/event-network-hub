@@ -282,7 +282,7 @@ export function ListsPanel({ api, overview, isAdmin, notify, onChanged }) {
 const ENTITY_LABELS = {
   '': 'Everything', wifi: 'Wi-Fi networks', ethernet: 'Ethernet', partner: 'Partner orders',
   vlan_extension: 'VLAN extensions', list: 'Setup lists', venue: 'Venues', group: 'Sections', event: 'Imports & publishing',
-  dependency: 'Dependency register', request: 'ICT requests', legacy: 'Old change log (imported)',
+  request: 'ICT requests', legacy: 'Old change log (imported)',
 }
 
 export function HistoryPanel({ api, notify }) {

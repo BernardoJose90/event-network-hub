@@ -1,10 +1,11 @@
 // Column definitions for each record type. kind:
-//   text | number | choice (fixed options) | list (event list kinds) | secret (Wi-Fi password)
+//   id (assigned automatically, read-only) | text | number | choice (fixed options) | list (event list kinds)
+//   | secret (Wi-Fi password)
 // Older values outside a choice's options (e.g. Band '6 GHz') stay until changed.
 
 export const COLUMNS = {
   wifi: [
-    { field: 'ref_id', label: 'ID', kind: 'text', width: 52 },
+    { field: 'ref_id', label: 'ID', kind: 'id', width: 52 },
     { field: 'ssid', label: 'SSID', kind: 'text', width: 170 },
     { field: 'coverage', label: 'Coverage area', kind: 'text', width: 230 },
     { field: 'password_required', label: 'Password?', kind: 'choice', options: ['yes', 'no', 'open network'], width: 110 },
@@ -15,6 +16,7 @@ export const COLUMNS = {
     { field: 'purpose', label: 'Purpose', kind: 'text', width: 230 },
   ],
   ethernet: [
+    { field: 'ref_id', label: 'ID', kind: 'id', width: 52 },
     { field: 'purpose', label: 'Purpose', kind: 'text', width: 200 },
     { field: 'location', label: 'Location', kind: 'list', lists: ['location', 'building'], width: 190 },
     { field: 'vlan', label: 'VLAN', kind: 'list', lists: ['vlan'], width: 170 },
@@ -27,6 +29,7 @@ export const COLUMNS = {
     { field: 'notes', label: 'Notes', kind: 'text', width: 300, templateLocked: true },
   ],
   partner: [
+    { field: 'ref_id', label: 'ID', kind: 'id', width: 52 },
     { field: 'partner', label: 'Partner & Exhibitor', kind: 'text', width: 230 },
     { field: 'pavilion', label: 'Pav', kind: 'text', width: 55 },
     { field: 'stand', label: 'Stand', kind: 'text', width: 75 },

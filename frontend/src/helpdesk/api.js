@@ -44,7 +44,6 @@ export function helpdeskApi(identity) {
     meta: () => call('GET', `${t}/meta`, identity),
     list: (params = {}) => call('GET', `${t}${query(params)}`, identity),
     get: (id) => call('GET', `${t}/${id}`, identity),
-    dependencies: (id) => call('GET', `${t}/${id}/dependencies`, identity),
     create: (body) => call('POST', t, identity, body),
     update: (id, revision, changes) => call('PATCH', `${t}/${id}`, identity, { revision, changes }),
     acknowledge: (id, revision) => call('POST', `${t}/${id}/acknowledge`, identity, { revision }),

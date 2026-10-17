@@ -30,7 +30,6 @@ function describe(entry, meta) {
 export default function TicketDetail({ id, api, meta, canEdit, identity, notify, onChanged, onClose, onOpen, now }) {
   const dialog = useDialog()
   const [ticket, setTicket] = useState(null)
-  const [deps, setDeps] = useState(null)
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
   const [comment, setComment] = useState('')
@@ -40,9 +39,7 @@ export default function TicketDetail({ id, api, meta, canEdit, identity, notify,
 
   const load = useCallback(async () => {
     try {
-      const [t, d] = await Promise.all([api.get(id), api.dependencies(id).catch(() => null)])
-      setTicket(t)
-      setDeps(d)
+      setTicket(await api.get(id))
       setError(null)
     } catch (err) {
       setError(err.message)
@@ -224,35 +221,6 @@ export default function TicketDetail({ id, api, meta, canEdit, identity, notify,
           <strong>{t.sla.minutes_to_resolve !== null ? `Done in ${duration(t.sla.minutes_to_resolve)}` : t.sla.resolve === 'breached' ? 'Overdue' : `By ${timeOfDay(t.sla.resolve_due)}`}</strong>
         </div>
       </section>
-
-      {deps?.entries.length > 0 && (
-        <section className="affected" aria-labelledby="affected-title">
-          <h3 id="affected-title">Affected in this area</h3>
-          <p className="muted small">From the event&apos;s dependency register</p>
-          {edit && open && deps.suggested_severity && deps.suggested_severity < t.severity && (
-            <p className="notice info">
-              The register lists a {deps.suggested_severity} dependency here.{' '}
-              <button type="button" className="link" disabled={busy}
-                onClick={() => act(() => api.update(t.id, t.revision, { severity: deps.suggested_severity }),
-                  `Severity raised to ${deps.suggested_severity}.`)}>
-                Raise severity to {deps.suggested_severity}
-              </button>
-            </p>
-          )}
-          <ul className="plain-list affected-list">
-            {deps.entries.map((d) => (
-              <li key={d.id}>
-                <span className={`badge-pill sev-${d.data.criticality}`}>{d.data.criticality}</span>{' '}
-                <strong>{d.data.service}</strong>{d.data.team ? ` — ${d.data.team}` : ''}
-                <div className="small">
-                  Accountable: {d.data.accountable || 'no owner recorded'}{d.data.contact ? ` · Contact: ${d.data.contact}` : ''}
-                </div>
-                {d.data.runbook && <div className="small runbook"><strong>If it fails:</strong> {d.data.runbook}</div>}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
 
       <dl className="facts">
         {facts.map(([k, v]) => (

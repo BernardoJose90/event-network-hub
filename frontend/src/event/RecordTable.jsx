@@ -178,7 +178,7 @@ export default function RecordTable({ type, api, overview, isAdmin, notify, onCh
     if (created) {
       setRecords((rs) => [...rs, created])
       setSearch('')
-      setEditing({ id: created.id, field: columns[groupKind === 'wifi' ? 1 : 0].field })
+      setEditing({ id: created.id, field: columns[1].field }) // the first column is the automatic ID
     }
   }
 
@@ -247,7 +247,7 @@ export default function RecordTable({ type, api, overview, isAdmin, notify, onCh
     const record = byId.get(Number(id))
     const col = columns.find((c) => c.field === field)
     if (!record || !col) return false
-    const editable = canEdit && !(isTemplate && col.templateLocked)
+    const editable = canEdit && col.kind !== 'id' && !(isTemplate && col.templateLocked)
     if (col.kind === 'secret' && (e.key === ' ' || (!editable && e.key === 'Enter'))) {
       if (record.has_password) reveal(record)
       return true
@@ -283,7 +283,7 @@ export default function RecordTable({ type, api, overview, isAdmin, notify, onCh
     }
     let content = show(col, record.data[col.field])
     const locked = isTemplate && col.templateLocked
-    const editable = canEdit && !locked
+    const editable = canEdit && !locked && col.kind !== 'id'
     if (col.kind === 'secret') {
       const shown = revealed[record.id]
       content = record.has_password ? (
@@ -298,10 +298,10 @@ export default function RecordTable({ type, api, overview, isAdmin, notify, onCh
     }
     return (
       <td key={col.field} data-nav={key} tabIndex={-1}
-        className={`rec-cell${col.kind === 'number' ? ' num' : ''}${editable ? ' editable' : ''}`}
+        className={`rec-cell${col.kind === 'number' ? ' num' : ''}${col.kind === 'id' ? ' id-cell' : ''}${editable ? ' editable' : ''}`}
         aria-readonly={!editable || undefined}
         onClick={() => { grid.setActive(key); if (editable) setEditing({ id: record.id, field: col.field }) }}
-        title={editable ? 'Click or press Enter to edit' : locked && canEdit ? 'Always empty or 0 in templates; set it on the event' : undefined}>
+        title={editable ? 'Click or press Enter to edit' : col.kind === 'id' ? 'Assigned automatically' : locked && canEdit ? 'Always empty or 0 in templates; set it on the event' : undefined}>
         {content}
       </td>
     )

@@ -116,6 +116,7 @@ backend/app/
 **Open Network Requirements** on an event opens `/event/<document id>`. There, an event's network requirements are kept as structured records instead of spreadsheet cells:
 
 - **Overview:** totals per venue and section, counts, list values to review, unpublished changes, and **Publish V<n>** (admins).
+- **IDs:** every Wi-Fi network, Ethernet item and partner order has an **ID**, shown in the first column. It's unique within the event and type, assigned automatically when the row is created (by hand, by import, by an approved ICT request, or from a template), and never changed or reused, even after the row is deleted. That makes it safe to quote in tickets and conversations. Imported Wi-Fi IDs are kept where they're unique; missing or duplicate ones get the next free number. Published Excel and PDF files include the ID column, and re-importing them keeps the IDs.
 - **Wi-Fi networks, Ethernet requirements, Partner orders:**
   - venue tabs, with section rows showing live subtotals;
   - click a cell to edit; VLAN and location come from the Setup lists; numbers are checked;
@@ -145,7 +146,7 @@ For an existing workbook, use **Legacy: upload a workbook** in the sidebar, then
 The importer also reads Partners Custom Orders, the Setup or settings lists, and the old Changes - Log. An "Extending Vlans" sheet is skipped with a note, because VLAN extensions are no longer tracked. Anything it can't place is reported as an import note: unrecognised sheets, columns with no matching field, and non-numeric points such as "TBC".
 
 **Changelog per version.** Each published version has an item-level changelog, built by comparing its snapshot with the previous published version's:
-- **Added**, **Removed** and **Changed** items, grouped by Wi-Fi networks, Ethernet requirements, partner orders and network dependencies, with old → new values per field. A move between sections shows as "Moved".
+- **Added**, **Removed** and **Changed** items, grouped by Wi-Fi networks, Ethernet requirements and partner orders, with old → new values per field. A move between sections shows as "Moved".
 - **Ethernet point totals** per venue, before and after.
 - An optional **note** written when publishing, shown at the top.
 - It shows the **net result**: five edits to one item become one line, and a change that was undone doesn't appear. Wi-Fi password values never appear, only "password changed".
@@ -179,7 +180,6 @@ Code: `backend/app/records/` (models, store, service, importer, publish, routes)
 | POST | `/api/events/{id}/records/wifi/{rid}/reveal` | logged |
 | POST/PATCH/DELETE | `/api/events/{id}/lists/…`, `/venues/…`, `/groups/…` | |
 | GET | `/api/events/{id}/history`, `/changes` | |
-| GET/POST/PUT/DELETE | `/api/events/{id}/dependencies[/{dep}]`, `POST …/{dep}/review` | dependency register |
 | GET/PUT/POST | `/api/events/{id}/ict-requests`, `…/settings`, `…/links`, `…/{rid}/approve`, `…/needs-info`, `…/decline` | ICT request review |
 | GET/POST/PUT | `/api/request-links/{token}`, `…/requests[/{rid}]` | public request form (the link is the credential) |
 | POST | `/api/events/{id}/publish` | `{note?}`; next version (Excel + PDF report) |
@@ -336,32 +336,6 @@ The integration is off until it's configured. Set the values in `.env` from a se
 
 Code: `backend/app/tickets/` (models, store, service, report, outbox, routes) and `frontend/src/helpdesk/`.
 
-## Network dependency register
-
-**Dependencies**, on an event's or template's requirements page, records who and what relies on the network in each area. The aim is that delivery doesn't depend on one person's knowledge. It applies ITIL service configuration management (service mapping) and RACI.
-
-- **Each entry records:**
-  - the area or space;
-  - what depends on the network (for example a keynote live stream, badge printers or CCTV recorders);
-  - the team or process behind it;
-  - the **criticality**, on the help desk's P1–P4 scale;
-  - **RACI**: exactly one **Accountable** owner, the **Responsible** ICT team, and who is Consulted and Informed;
-  - when it's needed: build, live days and/or breakdown;
-  - the **VLANs** and **network items** (Wi-Fi networks, Ethernet items) it uses;
-  - **If it fails, do this**, a runbook anyone on shift can follow;
-  - the on-site contact, and notes.
-- **Impact view.** "If this VLAN fails" lists every area and service that would be affected.
-- **Kept current:**
-  - every entry shows when it was last reviewed and by whom; saving or **Still correct** marks it reviewed;
-  - entries older than 180 days, or without an accountable owner, are flagged under **Needs attention**;
-  - all changes are in History.
-- **Carried between events.** The register is copied into templates and new events. Links follow the copied network items; links to partner sections, which templates leave empty, are dropped.
-  - Renaming a VLAN in Setup updates the register.
-  - A VLAN the register uses can't be removed from Setup.
-  - Re-importing a workbook keeps the register but clears its links to the replaced rows.
-- **Help desk.** A ticket whose location or stand matches an entry's area shows "Affected in this area": the services, owner, contact and runbook. If the register has a more critical dependency there, a one-click button raises the ticket's severity to match.
-- **Published** with every version, as a "Network dependencies" sheet in the Excel file and a section in the PDF report.
-
 ## ICT requests (wired and private Wi-Fi)
 
 Internal teams (AV, Photographers & Videographers, Engineering, CCTV) request connectivity per workspace using a standard form, instead of ICT guessing cable numbers. It follows the ITIL request catalogue: standard request models, plus GOV.UK form guidance.
@@ -382,7 +356,7 @@ Internal teams (AV, Photographers & Videographers, Engineering, CCTV) request co
 
 ## Reports (cross-event)
 
-**Reports** in the top bar shows how each event did against the ICT objectives, with events side by side. By default it shows all active events; archived events can be ticked in for comparison. Everyone can read it, and **Export Excel** gives the same table, one column per event.
+**Reports** in the top bar shows how each event did against the ICT objectives, with events side by side. By default it shows all active events; archived events can be ticked in for comparison. Everyone can read it, and the data can be downloaded as Excel or CSV.
 
 1. **Cable planning:**
    - Ethernet points and items per event, with a breakdown per venue and section;
@@ -392,16 +366,12 @@ Internal teams (AV, Photographers & Videographers, Engineering, CCTV) request co
 
    Together these measure fewer unused cables and fewer "unknown" requirements. It measures points *planned*, because ports actually used after the event aren't recorded.
 2. **ICT request adoption:** requests per event and per team, teams using the form, the share submitted on time (goal 90%), the share with "not sure" answers, review time, and requests still waiting.
-3. **Dependency register health:**
-   - the share of areas in use (Ethernet locations) with a register entry, and which areas have none;
-   - entries without an accountable owner, entries needing review, and P1 entries without a runbook;
-   - counts per criticality.
-4. **Live operations:** the help desk KPIs per event: acknowledged within 5 minutes (goal 90%), closure quality (goal 90%), time to resolve, partner-impacting tickets, and recurrence.
-5. **Change and publishing:** versions and published versions, first and last publish dates, the changelog from the first to the last published version (including the Ethernet point change), and unpublished changes.
+3. **Live operations:** the help desk KPIs per event: acknowledged within 5 minutes (goal 90%), closure quality (goal 90%), time to resolve, partner-impacting tickets, and recurrence.
+4. **Change and publishing:** versions and published versions, first and last publish dates, the changelog from the first to the last published version (including the Ethernet point change), and unpublished changes.
 
 **Presentation** follows the UK Government Analysis Function guidance on [charts](https://analysisfunction.civilservice.gov.uk/policy-store/data-visualisation-charts/) and [dashboards](https://analysisfunction.civilservice.gov.uk/policy-store/data-visualisation-building-and-managing-dashboards/), and the W3C guidance on [complex images](https://www.w3.org/WAI/tutorials/images/complex/):
 - **At a glance** comes first: the most recent selected event, compared with the one before it.
-- **Before you compare** lists data gaps that affect the figures, for example items with 0 points, no request deadline, or an empty register.
+- **Before you compare** lists data gaps that affect the figures, for example items with 0 points or no request deadline.
 - **Charts:**
   - statement titles ("QATAR27 plans the most Ethernet points (200)") with a subtitle saying what the data is;
   - bars ranked by value and starting at zero, with the goal marked on percentage charts;

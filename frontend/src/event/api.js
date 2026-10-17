@@ -63,11 +63,6 @@ export function eventApi(documentId, identity) {
     changes: () => call('GET', `${base}/changes`, identity),
     changelog: (params = {}) => call('GET', `${base}/changelog?${new URLSearchParams(params)}`, identity),
     publish: (note) => call('POST', `${base}/publish`, identity, { note: note || null }),
-    dependencies: () => call('GET', `${base}/dependencies`, identity),
-    createDependency: (data) => call('POST', `${base}/dependencies`, identity, { data }),
-    updateDependency: (id, revision, data) => call('PUT', `${base}/dependencies/${id}`, identity, { revision, data }),
-    reviewDependency: (id, revision) => call('POST', `${base}/dependencies/${id}/review`, identity, { revision }),
-    deleteDependency: (id, revision) => call('DELETE', `${base}/dependencies/${id}?revision=${revision}`, identity),
     ictRequests: () => call('GET', `${base}/ict-requests`, identity),
     saveRequestSettings: (deadline, instructions) =>
       call('PUT', `${base}/ict-requests/settings`, identity, { deadline, instructions }),

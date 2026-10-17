@@ -2432,41 +2432,6 @@ dialog.dialog.wide {
   white-space: nowrap;
 }
 
-/* --- Dependency register ------------------------------------------------------------- */
-
-.dep-area > h3 {
-  margin: 18px 0 8px;
-  font-size: 1.1rem;
-}
-
-.dep-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-  gap: 12px;
-}
-
-.dep-card h4 {
-  margin: 0;
-  font-size: 1rem;
-  color: var(--navy);
-}
-
-.dep-card .facts {
-  margin-top: 10px;
-}
-
-.runbook {
-  margin: 0 0 8px;
-  padding: 8px 10px;
-  border-radius: 10px;
-  background: #fff4d6;
-}
-
-.dep-foot {
-  margin-top: 6px;
-  gap: 8px;
-}
-
 .flag-text {
   color: #8a3b00;
   font-weight: 600;
@@ -2584,21 +2549,6 @@ dialog.dialog.wide {
 
 .your-requests {
   margin-top: 24px;
-}
-
-.affected {
-  margin-bottom: 12px;
-  padding: 10px 12px;
-  border: 1px solid #c98a00;
-  border-radius: 10px;
-}
-
-.affected h3 {
-  margin: 0;
-}
-
-.affected-list li {
-  margin: 8px 0;
 }
 
 /* --- Changelog ------------------------------------------------------------------------ */
@@ -2868,4 +2818,9 @@ dialog.dialog.wide {
   .report-table td {
     white-space: normal;
   }
+}
+
+.rec-cell.id-cell {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }

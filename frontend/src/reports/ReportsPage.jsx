@@ -120,8 +120,6 @@ function Headlines({ events, goals }) {
     { title: 'Ethernet points planned', value: n(latest.cable_planning.points), detail: vs((e) => e.cable_planning.points) },
     { title: 'ICT requests on time', value: <Goal value={latest.requests.on_time_pct} goal={goals.requests_on_time_pct} />,
       detail: latest.requests.requests ? plural(latest.requests.requests, 'request') : 'No requests yet' },
-    { title: 'Areas in the dependency register', value: <Goal value={latest.register.coverage_pct} goal={goals.register_coverage_pct} />,
-      detail: `${n(latest.register.areas_covered)} of ${n(latest.register.areas_in_use)} areas in use` },
     { title: 'Tickets acknowledged within 5 min', value: <Goal value={latest.operations.ack_within_target_pct} goal={goals.ack_within_target_pct} />,
       detail: latest.operations.tickets ? plural(latest.operations.tickets, 'ticket') : 'No tickets yet' },
     { title: 'Tickets closed with root cause and fix', value: <Goal value={latest.operations.closure_quality_pct} goal={goals.closure_quality_pct} />,
@@ -243,7 +241,7 @@ export default function ReportsPage() {
         {data && (
           <p className="report-meta">
             Live data from Event Network Hub, generated <time dateTime={data.generated_at}>{stamp(data.generated_at)}</time> (your local time).
-            Covers each event&apos;s current requirements, ICT requests, dependency register and help desk tickets.
+            Covers each event&apos;s current requirements, ICT requests and help desk tickets.
           </p>
         )}
         <StatusMessages notice={notice} onDismiss={() => setNotice(null)} className="hd-notice" />
@@ -359,44 +357,8 @@ export default function ReportsPage() {
                     <Source text={data.sources.requests} />
                   </section>
 
-                  <section className="panel report-section" aria-labelledby="rep-register">
-                    <h2 id="rep-register">3. Dependency register health</h2>
-                    <p className="muted small">Objective: delivery of event ICT not reliant on individual knowledge.</p>
-                    {(() => {
-                      const values = events.map((e) => e.register.coverage_pct)
-                      const known = withData(values)
-                      const title = !known ? 'No areas in use to cover yet'
-                        : `${met(values, goals.register_coverage_pct)} of ${known} event${known === 1 ? '' : 's'} cover every area in use`
-                      return (
-                        <Figure id="fig-register" title={title} subtitle="Areas in use with a dependency register entry, % per event"
-                          percent goal={goals.register_coverage_pct}
-                          items={events.map((e) => ({ key: e.id, label: e.code, value: e.register.coverage_pct }))}
-                          description={`Coverage: ${events.map((e) => `${e.code} ${pct(e.register.coverage_pct)}`).join(', ')}.`} />
-                      )
-                    })()}
-                    <Compare caption="Dependency register health by event" events={events} rows={[
-                      ['Entries', (e) => n(e.register.entries)],
-                      ['Areas covered', (e) => (e.register.areas_in_use
-                        ? <><Goal value={e.register.coverage_pct} goal={goals.register_coverage_pct} /><div className="muted small">{n(e.register.areas_covered)} of {n(e.register.areas_in_use)} areas in use</div></>
-                        : '—')],
-                      ['Without an accountable owner', (e) => <Goal value={e.register.without_owner} goal={0} lowerIsBetter format={n} />],
-                      ['Needing review', (e) => <Goal value={e.register.needs_review} goal={0} lowerIsBetter format={n} />],
-                      ['P1 without a runbook', (e) => <Goal value={e.register.p1_without_runbook} goal={0} lowerIsBetter format={n} />],
-                      ['By criticality', (e) => Object.entries(e.register.by_criticality).map(([k, v]) => `${k} ${n(v)}`).join(' · ')],
-                    ]} />
-                    {events.some((e) => e.register.uncovered_areas.length) && (
-                      <details className="report-more">
-                        <summary>Areas in use with no register entry</summary>
-                        {events.filter((e) => e.register.uncovered_areas.length).map((e) => (
-                          <p key={e.id}><strong>{e.code}:</strong> {e.register.uncovered_areas.join(', ')}</p>
-                        ))}
-                      </details>
-                    )}
-                    <Source text={data.sources.register} />
-                  </section>
-
                   <section className="panel report-section" aria-labelledby="rep-ops">
-                    <h2 id="rep-ops">4. Live operations</h2>
+                    <h2 id="rep-ops">3. Live operations</h2>
                     <p className="muted small">Objective: every ICT issue on site tracked, acknowledged quickly and closed with a documented cause.</p>
                     {(() => {
                       const values = events.map((e) => e.operations.ack_within_target_pct)
@@ -423,7 +385,7 @@ export default function ReportsPage() {
                   </section>
 
                   <section className="panel report-section" aria-labelledby="rep-pub">
-                    <h2 id="rep-pub">5. Change and publishing</h2>
+                    <h2 id="rep-pub">4. Change and publishing</h2>
                     <p className="muted small">How stable the plan was: versions, and what changed from the first to the last published version.</p>
                     <Compare caption="Change and publishing by event" events={events} rows={[
                       ['Versions', (e) => `${n(e.publishing.versions)} (${n(e.publishing.published)} published)`],
@@ -453,7 +415,7 @@ export default function ReportsPage() {
                           <div key={term}><dt>{term}</dt><dd>{text}</dd></div>
                         ))}
                       </dl>
-                      <p className="muted small">Goals: acknowledged within 5 minutes {pct(goals.ack_within_target_pct)}, closed with root cause and fix {pct(goals.closure_quality_pct)}, ICT requests on time {pct(goals.requests_on_time_pct)}, register coverage {pct(goals.register_coverage_pct)}.</p>
+                      <p className="muted small">Goals: acknowledged within 5 minutes {pct(goals.ack_within_target_pct)}, closed with root cause and fix {pct(goals.closure_quality_pct)}, ICT requests on time {pct(goals.requests_on_time_pct)}.</p>
                     </details>
                   </section>
                 </>

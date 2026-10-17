@@ -121,6 +121,9 @@ def init_db(path: Path) -> None:
         from .ictrequests import service as requests_service
 
         requests_service.init(conn)
+        from .notifications import service as notifications_service
+
+        notifications_service.init(conn)
         from .records import service as records_service
 
         records_service.purge_retired_records(conn)

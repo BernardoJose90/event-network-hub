@@ -16,6 +16,8 @@ from .config import Settings, load_settings
 from .converter import GotenbergConverter
 from .collabora import CollaboraDiscovery
 from .ictrequests.routes import admin_router as requests_admin_router, public_router as requests_public_router
+from .notifications import keys as notification_keys, service as notifications, worker as notification_worker
+from .notifications.routes import router as notifications_router, watchers_router
 from .records.routes import events_router, router as records_router
 from .reports import router as reports_router
 from .routes import router
@@ -63,6 +65,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.storage = LocalStorage(settings.files_dir)
         app.state.converter = converter
         app.state.discovery = CollaboraDiscovery(settings.collabora_url)
+        vapid, app.state.vapid_public_key = notification_keys.load(settings)
+        notifications.configure(notifications.Channels(
+            push=True, slack=bool(settings.slack_webhook_url), email=bool(settings.smtp_host),
+            escalation_emails=settings.escalation_emails, public_url=settings.app_public_url))
+        app.state.notification_sender = notification_worker.Sender(settings, vapid)
+        notifier = asyncio.create_task(notification_worker.run(settings, app.state.notification_sender))
         worker = None
         if settings.bot_callback_url:
             if not settings.bot_callback_secret:
@@ -71,6 +79,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             yield
         finally:
+            notifier.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await notifier
             if worker:
                 worker.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -89,6 +100,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(requests_public_router)
     app.include_router(requests_admin_router)
     app.include_router(reports_router)
+    app.include_router(notifications_router)
+    app.include_router(watchers_router)
 
     @app.exception_handler(DocumentGone)
     async def document_gone(_: Request, __: DocumentGone) -> JSONResponse:

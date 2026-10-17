@@ -14,6 +14,7 @@ from collections.abc import Callable, Iterator
 from typing import Annotated, Any, TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
+from pydantic import BaseModel, Field
 
 from .. import db
 from ..auth import Principal, current_principal, require_admin, require_known_role
@@ -125,6 +126,18 @@ def save_settings(document_id: int, body: Settings, conn: Conn, principal: Edito
 def create_link(request: Request, document_id: int, body: NewLink, conn: Conn, principal: Editor) -> dict[str, Any]:
     link = _run(lambda: service.create_link(conn, document_id, body.team, user=principal.user))
     log.info("%s created an ICT request link for %s on document %s", principal.user, body.team, document_id)
+    return link | {"url": f"{request.app.state.settings.app_public_url}/request/{link['token']}"}
+
+
+class LinkEmail(BaseModel):
+    email: str = Field(min_length=3, max_length=200)
+
+
+@admin_router.post("/ict-requests/links/{link_id}/email")
+def email_link(request: Request, document_id: int, link_id: int, body: LinkEmail, conn: Conn, principal: Editor
+               ) -> dict[str, Any]:
+    """Email the link to the team's contact; deadline reminders go to them too."""
+    link = _run(lambda: service.email_link(conn, document_id, link_id, body.email, user=principal.user))
     return link | {"url": f"{request.app.state.settings.app_public_url}/request/{link['token']}"}
 
 

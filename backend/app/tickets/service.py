@@ -160,7 +160,14 @@ def create_ticket(conn: sqlite3.Connection, fields: dict[str, Any], *, user: str
                        + (f" · {where}" if where else "") + f" · via {'WhatsApp' if source == 'whatsapp' else 'ICT'}")
         if assignee:
             store.log(conn, ticket_id, "assign", user, field="assignee", new=assignee)
-    return store.get_ticket(conn, ticket_id)  # type: ignore[return-value]
+    ticket = store.get_ticket(conn, ticket_id)
+    from ..notifications import service as notifications
+
+    with conn:
+        notifications.ticket_created(conn, ticket)
+        if assignee:
+            notifications.ticket_assigned(conn, ticket, assignee, user)
+    return ticket  # type: ignore[return-value]
 
 
 def create_from_bot(conn: sqlite3.Connection, report: dict[str, Any], *, notify: bool) -> tuple[dict[str, Any], bool]:
@@ -254,6 +261,10 @@ def assign(conn: sqlite3.Connection, ticket_id: int, *, revision: int, assignee:
             store.log(conn, ticket_id, "assign", user, field="assignee", old=ticket["assignee"], new=assignee)
         if "team" in values:
             store.log(conn, ticket_id, "field", user, field="team", old=ticket["team"], new=team)
+        if values.get("assignee"):
+            from ..notifications import service as notifications
+
+            notifications.ticket_assigned(conn, store.get_ticket(conn, ticket_id), assignee, user)
     return store.get_ticket(conn, ticket_id)  # type: ignore[return-value]
 
 

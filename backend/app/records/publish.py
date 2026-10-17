@@ -365,6 +365,12 @@ def publish(conn: sqlite3.Connection, storage: Storage, converter: Converter, *,
     with conn:
         store.save_snapshot(conn, version_id=version["id"], doc=doc, data=snap)
         if failure is None:
+            from ..notifications import service as notifications
+
+            notifications.version_published(
+                conn, doc, document["name"].split(" | ")[0], n, user,
+                "First version" if changes["first"] else
+                "{added} added, {removed} removed, {changed} changed".format(**changes["counts"]), note)
             store.log(conn, doc=doc, entity="event", action="publish", user=user, new=n,
                       summary=f"Published V{n}: " + ("first version" if changes["first"] else
                               "{added} added, {removed} removed, {changed} changed".format(**changes["counts"]))

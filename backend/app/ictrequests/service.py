@@ -113,6 +113,27 @@ def create_link(conn: sqlite3.Connection, doc: int, team: str, *, user: str) -> 
     return dict(conn.execute("SELECT * FROM request_links WHERE id = ?", (link_id,)).fetchone())
 
 
+def email_link(conn: sqlite3.Connection, doc: int, link_id: int, email: str, *, user: str) -> dict[str, Any]:
+    """Save the team contact for a link (deadline reminders go there) and email them the link."""
+    from ..notifications import service as notifications
+
+    row = conn.execute("SELECT * FROM request_links WHERE id = ? AND document_id = ? AND revoked_at IS NULL",
+                       (link_id, doc)).fetchone()
+    if row is None:
+        raise RequestError(404, "Link not found")
+    if not notifications.is_email(email):
+        raise RequestError(422, "Enter an email address, like name@example.com")
+    document = _event(conn, doc)
+    with conn:
+        conn.execute("UPDATE request_links SET contact_email = ? WHERE id = ?", (email.strip().lower(), link_id))
+        notifications.request_link_shared(conn, doc, document["name"].split(" | ")[0], REQUEST_TEAMS[row["team"]],
+                                          f"{notifications.CHANNELS.public_url}/request/{row['token']}", email,
+                                          settings(conn, doc)["deadline"])
+        records_store.log(conn, doc=doc, entity="request", action="request", user=user,
+                          summary=f"Emailed the {REQUEST_TEAMS[row['team']]} request link to {email}")
+    return dict(conn.execute("SELECT * FROM request_links WHERE id = ?", (link_id,)).fetchone())
+
+
 def revoke_link(conn: sqlite3.Connection, doc: int, link_id: int, *, user: str) -> None:
     row = conn.execute("SELECT * FROM request_links WHERE id = ? AND document_id = ?", (link_id, doc)).fetchone()
     if row is None:
@@ -175,6 +196,9 @@ def submit(conn: sqlite3.Connection, token: str, submission: dict[str, Any]) -> 
         records_store.log(conn, doc=doc, entity="request", action="request", user=submission["requester_name"],
                           summary=f"{REQUEST_TEAMS[link['team']]} submitted {len(ids)} ICT request(s)"
                                   + (" after the deadline" if late else ""))
+        from ..notifications import service as notifications
+
+        notifications.request_submitted(conn, doc, REQUEST_TEAMS[link["team"]], len(ids), submission["requester_name"], late)
     return {"batch": batch, "late": late, "requests": [get(conn, doc, i) for i in ids]}
 
 
@@ -242,7 +266,15 @@ def set_review(conn: sqlite3.Connection, doc: int, request_id: int, *, revision:
         records_store.log(conn, doc=doc, entity="request", action="request", user=user,
                           summary=f"{'Declined' if status == 'declined' else 'Asked for more information on'} "
                                   f"ICT request #{request_id} from {REQUEST_TEAMS.get(req['team'], req['team'])}")
+        _tell_requester(conn, doc, req, status, note)
     return get(conn, doc, request_id)
+
+
+def _tell_requester(conn: sqlite3.Connection, doc: int, req: dict[str, Any], status: str, note: str | None) -> None:
+    from ..notifications import service as notifications
+
+    document = db.get_document(conn, doc)
+    notifications.request_reviewed(conn, doc, req, document["name"].split(" | ")[0], status, note)
 
 
 def approve(conn: sqlite3.Connection, doc: int, request_id: int, *, revision: int, venue_id: int, group_id: int,
@@ -290,6 +322,7 @@ def approve(conn: sqlite3.Connection, doc: int, request_id: int, *, revision: in
                           summary=f"Approved ICT request #{request_id} from {team}: added "
                                   f"{'Ethernet requirement' if record_type == 'ethernet' else 'Wi-Fi network'} "
                                   f"'{data.get('purpose') or data.get('ssid')}'")
+        _tell_requester(conn, doc, req, "approved", note)
     return get(conn, doc, request_id)
 
 

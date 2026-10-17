@@ -406,7 +406,7 @@ function VersionTable({ documentId, versions, identity, readOnly, onView, onEdit
     const values = await dialog.form({
       title: 'Compare versions', confirmLabel: 'Compare',
       fields: [
-        { name: 'from', label: 'From', type: 'select', required: true, options, initial: String(published[0]) },
+        { name: 'from', label: 'From', type: 'select', required: true, options, initial: String(published[published.length - 2]) },
         { name: 'to', label: 'To', type: 'select', required: true, options, initial: String(published[published.length - 1]),
           validate: (v, all) => (Number(v) > Number(all.from) ? null : 'Choose a later version than "From"') },
       ],
@@ -491,12 +491,6 @@ function VersionTable({ documentId, versions, identity, readOnly, onView, onEdit
                   </td>
                   <td>
                     <div className="row nowrap">
-                      {v.source === 'publish' && v.status === 'ready' && (
-                        <button className="secondary" onClick={() => showChanges({ to: v.version }, `What changed in V${v.version}`)}
-                          aria-label={`What changed in V${v.version}`}>
-                          What changed
-                        </button>
-                      )}
                       <button
                         className="secondary"
                         onClick={() => onView(v.version)}

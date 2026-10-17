@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { loadIdentity } from '../identity.js'
 import { useDialog } from '../ui/Dialog.jsx'
 import Changelog from '../ui/Changelog.jsx'
+import NotificationBell from '../ui/Notifications.jsx'
 import { StatusMessages } from '../ui/Notice.jsx'
 import { eventApi } from './api.js'
 import { TITLES } from './columns.js'
@@ -176,6 +177,7 @@ export default function EventPage({ documentId }) {
         {isAdmin && !isTemplate && overview.has_records && (
           <button className="secondary" onClick={saveAsTemplate}>Save as template</button>
         )}
+        <NotificationBell identity={identity} />
         {canEdit && !isTemplate && overview.has_records && (
           <button className="primary-cta" onClick={publish} disabled={publishing || overview.unpublished_changes === 0}
             aria-busy={publishing || undefined}>

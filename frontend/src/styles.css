@@ -2824,3 +2824,142 @@ dialog.dialog.wide {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
+
+/* --- Notification centre ---------------------------------------------------------------- */
+
+.notif {
+  position: relative;
+}
+
+.notif-button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 50%;
+  background: transparent;
+  color: #fff;
+}
+
+.notif-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.notif-count {
+  position: absolute;
+  top: -4px;
+  right: -6px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 10px;
+  background: var(--pink);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--navy);
+}
+
+.notif-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 50;
+  width: min(400px, calc(100vw - 24px));
+  max-height: min(70vh, 560px);
+  overflow: auto;
+  padding: 14px;
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 16px 48px rgba(12, 20, 57, 0.3);
+  text-align: left;
+}
+
+.notif-panel :focus-visible {
+  outline-color: var(--focus);
+}
+
+.notif-head h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.notif-head h2:focus {
+  outline: none;
+}
+
+.notif-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.notif-list li a {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 8px 8px 12px;
+  border-left: 4px solid transparent;
+  border-radius: 8px;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.notif-list li a:hover {
+  background: var(--bg);
+}
+
+.notif-list li.unread a {
+  border-left-color: var(--pink);
+  background: #fdf3f8;
+}
+
+.notif-title {
+  font-weight: 600;
+}
+
+.notif-list li:not(.unread) .notif-title {
+  font-weight: 400;
+}
+
+.notif-body {
+  color: var(--muted);
+  font-size: 0.85rem;
+  white-space: pre-line;
+}
+
+.notif-time {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.notif-subtitle {
+  margin: 12px 0 6px;
+  font-size: 0.95rem;
+}
+
+.checkbox-list.stacked {
+  flex-direction: column;
+  max-height: none;
+}
+
+
+.followers {
+  margin-top: 12px;
+}
+
+.follower-list li {
+  margin: 4px 0;
+}
+
+.link-contact {
+  flex-basis: 100%;
+}

@@ -1,0 +1,13 @@
+{
+  "name": "Event Network Hub",
+  "short_name": "Network Hub",
+  "description": "Web Summit event network requirements, help desk and reports",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f6f7",
+  "theme_color": "#0c1439",
+  "icons": [
+    { "src": "/websummit-mark.png", "sizes": "300x300", "type": "image/png", "purpose": "any" }
+  ]
+}

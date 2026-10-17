@@ -170,6 +170,8 @@ export function Overview({ overview, api, isAdmin, notify, onChanged, onPublish,
       </div>
       )}
 
+      {!isTemplate && <Followers api={api} isAdmin={isAdmin} notify={notify} />}
+
       {isAdmin && overview.latest_version && (
         <details className="ov-danger">
           <summary>Import again from a workbook</summary>
@@ -178,6 +180,68 @@ export function Overview({ overview, api, isAdmin, notify, onChanged, onPublish,
         </details>
       )}
     </div>
+  )
+}
+
+// --- Publish followers -------------------------------------------------------------
+
+function Followers({ api, isAdmin, notify }) {
+  const [data, setData] = useState(null)
+  const [email, setEmail] = useState('')
+  const [error, setError] = useState(null)
+  const inputId = useId()
+  const errorId = useId()
+
+  const load = useCallback(() => api.watchers().then(setData).catch((err) => notify(err.message, 'error')), [api, notify])
+  useEffect(() => { load() }, [load])
+
+  async function add(e) {
+    e.preventDefault()
+    const value = email.trim()
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value)) {
+      setError('Enter an email address, like name@example.com')
+      return
+    }
+    try {
+      setData(await api.addWatcher(value))
+      setEmail('')
+      setError(null)
+      notify(`${value} will be emailed when a version is published.`, 'ok')
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  if (!data) return null
+  return (
+    <section className="panel followers" aria-labelledby="followers-title">
+      <h3 id="followers-title">Email when a version is published</h3>
+      <p className="muted small">
+        Each new version is emailed with its changelog summary, for example to the venue or cabling contractor.
+        {!data.email_available && ' Email isn\'t set up on this server yet, so nothing is sent.'}
+      </p>
+      {data.emails.length > 0 ? (
+        <ul className="plain-list follower-list">
+          {data.emails.map((m) => (
+            <li key={m}>
+              {m}{' '}
+              {isAdmin && <button type="button" className="link danger-link" aria-label={`Stop emailing ${m}`}
+                onClick={async () => setData(await api.removeWatcher(m))}>Remove</button>}
+            </li>
+          ))}
+        </ul>
+      ) : <p className="muted small">Nobody yet.</p>}
+      {isAdmin && (
+        <form className="row" onSubmit={add} noValidate>
+          <label htmlFor={inputId} className="visually-hidden">Email address to add</label>
+          <input id={inputId} type="email" autoComplete="off" value={email} placeholder="name@example.com" maxLength={200}
+            aria-invalid={error ? 'true' : undefined} aria-describedby={error ? errorId : undefined}
+            onChange={(e) => { setEmail(e.target.value); setError(null) }} />
+          <button type="submit" disabled={!email.trim()}>Add</button>
+          {error && <p id={errorId} className="field-error" role="alert">{error}</p>}
+        </form>
+      )}
+    </section>
   )
 }
 

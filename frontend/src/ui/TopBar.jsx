@@ -1,4 +1,5 @@
 import { ROLES } from '../identity.js'
+import NotificationBell from './Notifications.jsx'
 
 // The app's top bar: brand, the areas (Events, Help desk, Reports) and the TEST ONLY identity.
 const AREAS = [
@@ -25,6 +26,7 @@ export default function TopBar({ identity, onChange, current }) {
         </nav>
       </div>
       <div className="identity">
+        <NotificationBell identity={identity} />
         <span className="badge" title="Fake identity for local testing; replaced by real auth in production">
           TEST ONLY
         </span>

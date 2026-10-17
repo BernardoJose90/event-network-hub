@@ -385,6 +385,38 @@ Internal teams (AV, Photographers & Videographers, Engineering, CCTV) request co
 
 API: `GET /api/reports[?events=1,2]` and `GET /api/reports/export[?events=…][&format=xlsx|csv]`. Code: `backend/app/reports.py` and `frontend/src/reports/`.
 
+## Notifications
+
+Every notification lands in the **bell** (top bar and event pages): an unread count, the latest 30 items, and "Mark all as read". Read state is kept per person. Live updates arrive over server-sent events, and if the stream is blocked the bell polls every 30 s. Other channels are added only where they help:
+
+| What happens | In app | Browser push | Slack | Email |
+|---|---|---|---|---|
+| New ticket | network admins | P1/P2 (on by default), all (opt-in) | P1/P2 | |
+| Ticket assigned | the assignee | yes (on by default) | | |
+| P1/P2 not acknowledged after 4 min | network admins | yes | | |
+| P1/P2 misses the 5-min acknowledge SLA | network admins | yes | yes | `ESCALATION_EMAILS` |
+| P3/P4 misses its SLA | network admins | | | |
+| ICT request submitted | network admins | opt-in | | |
+| Request approved, needs info, or declined | | | | the requester |
+| Request link emailed, deadline in 7 days and 1 day | | | | the link's contact |
+| New version published | everyone | | | the event's followers |
+
+- **Browser push** uses the Web Push standard with VAPID keys. Permission is asked only when someone clicks **Turn on alerts** in the bell's Settings, never on page load. Each person chooses which alert types they get, and can send a test alert. Urgent alerts stay on screen until dismissed. On iPhone and iPad, push works only after the app is added to the Home Screen (iOS 16.4 or later); the Settings tab says so.
+- **Slack** posts to one channel through an incoming webhook, with a button that opens the ticket.
+- **Email** goes through Web Summit's existing provider over SMTP with STARTTLS, and carries `Auto-Submitted: auto-generated` so auto-replies are suppressed.
+- **Followers:** on an event's Overview, admins add the email addresses to notify when a version is published. The email includes the change summary.
+- **Email link:** on the ICT requests page, **Email link…** sends a team its form link and records the contact for deadline reminders.
+- **Delivery** is through an outbox. Failures are retried with exponential backoff, up to 8 attempts. Push subscriptions the browser has dropped (404/410) are removed. SLA warnings and reminders are de-duplicated, so each is sent once.
+
+Setup (all in `.env`, see `.env.example`; an empty value turns a channel off):
+
+- `SLACK_WEBHOOK_URL`: create an incoming webhook for the ICT channel in Slack.
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_STARTTLS`: from the email provider. The From domain needs SPF, DKIM and DMARC, or messages will land in spam.
+- `ESCALATION_EMAILS`: comma-separated addresses for SLA breaches.
+- `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`: locally a key pair is generated once into `DATA_DIR/vapid.json`. In production set them from the secret store and keep them stable, because changing them invalidates every device's subscription.
+
+API: `GET /api/notifications`, `POST /api/notifications/read`, `GET /api/notifications/stream`, `GET|PUT /api/notifications/settings`, `POST /api/notifications/push/subscribe|unsubscribe`, `POST /api/notifications/test`, and `GET|POST|DELETE /api/events/{id}/watchers`. Code: `backend/app/notifications/`, `frontend/src/ui/Notifications.jsx` and `frontend/public/sw.js`.
+
 ## UI and accessibility
 
 The interface follows these published standards:
@@ -450,3 +482,8 @@ Automated checks find only part of the problems. Keyboard use and screen-reader 
   - Keep `BOT_API_TOKEN` and `BOT_CALLBACK_SECRET` in a secret store and rotate them; serve the bot endpoints over HTTPS only.
   - Run the outbox worker in exactly one replica, or move it to a queue such as SQS, so updates aren't sent twice.
   - Optionally push dashboard updates over server-sent events instead of polling every 10 s.
+- **Notifications.**
+  - Browser push needs HTTPS (it works on `localhost` only for development).
+  - The event stream takes the identity from query parameters, because `EventSource` can't send headers (TEST ONLY). With real authentication, use the session cookie instead.
+  - Run the notification worker in exactly one replica, like the help desk outbox.
+  - Recipients come from SSO groups instead of the role header.

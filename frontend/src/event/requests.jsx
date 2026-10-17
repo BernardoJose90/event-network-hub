@@ -61,6 +61,16 @@ export function RequestsPanel({ api, overview, isAdmin, notify, onChanged }) {
     }
   }
 
+  async function emailLink(link) {
+    const email = await dialog.prompt({
+      title: `Email the ${data.teams[link.team]} link`,
+      body: 'Sends the request link to the team contact. Deadline reminders (7 days and 1 day before) go to them too.',
+      label: 'Email address', initial: link.contact_email || '', maxLength: 200, confirmLabel: 'Send link',
+      validate: (v) => (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v) ? null : 'Enter an email address, like name@example.com'),
+    })
+    if (email) await act(() => api.emailRequestLink(link.id, email), `Link sent to ${email}.`)
+  }
+
   async function saveSettings(e) {
     e.preventDefault()
     const form = new FormData(e.currentTarget)
@@ -158,11 +168,14 @@ export function RequestsPanel({ api, overview, isAdmin, notify, onChanged }) {
                   {link ? (
                     <span className="row nowrap">
                       <button type="button" className="secondary" onClick={() => copy(link)}>Copy link</button>
+                      {isAdmin && <button type="button" className="secondary" onClick={() => emailLink(link)}
+                        aria-label={`Email the ${label} link`}>Email link…</button>}
                       {isAdmin && <button type="button" className="link danger-link" onClick={() => act(() => api.revokeRequestLink(link.id), `Link for ${label} turned off.`)}>Turn off</button>}
                     </span>
                   ) : isAdmin ? (
                     <button type="button" className="secondary" onClick={() => act(() => api.createRequestLink(team), `Link for ${label} created.`)}>Create link</button>
                   ) : <span className="muted small">No link</span>}
+                  {link?.contact_email && <span className="muted small link-contact">Contact: {link.contact_email}</span>}
                   {link && copied === link.id && <input className="link-url" readOnly value={link.url} aria-label={`Request link for ${label}`} onFocus={(e) => e.target.select()} />}
                 </li>
               )

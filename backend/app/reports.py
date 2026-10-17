@@ -11,6 +11,7 @@ side by side ("event over event"):
 
 from __future__ import annotations
 
+import csv
 import io
 import logging
 import re
@@ -37,6 +38,37 @@ router = APIRouter(prefix="/api/reports")
 
 GOALS = {"ack_within_target_pct": 90, "closure_quality_pct": 90, "requests_on_time_pct": 90,
          "register_coverage_pct": 100}
+
+# Where each section's numbers come from, and how each measure is calculated. Shown on the
+# page ("Sources and definitions") and in the export, so figures can be read without the code.
+SOURCES = {
+    "cable_planning": "The event's current Ethernet requirements (including unpublished changes), its approved ICT "
+                      "requests, the change history and help desk tickets.",
+    "requests": "ICT requests submitted through the team links for the event.",
+    "register": "The event's network dependency register and the locations used by its Ethernet requirements.",
+    "operations": "Help desk tickets filed under the event. Duplicates merged into another ticket are left out.",
+    "publishing": "The event's versions and the snapshots saved when each version was published.",
+}
+DEFINITIONS = {
+    "Ethernet points": "Sum of Ethernet points across all venues and sections. Points planned, not ports used: "
+                       "ports actually used after the event aren't recorded.",
+    "Points via ICT requests": "Points of Ethernet items created by approving an ICT request, and their share of all points.",
+    "Added after the deadline": "Ethernet items created after the event's ICT request deadline (by the date they were "
+                                "added), and their points. Shown only when a deadline is set.",
+    "Wired tickets on site": "Help desk tickets in the Wired connectivity category.",
+    "Submitted on time": "ICT requests submitted on or before the deadline, as a share of all requests. Goal 90%.",
+    "With 'not sure' answers": "Requests where the team didn't know the number of cables, PoE or speed (wired), or the "
+                               "number of devices (Wi-Fi).",
+    "Mean review time": "Average time from submission to the first review (approved, declined or asked for more information).",
+    "Areas covered": "Locations used by the event's Ethernet requirements that have at least one register entry. Goal 100%.",
+    "Needing review": "Register entries not reviewed in the last 180 days.",
+    "Acknowledged within 5 min": "Tickets acknowledged within 5 minutes of being raised, as a share of tickets whose "
+                                 "acknowledge time has passed. Goal 90%.",
+    "Closed with root cause and fix": "Resolved or closed tickets with both a root cause and a resolution. Goal 90%.",
+    "Recurring issues": "Tickets in the same category and area (stand or location) as an earlier ticket, in any event, "
+                        "as a share of tickets with an area.",
+    "First → last version": "Item-level changelog between the first and the last version published from the requirements.",
+}
 
 
 def _conn(request: Request) -> Iterator[sqlite3.Connection]:
@@ -199,18 +231,42 @@ def change_and_publishing(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
     return out
 
 
+def data_notes(report: dict[str, Any]) -> list[str]:
+    """Things to check before comparing this event with others (data quality, not performance)."""
+    notes = []
+    cp, rq, reg, ops, pub = (report[k] for k in ("cable_planning", "requests", "register", "operations", "publishing"))
+    if cp["items"] and not cp["points"]:
+        notes.append(f"{cp['items']} Ethernet items but 0 points: points may not have been entered yet "
+                     "(events started from a template begin at 0).")
+    if not cp["deadline"]:
+        notes.append("No ICT request deadline is set, so late additions can't be measured.")
+    if not rq["requests"]:
+        notes.append("No ICT requests yet.")
+    if not reg["entries"]:
+        notes.append("The dependency register is empty.")
+    if not ops["tickets"]:
+        notes.append("No help desk tickets filed under this event.")
+    if not pub["published"]:
+        notes.append("Nothing published from the requirements yet.")
+    elif pub["unpublished_changes"]:
+        notes.append(f"{pub['unpublished_changes']} change(s) not yet published: figures use the current draft.")
+    return notes
+
+
 def event_report(conn: sqlite3.Connection, document: dict[str, Any]) -> dict[str, Any]:
     doc = document["id"]
-    return {
+    report = {
         "id": doc,
         "code": document["name"].split(" | ")[0],
         "archived": bool(document["archived_at"]),
+        "created_at": document["created_at"],
         "cable_planning": cable_planning(conn, doc),
         "requests": request_adoption(conn, doc),
         "register": register_health(conn, doc),
         "operations": live_operations(conn, doc),
         "publishing": change_and_publishing(conn, doc),
     }
+    return report | {"notes": data_notes(report)}
 
 
 def _events(conn: sqlite3.Connection, ids: str | None) -> list[dict[str, Any]]:
@@ -236,6 +292,9 @@ Events = Annotated[str | None, Query(max_length=500, description="Comma-separate
 def reports(conn: Conn, principal: Reader, events: Events = None) -> dict[str, Any]:
     chosen = _events(conn, events)
     return {
+        "generated_at": db.utcnow(),
+        "sources": SOURCES,
+        "definitions": DEFINITIONS,
         "events": [event_report(conn, d) for d in chosen],
         "available": [{"id": d["id"], "code": d["name"].split(" | ")[0], "archived": bool(d["archived_at"])}
                       for d in db.list_documents(conn)],
@@ -303,8 +362,22 @@ def _rows(reports_: list[dict[str, Any]]) -> list[tuple[str, list[tuple[str, Any
 
 
 @router.get("/export")
-def export(conn: Conn, principal: Reader, events: Events = None) -> Response:
+def export(conn: Conn, principal: Reader, events: Events = None,
+           format: Annotated[str, Query(pattern="^(csv|xlsx)$")] = "xlsx") -> Response:
     chosen = [event_report(conn, d) for d in _events(conn, events)]
+    generated = db.utcnow()
+    if format == "csv":
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(["Section", "Measure", *[r["code"] for r in chosen]])
+        for title, measures in _rows(chosen):
+            for label, get in measures:
+                writer.writerow([title, label, *[get(r) for r in chosen]])
+        writer.writerow([])
+        writer.writerow(["Generated (UTC)", generated[:16].replace("T", " ")])
+        log.info("%s exported the ICT report as CSV", principal.user)
+        return Response(buffer.getvalue().encode("utf-8-sig"), media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": 'attachment; filename="ICT_report.csv"'})
     wb = Workbook()
     ws = wb.active
     ws.title = "ICT report"
@@ -331,6 +404,21 @@ def export(conn: Conn, principal: Reader, events: Events = None) -> Response:
                 ws.cell(row, c, get(r)).alignment = Alignment(horizontal="right")
             row += 1
     ws.freeze_panes = "B2"
+
+    about = wb.create_sheet("About")
+    about.column_dimensions["A"].width = 32
+    about.column_dimensions["B"].width = 110
+    lines = [("Report", "ICT report: events compared against the ICT objectives"),
+             ("Generated (UTC)", generated[:16].replace("T", " ")),
+             ("Events", ", ".join(r["code"] for r in chosen)), ("", ""), ("Sources", "")]
+    lines += [(k.replace("_", " ").capitalize(), v) for k, v in SOURCES.items()]
+    lines += [("", ""), ("Definitions", "")] + list(DEFINITIONS.items())
+    notes = [(r["code"], n) for r in chosen for n in r["notes"]]
+    if notes:
+        lines += [("", ""), ("Data notes", "")] + notes
+    for i, (k, v) in enumerate(lines, start=1):
+        about.cell(i, 1, k).font = Font(bold=True)
+        about.cell(i, 2, v).alignment = Alignment(wrap_text=True, vertical="top")
     out = io.BytesIO()
     wb.save(out)
     log.info("%s exported the ICT report for %s", principal.user, ",".join(r["code"] for r in chosen))

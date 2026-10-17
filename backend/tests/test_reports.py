@@ -126,3 +126,21 @@ def test_export(client: TestClient, event: int) -> None:
         assert section in labels
     points = next(row for row in ws.iter_rows(min_row=2) if row[0].value == "Ethernet points")
     assert [c.value for c in points[1:]] == [126, 0]  # both venues of the fixture
+
+
+def test_metadata_notes_and_csv(client: TestClient, event: int) -> None:
+    fresh = client.post("/api/events", headers=ADMIN, json={"event_code": "VAN26"}).json()["id"]
+    report = _report(client, events=f"{event},{fresh}")
+    assert report["generated_at"] and "cable_planning" in report["sources"]
+    assert "Points planned, not ports used" in report["definitions"]["Ethernet points"]
+    van = report["events"][1]
+    assert van["created_at"] and any("No ICT request deadline" in n for n in van["notes"])
+    assert any("Nothing published" in n for n in van["notes"])
+
+    r = client.get("/api/reports/export", headers=VIEWER, params={"events": f"{event},{fresh}", "format": "csv"})
+    assert r.status_code == 200 and 'filename="ICT_report.csv"' in r.headers["content-disposition"]
+    text = r.content.decode("utf-8-sig")
+    assert text.splitlines()[0] == "Section,Measure,LIS26,VAN26" and "Generated (UTC)" in text
+    about = load_workbook(io.BytesIO(client.get("/api/reports/export", headers=VIEWER).content))["About"]
+    labels = [row[0].value for row in about.iter_rows()]
+    assert "Definitions" in labels and "Sources" in labels

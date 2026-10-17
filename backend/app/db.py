@@ -115,6 +115,9 @@ def init_db(path: Path) -> None:
         from .records import store as records_store  # records tables reference documents/versions
 
         records_store.init(conn)
+        from .tickets import store as tickets_store
+
+        tickets_store.init(conn)
         from .records import service as records_service
 
         records_service.purge_retired_records(conn)

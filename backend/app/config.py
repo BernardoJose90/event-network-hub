@@ -31,6 +31,11 @@ class Settings:
     app_origin: str = "http://localhost:5173"  # the page that embeds the editor
     wopi_token_secret: str = field(default_factory=lambda: secrets.token_urlsafe(32), repr=False)
     wopi_token_ttl_seconds: int = 10 * 60 * 60
+    # Help desk: WhatsApp bot integration (both unset = integration off)
+    bot_api_token: str | None = field(default=None, repr=False)  # the bot sends it as a Bearer token
+    bot_callback_url: str | None = None  # where status updates for reporters are POSTed
+    bot_callback_secret: str = field(default="", repr=False)  # HMAC key for X-Signature on those updates
+    app_public_url: str = "http://localhost:5173"  # links to tickets in bot replies
 
     @property
     def db_path(self) -> Path:
@@ -53,4 +58,8 @@ def load_settings() -> Settings:
         # Unset means a random per-process secret: editor sessions end on restart.
         wopi_token_secret=os.environ.get("WOPI_TOKEN_SECRET") or secrets.token_urlsafe(32),
         wopi_token_ttl_seconds=int(os.environ.get("WOPI_TOKEN_TTL_SECONDS", str(10 * 60 * 60))),
+        bot_api_token=os.environ.get("BOT_API_TOKEN") or None,
+        bot_callback_url=(os.environ.get("BOT_CALLBACK_URL") or "").rstrip("/") or None,
+        bot_callback_secret=os.environ.get("BOT_CALLBACK_SECRET", ""),
+        app_public_url=os.environ.get("APP_PUBLIC_URL", "http://localhost:5173").rstrip("/"),
     )

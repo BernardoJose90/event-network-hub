@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import os
 import re
@@ -18,6 +20,8 @@ from .routes import router
 from .sheet_routes import router as sheet_router
 from .service import DocumentGone
 from .storage import LocalStorage
+from .tickets import outbox
+from .tickets.routes import bot_router, router as tickets_router, settings_router as helpdesk_router
 from .wopi import router as wopi_router
 
 logging.basicConfig(
@@ -57,9 +61,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.storage = LocalStorage(settings.files_dir)
         app.state.converter = converter
         app.state.discovery = CollaboraDiscovery(settings.collabora_url)
+        worker = None
+        if settings.bot_callback_url:
+            if not settings.bot_callback_secret:
+                raise RuntimeError("BOT_CALLBACK_SECRET is required when BOT_CALLBACK_URL is set")
+            worker = asyncio.create_task(outbox.run(settings))
         try:
             yield
         finally:
+            if worker:
+                worker.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await worker
             converter.close()
 
     app = FastAPI(title="Event Network Hub", lifespan=lifespan)
@@ -68,6 +81,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(sheet_router)
     app.include_router(records_router)
     app.include_router(events_router)
+    app.include_router(tickets_router)
+    app.include_router(bot_router)
+    app.include_router(helpdesk_router)
 
     @app.exception_handler(DocumentGone)
     async def document_gone(_: Request, __: DocumentGone) -> JSONResponse:

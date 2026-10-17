@@ -48,6 +48,11 @@ services:
       APP_ORIGIN: ${APP_ORIGIN:-http://localhost:5173}
       # Leave unset locally (random per start); set from a secret store in production.
       WOPI_TOKEN_SECRET: ${WOPI_TOKEN_SECRET:-}
+      # Help desk WhatsApp bot integration (off when empty). Secrets come from .env, never the repo.
+      BOT_API_TOKEN: ${BOT_API_TOKEN:-}
+      BOT_CALLBACK_URL: ${BOT_CALLBACK_URL:-}
+      BOT_CALLBACK_SECRET: ${BOT_CALLBACK_SECRET:-}
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-http://localhost:5173}
     volumes:
       - appdata:/data
     ports:

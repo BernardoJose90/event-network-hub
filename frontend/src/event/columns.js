@@ -1,5 +1,5 @@
 // Column definitions for each record type. kind:
-//   id (assigned automatically, read-only) | text | number | choice (fixed options) | list (event list kinds)
+//   id (the row number, computed, read-only) | text | number | choice (fixed options) | list (event list kinds)
 //   | secret (Wi-Fi password)
 // Older values outside a choice's options (e.g. Band '6 GHz') stay until changed.
 

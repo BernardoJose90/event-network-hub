@@ -124,7 +124,7 @@ def init_db(path: Path) -> None:
         from .records import service as records_service
 
         records_service.purge_retired_records(conn)
-        records_service.assign_all_ids(conn)
+        records_service.strip_stored_ids(conn)
         conn.commit()
     finally:
         conn.close()

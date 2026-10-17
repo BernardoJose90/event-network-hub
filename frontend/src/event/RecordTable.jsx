@@ -241,6 +241,25 @@ export default function RecordTable({ type, api, overview, isAdmin, notify, onCh
   const sum = (rows) => rows.reduce((t, r) => t + (Number(r.data[totalCol?.field]) || 0), 0)
   const byId = useMemo(() => new Map(records.map((r) => [r.id, r])), [records])
 
+  // The ID column is the row number: 1, 2, 3… per venue in display order (whole list for
+  // partner orders). Rows waiting to be deleted don't count, so removing a row closes the gap.
+  const rowNumbers = new Map()
+  {
+    const live = records.filter((r) => !pending.isPending(r.id))
+    const venueIds = groupKind ? venues.map((v) => v.id) : [null]
+    for (const vid of venueIds) {
+      let count = 0
+      for (const group of groups) {
+        for (const r of live) {
+          if ((groupKind ? r.venue_id === vid : true) && (group ? r.group_id === group.id : true)) {
+            count += 1
+            rowNumbers.set(r.id, count)
+          }
+        }
+      }
+    }
+  }
+
   // Keyboard actions on a focused data cell (APG data grid: Enter/F2 edit, typing edits).
   grid.onCellKey.current = (key, e) => {
     const [, id, field] = key.split(':')
@@ -281,7 +300,7 @@ export default function RecordTable({ type, api, overview, isAdmin, notify, onCh
         </td>
       )
     }
-    let content = show(col, record.data[col.field])
+    let content = col.kind === 'id' ? rowNumbers.get(record.id) ?? '' : show(col, record.data[col.field])
     const locked = isTemplate && col.templateLocked
     const editable = canEdit && !locked && col.kind !== 'id'
     if (col.kind === 'secret') {
@@ -301,7 +320,7 @@ export default function RecordTable({ type, api, overview, isAdmin, notify, onCh
         className={`rec-cell${col.kind === 'number' ? ' num' : ''}${col.kind === 'id' ? ' id-cell' : ''}${editable ? ' editable' : ''}`}
         aria-readonly={!editable || undefined}
         onClick={() => { grid.setActive(key); if (editable) setEditing({ id: record.id, field: col.field }) }}
-        title={editable ? 'Click or press Enter to edit' : col.kind === 'id' ? 'Assigned automatically' : locked && canEdit ? 'Always empty or 0 in templates; set it on the event' : undefined}>
+        title={editable ? 'Click or press Enter to edit' : col.kind === 'id' ? 'The row number: it updates when rows are added, moved or removed' : locked && canEdit ? 'Always empty or 0 in templates; set it on the event' : undefined}>
         {content}
       </td>
     )

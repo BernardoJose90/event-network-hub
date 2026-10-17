@@ -166,8 +166,7 @@ def test_create_update_delete_are_logged(client: TestClient, event: int) -> None
 
     log = client.get(f"/api/events/{event}/history?entity=ethernet", headers=ADMIN).json()
     assert [(e["action"], e["field"], e["old"], e["new"]) for e in log] == [
-        ("delete", None, json.dumps({"ref_id": created["data"]["ref_id"], "purpose": "Stage 3", "vlan": "General",
-                                     "ports": 7, "notes": "BOH"}), None),
+        ("delete", None, json.dumps({"purpose": "Stage 3", "vlan": "General", "ports": 7, "notes": "BOH"}), None),
         ("update", "ports", "5", "7"),
         ("update", "notes", None, "BOH"),
         ("create", None, None, None),
@@ -694,58 +693,51 @@ def test_templates_are_not_archived_and_delete_directly(client: TestClient, even
     assert client.delete(f"/api/templates/{tpl}", headers=ADMIN).status_code == 204
 
 
-# --- automatic IDs --------------------------------------------------------------------
+# --- IDs (row numbers) -------------------------------------------------------------------
 
 
-def _ids(client, doc, rtype):
-    return [r["data"].get("ref_id") for r in _records(client, doc, rtype)]
+def _ids(client, doc, rtype, venue=None):
+    return [r["data"]["ref_id"] for r in _records(client, doc, rtype) if venue is None or r["venue_id"] == venue]
 
 
-def test_every_row_has_a_unique_id_after_import(client: TestClient, event: int) -> None:
-    for rtype in ("wifi", "ethernet", "partner"):
-        ids = _ids(client, event, rtype)
-        assert all(ids) and len(set(ids)) == len(ids), (rtype, ids)
-    assert sorted(int(i) for i in _ids(client, event, "partner")) == [1, 2, 3]
-
-
-def test_new_rows_get_the_next_id_which_is_never_reused(client: TestClient, event: int) -> None:
+def test_ids_are_row_numbers_per_venue(client: TestClient, event: int) -> None:
     ov = client.get(f"/api/events/{event}/overview", headers=ADMIN).json()
-    section = next(g["id"] for g in ov["groups"] if g["kind"] == "ethernet")
-    top = max(int(i) for i in _ids(client, event, "ethernet"))
-    r = client.post(f"/api/events/{event}/records/ethernet", headers=ADMIN, json={
-        "venue_id": ov["venues"][0]["id"], "group_id": section, "data": {"purpose": "New desk", "ref_id": "999"}})
-    new = r.json()
-    assert new["data"]["ref_id"] == str(top + 1)  # chosen IDs are ignored
-    assert client.patch(f"/api/events/{event}/records/ethernet/{new['id']}", headers=ADMIN,
-                        json={"revision": new["revision"], "data": {"ref_id": "5"}}).status_code == 422
-    client.delete(f"/api/events/{event}/records/ethernet/{new['id']}?revision={new['revision']}", headers=ADMIN)
-    again = client.post(f"/api/events/{event}/records/ethernet", headers=ADMIN, json={
-        "venue_id": ov["venues"][0]["id"], "group_id": section, "data": {"purpose": "Another desk"}}).json()
-    assert again["data"]["ref_id"] == str(top + 2)  # the deleted row's ID isn't reused
-    p = client.post(f"/api/events/{event}/records/partner", headers=ADMIN, json={"data": {"partner": "Acme"}}).json()
-    assert p["data"]["ref_id"] == "4"
+    for venue in ov["venues"]:
+        for rtype in ("wifi", "ethernet"):
+            ids = _ids(client, event, rtype, venue["id"])
+            assert ids == [str(i) for i in range(1, len(ids) + 1)], (rtype, venue["name"], ids)
+    assert _ids(client, event, "partner") == ["1", "2", "3"]
+    conn = db.connect(client.settings.db_path)  # never stored
+    assert conn.execute("SELECT COUNT(*) FROM records WHERE json_extract(data, '$.ref_id') IS NOT NULL").fetchone()[0] == 0
+    conn.close()
 
 
-def test_duplicates_are_repaired_at_start_up_keeping_unique_ids(client: TestClient, event: int) -> None:
-    wifi = _records(client, event, "wifi")
-    keep = wifi[0]["data"]["ref_id"]
+def test_adding_increments_and_removing_decrements(client: TestClient, event: int) -> None:
+    partners = _records(client, event, "partner")
+    r = client.post(f"/api/events/{event}/records/partner", headers=ADMIN, json={"data": {"partner": "Acme", "ref_id": "99"}})
+    assert r.status_code == 201
+    assert _ids(client, event, "partner") == ["1", "2", "3", "4"]
+    first = partners[0]
+    client.delete(f"/api/events/{event}/records/partner/{first['id']}?revision={first['revision']}", headers=ADMIN)
+    after = _records(client, event, "partner")
+    assert [x["data"]["ref_id"] for x in after] == ["1", "2", "3"]
+    assert next(x for x in after if x["data"]["partner"] == "Acme")["data"]["ref_id"] == "3"
+    acme = next(x for x in after if x["data"]["partner"] == "Acme")
+    assert client.patch(f"/api/events/{event}/records/partner/{acme['id']}", headers=ADMIN,
+                        json={"revision": acme["revision"], "data": {"ref_id": "7"}}).status_code == 422
+
+
+def test_stored_ids_from_earlier_builds_are_removed(client: TestClient, event: int) -> None:
+    wifi = _records(client, event, "wifi")[0]
     conn = db.connect(client.settings.db_path)
     with conn:
-        # a second row claims the first row's ID, a third loses its ID
-        conn.execute("UPDATE records SET data = json_set(data, '$.ref_id', ?) WHERE id = ?", (keep, wifi[1]["id"]))
-        conn.execute("UPDATE records SET data = json_remove(data, '$.ref_id') WHERE id = ?", (wifi[2]["id"],))
+        conn.execute("UPDATE records SET data = json_set(data, '$.ref_id', '42') WHERE id = ?", (wifi["id"],))
     conn.close()
     db.init_db(client.settings.db_path)
-    after = {r["id"]: r["data"]["ref_id"] for r in _records(client, event, "wifi")}
-    assert after[wifi[0]["id"]] == keep and len(set(after.values())) == len(after)
-    assert after[wifi[3]["id"]] == wifi[3]["data"]["ref_id"]  # untouched rows keep their IDs
+    assert _records(client, event, "wifi")[0]["data"]["ref_id"] == "1"
 
 
-def test_ids_are_kept_in_templates_and_published(client: TestClient, event: int) -> None:
-    tpl = client.post("/api/templates", headers=ADMIN, json={"name": "LIS", "event_id": event}).json()["id"]
-    source = {r["data"]["purpose"]: r["data"]["ref_id"] for r in _records(client, event, "ethernet")}
-    copied = {r["data"]["purpose"]: r["data"]["ref_id"] for r in _records(client, tpl, "ethernet")}
-    assert all(source[k] == v for k, v in copied.items())
+def test_published_files_show_the_row_numbers(client: TestClient, event: int) -> None:
     client.post(f"/api/events/{event}/publish", headers=ADMIN)
     from openpyxl import load_workbook
     import io
@@ -754,5 +746,7 @@ def test_ids_are_kept_in_templates_and_published(client: TestClient, event: int)
     wb = load_workbook(io.BytesIO(client.app.state.storage.get(version_key(event, 2, "original.xlsx"))))
     eth = next(ws for ws in wb.worksheets if ws.title.endswith("Ethernet Req"))
     assert eth["A1"].value == "ID" and eth["I1"].value == "Ethernet Points"
-    assert wb["Partners Custom Orders"]["A1"].value == "ID"
-    assert "<th" in client.app.state.converter.html and ">ID<" in client.app.state.converter.html
+    ids = [row[0].value for row in eth.iter_rows(min_row=2) if row[1].value and str(row[0].value).isdigit()]
+    assert ids == [str(i) for i in range(1, len(ids) + 1)]
+    partners = wb["Partners Custom Orders"]
+    assert [partners.cell(r, 1).value for r in range(1, 5)] == ["ID", "1", "2", "3"]

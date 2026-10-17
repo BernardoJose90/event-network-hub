@@ -116,7 +116,7 @@ backend/app/
 **Open Network Requirements** on an event opens `/event/<document id>`. There, an event's network requirements are kept as structured records instead of spreadsheet cells:
 
 - **Overview:** totals per venue and section, counts, list values to review, unpublished changes, and **Publish V<n>** (admins).
-- **IDs:** every Wi-Fi network, Ethernet item and partner order has an **ID**, shown in the first column. It's unique within the event and type, assigned automatically when the row is created (by hand, by import, by an approved ICT request, or from a template), and never changed or reused, even after the row is deleted. That makes it safe to quote in tickets and conversations. Imported Wi-Fi IDs are kept where they're unique; missing or duplicate ones get the next free number. Published Excel and PDF files include the ID column, and re-importing them keeps the IDs.
+- **IDs:** the ID column is the row number: 1, 2, 3… in display order, per venue for Wi-Fi networks and Ethernet requirements (as each venue tab shows them), and down the list for partner orders. Adding a row continues the count, and removing or moving a row renumbers the rows below it. IDs aren't stored or edited; IDs in imported workbooks are ignored. Published Excel and PDF files show the same numbers.
 - **Wi-Fi networks, Ethernet requirements, Partner orders:**
   - venue tabs, with section rows showing live subtotals;
   - click a cell to edit; VLAN and location come from the Setup lists; numbers are checked;

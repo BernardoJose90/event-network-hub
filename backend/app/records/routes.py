@@ -226,7 +226,10 @@ def import_version(request: Request, document_id: int, conn: Conn, principal: Ed
 def list_records(document_id: int, record_type: RecordTypePath, conn: Conn, principal: Reader,
                  ) -> list[dict[str, Any]]:
     _document(conn, document_id)
-    return [service.public(r) for r in store.records(conn, document_id, record_type)]
+    records = store.records(conn, document_id, record_type)
+    numbers = service.row_numbers(records)  # the ID column: row numbers in display order
+    return [service.public(r) | {"data": service.public(r)["data"] | {"ref_id": numbers[r["id"]]}}
+            if r["id"] in numbers else service.public(r) for r in records]
 
 
 @router.post("/records/{record_type}", status_code=status.HTTP_201_CREATED)

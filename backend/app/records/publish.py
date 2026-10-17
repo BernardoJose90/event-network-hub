@@ -61,9 +61,12 @@ def snapshot(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
     group_name = {g["id"]: g["name"] for g in groups}
     venue_name = {v["id"]: v["name"] for v in venues}
     records = []
-    for r in store.records(conn, doc):
+    rows = store.records(conn, doc)
+    numbers = service.row_numbers(rows)  # IDs are row numbers in display order
+    for r in rows:
+        data = dict(r["data"]) | ({"ref_id": numbers[r["id"]]} if r["id"] in numbers else {})
         records.append({"id": r["id"], "type": r["type"], "venue": venue_name.get(r["venue_id"]),
-                        "group": group_name.get(r["group_id"]), "data": r["data"]})
+                        "group": group_name.get(r["group_id"]), "data": data})
     return {
         "venues": [v["name"] for v in venues],
         "groups": {kind: [g["name"] for g in groups if g["kind"] == kind] for kind in ("wifi", "ethernet")},

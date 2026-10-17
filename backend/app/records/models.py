@@ -51,7 +51,7 @@ class _Data(BaseModel):
 
 
 class WifiData(_Data):
-    ref_id: Text = None  # the sheet's "ID" column
+    ref_id: Text = None  # the row number, computed for display (service.row_numbers); never stored
     ssid: Text = None
     coverage: Text = None
     password_required: Literal["yes", "no", "open network"] | None = None
@@ -68,7 +68,7 @@ class WifiData(_Data):
 
 
 class EthernetData(_Data):
-    ref_id: Text = None  # assigned automatically (service.next_ref_id)
+    ref_id: Text = None  # the row number, computed for display (service.row_numbers); never stored
     purpose: Text = None
     location: Text = None  # from the building/location lists
     vlan: Text = None  # from the VLAN list
@@ -81,7 +81,7 @@ class EthernetData(_Data):
 
 
 class PartnerData(_Data):
-    ref_id: Text = None  # assigned automatically (service.next_ref_id)
+    ref_id: Text = None  # the row number, computed for display (service.row_numbers); never stored
     partner: Text = None
     pavilion: Text = None
     stand: Text = None

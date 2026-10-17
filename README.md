@@ -380,6 +380,27 @@ Internal teams (AV, Photographers & Videographers, Engineering, CCTV) request co
   - The new row's notes cite the request: "ICT request #n (team, requester)". It goes out with the next published version.
 - **Unpublished changes.** Submissions and reviews don't count as changes; approvals do, because they add rows.
 
+## Reports (cross-event)
+
+**Reports** in the top bar shows how each event did against the ICT objectives, with events side by side. By default it shows all active events; archived events can be ticked in for comparison. Everyone can read it, and **Export Excel** gives the same table, one column per event.
+
+1. **Cable planning:**
+   - Ethernet points and items per event, with a breakdown per venue and section;
+   - points that came through ICT requests;
+   - items and points added after the request deadline;
+   - wired help desk tickets on site.
+
+   Together these measure fewer unused cables and fewer "unknown" requirements. It measures points *planned*, because ports actually used after the event aren't recorded.
+2. **ICT request adoption:** requests per event and per team, teams using the form, the share submitted on time (goal 90%), the share with "not sure" answers, review time, and requests still waiting.
+3. **Dependency register health:**
+   - the share of areas in use (Ethernet locations) with a register entry, and which areas have none;
+   - entries without an accountable owner, entries needing review, and P1 entries without a runbook;
+   - counts per criticality.
+4. **Live operations:** the help desk KPIs per event: acknowledged within 5 minutes (goal 90%), closure quality (goal 90%), time to resolve, partner-impacting tickets, and recurrence.
+5. **Change and publishing:** versions and published versions, first and last publish dates, the changelog from the first to the last published version (including the Ethernet point change), and unpublished changes.
+
+Figures show their goal as text ("on target" or "goal 90%"), never by colour alone. API: `GET /api/reports[?events=1,2]` and `GET /api/reports/export[?events=…]`. Code: `backend/app/reports.py` and `frontend/src/reports/`.
+
 ## UI and accessibility
 
 The interface follows these published standards:

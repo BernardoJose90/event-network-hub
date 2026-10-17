@@ -1,9 +1,10 @@
 import { ROLES } from '../identity.js'
 
-// The app's top bar: brand, the two areas (Events, Help desk) and the TEST ONLY identity.
+// The app's top bar: brand, the areas (Events, Help desk, Reports) and the TEST ONLY identity.
 const AREAS = [
   ['events', 'Events', '/'],
   ['helpdesk', 'Help desk', '/helpdesk'],
+  ['reports', 'Reports', '/reports'],
 ]
 
 export default function TopBar({ identity, onChange, current }) {

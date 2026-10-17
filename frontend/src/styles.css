@@ -2665,3 +2665,104 @@ dialog.dialog.wide {
   overflow: auto;
   padding-right: 4px;
 }
+
+/* --- Reports ------------------------------------------------------------------------------ */
+
+.reports-page .hd-bar p {
+  margin: 0;
+}
+
+.event-picker {
+  margin-bottom: 16px;
+}
+
+.report-section {
+  margin-bottom: 16px;
+}
+
+.report-section h2 {
+  margin: 0 0 4px;
+  font-size: 1.2rem;
+}
+
+.report-table th[scope='row'] {
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.report-table td {
+  white-space: nowrap;
+}
+
+.goal-ok {
+  color: var(--ok);
+  font-weight: 700;
+}
+
+.goal-miss {
+  color: #8a3b00;
+  font-weight: 700;
+}
+
+.bars {
+  list-style: none;
+  margin: 8px 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 720px;
+}
+
+.bars li {
+  display: grid;
+  grid-template-columns: minmax(80px, 200px) 1fr 56px;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.88rem;
+}
+
+.bar-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bar-track {
+  height: 12px;
+  border-radius: 6px;
+  background: #ececee;
+  overflow: hidden;
+}
+
+.bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 6px;
+  background: var(--teal);
+}
+
+.bar-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.report-more {
+  margin-top: 10px;
+}
+
+.report-breakdown h3 {
+  margin: 10px 0 0;
+  font-size: 1rem;
+}
+
+.report-more > summary {
+  display: list-item;
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--teal-text);
+}

@@ -43,6 +43,7 @@ const pages = [
   ['Help desk ticket', `/helpdesk?view=tickets&list=all&ticket=${process.env.TICKET_ID || 1}`],
   ['Help desk reports', '/helpdesk?view=reports'],
   ['Help desk recurring issues', '/helpdesk?view=recurring'],
+  ['Reports', '/reports'],
   ...(process.env.REQUEST_TOKEN ? [['ICT request form', `/request/${process.env.REQUEST_TOKEN}`]] : []),
 ]
 

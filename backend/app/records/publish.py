@@ -42,7 +42,7 @@ ETHERNET_WIDTHS = [30, 30, 28, 14, 18, 18, 12, 12, 58]
 PARTNER_FIELDS = ["partner", "pavilion", "stand", "solution", "bandwidth_mbps", "default_cables", "total_ports",
                   "wifi", "vlans", "notes", "purchased"]
 PARTNER_WIDTHS = [40, 8, 14, 42, 18, 14, 18, 8, 8, 40, 12]
-SKIPPED_ACTIONS = ("reveal", "legacy", "publish")
+SKIPPED_ACTIONS = ("reveal", "legacy", "publish", "request", "review")  # not changes to the requirements
 
 
 # --- snapshot --------------------------------------------------------------------

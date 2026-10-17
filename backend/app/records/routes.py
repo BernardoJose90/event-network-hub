@@ -23,7 +23,7 @@ from ..storage import ObjectNotFound, version_key
 from . import dependencies, service, store
 from .importer import import_workbook
 from .models import ListValue, NamedItem, NewRecord, RecordMove, RecordPatch
-from .publish import changes_since_last_publish, publish
+from .publish import SKIPPED_ACTIONS, changes_since_last_publish, publish
 
 log = logging.getLogger(__name__)
 
@@ -153,7 +153,7 @@ def overview(document_id: int, conn: Conn, principal: Reader) -> dict[str, Any]:
         counts[record["type"]] = counts.get(record["type"], 0) + 1
     last_publish = store.last_publish_log_id(conn, document_id)
     unpublished = [e for e in store.history(conn, document_id, after_id=last_publish or 0, limit=10_000)
-                   if e["action"] not in ("reveal", "legacy", "publish")]
+                   if e["action"] not in SKIPPED_ACTIONS]
     latest = db.latest_version(conn, document_id, statuses=(db.STATUS_READY,))
     lists = store.lists(conn, document_id)
     return {

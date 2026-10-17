@@ -15,6 +15,7 @@ from . import db
 from .config import Settings, load_settings
 from .converter import GotenbergConverter
 from .collabora import CollaboraDiscovery
+from .ictrequests.routes import admin_router as requests_admin_router, public_router as requests_public_router
 from .records.routes import events_router, router as records_router
 from .routes import router
 from .sheet_routes import router as sheet_router
@@ -84,6 +85,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(tickets_router)
     app.include_router(bot_router)
     app.include_router(helpdesk_router)
+    app.include_router(requests_public_router)
+    app.include_router(requests_admin_router)
 
     @app.exception_handler(DocumentGone)
     async def document_gone(_: Request, __: DocumentGone) -> JSONResponse:

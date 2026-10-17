@@ -118,6 +118,9 @@ def init_db(path: Path) -> None:
         from .tickets import store as tickets_store
 
         tickets_store.init(conn)
+        from .ictrequests import service as requests_service
+
+        requests_service.init(conn)
         from .records import service as records_service
 
         records_service.purge_retired_records(conn)

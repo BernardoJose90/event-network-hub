@@ -301,7 +301,7 @@ def test_publish_creates_next_version(client: TestClient, event: int) -> None:
     assert "LIS26 | Event_Network_Requirements" in html and "Version 2" in html
     assert "#Production" in html and "StaffPass1!" in html  # the published report shows passwords, as before
     assert ">111<" in html and ">124<" in html  # section and venue totals
-    assert "Imported requirements from V1" in html
+    assert "Changes in this version" in html and "First version: 14 items." in html
 
     ov = client.get(f"/api/events/{event}/overview", headers=ADMIN).json()
     assert (ov["unpublished_changes"], ov["latest_version"]) == (0, 2)
@@ -335,7 +335,9 @@ def test_changes_since_publish(client: TestClient, event: int) -> None:
     changes = client.get(f"/api/events/{event}/changes", headers=VIEWER).json()
     assert [c["summary"] for c in changes] == ["Changed Ethernet Points of Ethernet requirement 'Photographers Office'"]
     client.post(f"/api/events/{event}/publish", headers=ADMIN)
-    assert "Changed Ethernet Points" in client.app.state.converter.html
+    html = client.app.state.converter.html
+    assert "<strong>Changed</strong> Photographers Office" in html and "Ethernet Points 2 → 4" in html
+    assert "0 added · 0 removed · 1 changed" in html
 
 
 def test_publish_rules(client: TestClient, event: int) -> None:
@@ -364,6 +366,7 @@ def test_report_escapes_text(client: TestClient, event: int) -> None:
 
 
 def test_delete_removes_from_totals_and_reports(client: TestClient, event: int) -> None:
+    client.post(f"/api/events/{event}/publish", headers=ADMIN)  # V2 has the item
     eth = _find(client, event, "ethernet", purpose="FoodTrucks / Bar")
     url = f"/api/events/{event}/records/ethernet/{eth['id']}"
     assert client.delete(f"{url}?revision={eth['revision']}", headers=VIEWER).status_code == 403
@@ -375,7 +378,7 @@ def test_delete_removes_from_totals_and_reports(client: TestClient, event: int) 
     client.post(f"/api/events/{event}/publish", headers=ADMIN)
     html = client.app.state.converter.html
     assert "<td>FoodTrucks / Bar</td>" not in html  # not in the tables…
-    assert "Deleted Ethernet requirement &#x27;FoodTrucks / Bar&#x27;" in html  # …only in the change list
+    assert "<strong>Removed</strong> FoodTrucks / Bar" in html  # …only in the changelog
     assert client.post(f"{url}/archive", headers=ADMIN, json={"revision": 1}).status_code in (404, 405)
 
 

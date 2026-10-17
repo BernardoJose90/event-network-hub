@@ -23,7 +23,7 @@ from ..storage import ObjectNotFound, version_key
 from . import dependencies, service, store
 from .importer import import_workbook
 from .models import ListValue, NamedItem, NewRecord, RecordMove, RecordPatch
-from .publish import SKIPPED_ACTIONS, changes_since_last_publish, publish
+from .publish import SKIPPED_ACTIONS, changelog_between, changes_since_last_publish, publish
 
 log = logging.getLogger(__name__)
 
@@ -426,17 +426,35 @@ def delete_group(document_id: int, group_id: int, conn: Conn, principal: Editor)
 # --- publish -----------------------------------------------------------------------------
 
 
+class PublishBody(BaseModel):
+    note: str | None = Field(default=None, max_length=1000)
+
+
 @router.post("/publish", status_code=status.HTTP_201_CREATED)
-def publish_version(request: Request, document_id: int, conn: Conn, principal: Editor) -> dict[str, Any]:
-    """Freeze the records as the next version (Excel in the workbook layout + PDF report)."""
+def publish_version(request: Request, document_id: int, conn: Conn, principal: Editor,
+                    body: PublishBody | None = None) -> dict[str, Any]:
+    """Freeze the records as the next version (Excel in the workbook layout + PDF report).
+    The optional note is shown at the top of the version's changelog."""
     _document(conn, document_id)
+    note = (body.note or "").strip() or None if body else None
     version, failure = _run(lambda: publish(conn, request.app.state.storage, request.app.state.converter,
-                                            doc=document_id, user=principal.user))
+                                            doc=document_id, user=principal.user, note=note))
     if failure:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY,
                             f"V{version['version']} could not be finished: {failure}. Try publishing again.")
     log.info("%s published document %s as V%s", principal.user, document_id, version["version"])
     return {"version": version, "message": f"Published V{version['version']}."}
+
+
+@router.get("/changelog")
+def version_changelog(document_id: int, conn: Conn, principal: Reader,
+                      to: Annotated[str, Query(pattern=r"^(draft|\d{1,4})$")] = "draft",
+                      from_: Annotated[int | None, Query(alias="from", ge=1)] = None) -> dict[str, Any]:
+    """Item-level changes: added, removed and changed items (with old -> new values) and
+    Ethernet point totals. to=<version> compares it with the previous published version
+    (or from=<version>); to=draft shows what the next publish would contain."""
+    _document(conn, document_id)
+    return _run(lambda: changelog_between(conn, document_id, to=to, from_version=from_))
 
 
 @router.get("/changes")

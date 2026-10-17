@@ -24,7 +24,7 @@ from .. import db
 from ..converter import ConversionError, Converter
 from ..service import FULL_PDF, ORIGINAL, allocate_next_version
 from ..storage import Storage, version_key
-from . import service, store
+from . import changelog, service, store
 from .models import LABELS
 
 log = logging.getLogger(__name__)
@@ -74,7 +74,7 @@ def _dependency_snapshot(conn: sqlite3.Connection, doc: int) -> list[dict[str, A
 
     names = {r["id"]: r["data"].get("ssid") or r["data"].get("purpose") or f"#{r['id']}"
              for r in store.records(conn, doc) if r["type"] in ("wifi", "ethernet")}
-    return [dep["data"] | {"linked": [names[i] for i in dep["data"].get("records", []) if i in names],
+    return [dep["data"] | {"id": dep["id"], "linked": [names[i] for i in dep["data"].get("records", []) if i in names],
                            "last_reviewed_at": dep["last_reviewed_at"]}
             for dep in dependencies.list_for(conn, doc)]
 
@@ -141,7 +141,7 @@ def _dropdown(ws, formula: str, column: int, first: int, last: int) -> None:
     ws.add_data_validation(dv)
 
 
-def build_workbook(snap: dict, changes: list[dict], *, version: int) -> bytes:
+def build_workbook(snap: dict, log: dict, *, version: int) -> bytes:
     wb = Workbook()
     wb.remove(wb.active)
     setup_rows = {kind: len(values) + 1 for kind, values in snap["lists"].items()}
@@ -195,9 +195,14 @@ def build_workbook(snap: dict, changes: list[dict], *, version: int) -> bytes:
             _body(ws, i, _dependency_row(dep))
 
     ws = wb.create_sheet("Changes - Log")
-    _header(ws, ["When", "Who", "Change"], [20, 18, 100])
-    for i, entry in enumerate(changes, start=2):
-        _body(ws, i, [entry["at"].replace("T", " ")[:16], entry["user"], entry["summary"]])
+    _header(ws, ["Change", "Type", "Item", "Where", "Details"], [12, 22, 34, 34, 80])
+    rows = changelog.lines(log)
+    if log.get("note"):
+        rows.insert(0, ("Note", "", "", "", log["note"]))
+    if log["first"]:
+        rows.insert(1 if log.get("note") else 0, ("First version", "", f"{log['items']} items", "", ""))
+    for i, row in enumerate(rows, start=2):
+        _body(ws, i, list(row))
 
     ws = wb.create_sheet("Setup")
     for col, (kind, title) in enumerate([("building", "Building"), ("location", "Hall/Location/Area"),
@@ -255,7 +260,34 @@ def _table(headers: list[str], widths: list[int], body: str, extra_class: str = 
             f"<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>")
 
 
-def build_report(snap: dict, changes: list[dict], *, title: str, version: int, user: str, when: str) -> str:
+def _changes_html(log: dict) -> str:
+    """The version's changelog section of the report."""
+    parts = []
+    if log.get("note"):
+        parts.append(f'<p class="note"><strong>Note:</strong> {_e(log["note"])}</p>')
+    if log["first"]:
+        parts.append(f"<p>First version: {log['items']} items.</p>")
+    else:
+        c = log["counts"]
+        parts.append(f"<p>{c['added']} added · {c['removed']} removed · {c['changed']} changed</p>"
+                     if any(c.values()) else '<p class="muted">No changes to the requirements since the previous version.</p>')
+        for s in log["sections"]:
+            items = [f'<li><strong>Added</strong> {_e(i["name"])}<span class="muted"> · {_e(i["where"])}</span>'
+                     f'{" — " + _e(i["summary"]) if i["summary"] else ""}</li>' for i in s["added"]]
+            items += [f'<li><strong>Removed</strong> {_e(i["name"])}<span class="muted"> · {_e(i["where"])}</span></li>'
+                      for i in s["removed"]]
+            items += [f'<li><strong>Changed</strong> {_e(i["name"])}<span class="muted"> · {_e(i["where"])}</span>: '
+                      + "; ".join(f'{_e(f["label"])} {_e(f["old"])} → {_e(f["new"])}' if f["old"] else
+                                  f'{_e(f["label"])}: {_e(f["new"])}' for f in i["fields"]) + "</li>" for i in s["changed"]]
+            parts.append(f'<h3>{_e(s["title"])}</h3><ul class="changes">{"".join(items)}</ul>')
+    if log["points"] and not log["first"]:
+        parts.append("<h3>Ethernet points</h3><ul class=\"changes\">" + "".join(
+            f'<li>{_e(p["venue"])}: {_e(p["old"] if p["old"] is not None else "—")} → {_e(p["new"])}</li>'
+            for p in log["points"]) + "</ul>")
+    return "".join(parts)
+
+
+def build_report(snap: dict, log: dict, *, title: str, version: int, user: str, when: str) -> str:
     totals = {t["venue"]: t for t in snap["totals"]["ethernet"]}
     count = lambda t, v=None: len(_rows(snap, t, v))  # noqa: E731
     summary = "".join(
@@ -313,10 +345,7 @@ def build_report(snap: dict, changes: list[dict], *, title: str, version: int, u
                      + _table([c for c, _ in DEPENDENCY_COLUMNS], [w for _, w in DEPENDENCY_COLUMNS], dep_rows)
                      + "</section>")
 
-    change_items = "".join(
-        f"<li>{_e(c['at'].replace('T', ' ')[:16])} · {_e(c['user'])} · {_e(c['summary'])}</li>" for c in changes[:300]
-    ) or '<li class="muted">No changes recorded since the previous version.</li>'
-    parts.append(f'<section><h2>Changes since the previous version</h2><ul class="changes">{change_items}</ul></section>')
+    parts.append(f"<section><h2>Changes in this version</h2>{_changes_html(log)}</section>")
 
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{_e(title)} V{version}</title>'
             f"<style>{REPORT_CSS}</style></head><body>{''.join(parts)}</body></html>")
@@ -332,7 +361,7 @@ def changes_since_last_publish(conn: sqlite3.Connection, doc: int) -> list[dict]
 
 
 def publish(conn: sqlite3.Connection, storage: Storage, converter: Converter, *, doc: int,
-            user: str) -> tuple[dict[str, Any], str | None]:
+            user: str, note: str | None = None) -> tuple[dict[str, Any], str | None]:
     """Create the next version from the records. Returns (version row, failure reason or None)."""
     document = db.get_document(conn, doc)
     if document["kind"] == "template":
@@ -340,7 +369,10 @@ def publish(conn: sqlite3.Connection, storage: Storage, converter: Converter, *,
     if not store.has_records(conn, doc):
         raise service.RecordError(409, "There is nothing to publish yet. Import or add requirements first.")
     snap = snapshot(conn, doc)
-    changes = changes_since_last_publish(conn, doc)
+    if note:
+        snap["note"] = note
+    previous = store.previous_snapshot(conn, doc)
+    changes = changelog.diff(previous[1] if previous else None, snap)
     version_hint = db.max_version(conn, doc) + 1
     xlsx = build_workbook(snap, changes, version=version_hint)
     version = allocate_next_version(conn, document_id=doc, sha256=hashlib.sha256(xlsx).hexdigest(), user=user,
@@ -363,5 +395,32 @@ def publish(conn: sqlite3.Connection, storage: Storage, converter: Converter, *,
         store.save_snapshot(conn, version_id=version["id"], doc=doc, data=snap)
         if failure is None:
             store.log(conn, doc=doc, entity="event", action="publish", user=user, new=n,
-                      summary=f"Published V{n} ({len(changes)} change(s) since the previous version)")
+                      summary=f"Published V{n}: " + ("first version" if changes["first"] else
+                              "{added} added, {removed} removed, {changed} changed".format(**changes["counts"]))
+                              + (f" — {note}" if note else ""))
     return db.get_version_by_id(conn, version["id"]), failure  # type: ignore[return-value]
+
+
+def changelog_between(conn: sqlite3.Connection, doc: int, *, to: str, from_version: int | None = None
+                      ) -> dict[str, Any]:
+    """Changelog for a published version (against the one before it, or ``from_version``), or for
+    the unpublished draft (to='draft') against the latest published version."""
+    if to == "draft":
+        new, to_label = snapshot(conn, doc), "draft"
+        previous = store.previous_snapshot(conn, doc)
+    else:
+        n = int(to)
+        new = store.snapshot_for(conn, doc, n)
+        if new is None:
+            raise service.RecordError(422, f"V{n} wasn't published from the requirements, so it has no item list "
+                                           "to compare. Uploaded and edited workbooks can only be viewed.")
+        to_label = n
+        previous = store.previous_snapshot(conn, doc, before=n)
+    if from_version is not None:
+        old = store.snapshot_for(conn, doc, from_version)
+        if old is None:
+            raise service.RecordError(422, f"V{from_version} wasn't published from the requirements, so it can't be compared.")
+        previous = (from_version, old)
+    log = changelog.diff(previous[1] if previous else None, new)
+    return log | {"from_version": previous[0] if previous else None, "to_version": to_label,
+                  "published_versions": store.published_versions(conn, doc)}

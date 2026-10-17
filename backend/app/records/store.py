@@ -254,6 +254,32 @@ def last_publish_log_id(conn: sqlite3.Connection, doc: int) -> int | None:
     return row[0]
 
 
+def snapshot_for(conn: sqlite3.Connection, doc: int, version: int) -> dict[str, Any] | None:
+    """The snapshot saved when ``version`` was published (None for uploaded/edited versions)."""
+    row = conn.execute(
+        "SELECT s.data FROM published_snapshots s JOIN document_versions v ON v.id = s.version_id "
+        "WHERE s.document_id = ? AND v.version = ?", (doc, version)).fetchone()
+    return json.loads(row[0]) if row else None
+
+
+def previous_snapshot(conn: sqlite3.Connection, doc: int, before: int | None = None) -> tuple[int, dict] | None:
+    """(version, snapshot) of the latest published version, or the latest one before ``before``."""
+    sql = ("SELECT v.version, s.data FROM published_snapshots s JOIN document_versions v ON v.id = s.version_id "
+           "WHERE s.document_id = ? AND v.status = 'ready'")
+    args: list[Any] = [doc]
+    if before is not None:
+        sql += " AND v.version < ?"
+        args.append(before)
+    row = conn.execute(sql + " ORDER BY v.version DESC LIMIT 1", args).fetchone()
+    return (row[0], json.loads(row[1])) if row else None
+
+
+def published_versions(conn: sqlite3.Connection, doc: int) -> list[int]:
+    return [r[0] for r in conn.execute(
+        "SELECT v.version FROM published_snapshots s JOIN document_versions v ON v.id = s.version_id "
+        "WHERE s.document_id = ? AND v.status = 'ready' ORDER BY v.version", (doc,))]
+
+
 def save_snapshot(conn: sqlite3.Connection, *, version_id: int, doc: int, data: dict[str, Any]) -> None:
     conn.execute("INSERT OR REPLACE INTO published_snapshots (version_id, document_id, data) VALUES (?, ?, ?)",
                  (version_id, doc, json.dumps(data)))

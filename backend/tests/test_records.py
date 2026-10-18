@@ -665,8 +665,6 @@ def test_archive_event_makes_it_read_only(client: TestClient, event: int) -> Non
         client.post(f"/api/events/{event}/venues", headers=ADMIN, json={"name": "Hall 9"}),
         client.post(f"/api/events/{event}/publish", headers=ADMIN),
         client.post(f"/api/events/{event}/import", headers=ADMIN, json={"replace": True}),
-        client.post(f"/api/documents/{event}/versions/1/edit", headers=ADMIN),
-        client.post(f"/api/documents/{event}/sheet", headers=ADMIN, json={}),
         client.post("/api/documents/upload", headers=ADMIN,
                     files={"file": ("LIS26 _ Event_Network_Requirements_V2.xlsx", records_workbook(), XLSX)}),
     ]
@@ -750,3 +748,10 @@ def test_published_files_show_the_row_numbers(client: TestClient, event: int) ->
     assert ids == [str(i) for i in range(1, len(ids) + 1)]
     partners = wb["Partners Custom Orders"]
     assert [partners.cell(r, 1).value for r in range(1, 5)] == ["ID", "1", "2", "3"]
+
+
+def test_spreadsheet_editors_are_gone(client: TestClient, event: int) -> None:
+    """Changes go through the requirements and Publish only: no Excel editor, no live sheet."""
+    assert client.post(f"/api/documents/{event}/versions/1/edit", headers=ADMIN).status_code == 404
+    assert client.post(f"/api/documents/{event}/sheet", headers=ADMIN, json={}).status_code == 404
+    assert client.get("/wopi/files/x", params={"access_token": "t"}).status_code == 404

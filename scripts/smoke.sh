@@ -9,13 +9,10 @@
 #   c) the PDF page count equals the number of visible sheets
 #   d) the Excel download is byte-identical to the uploaded file
 #   e) uploading the same version number twice is rejected
-#   f) the in-browser editor opens (Collabora page loads and can read the file)
-#   g) the live sheet: create it, edit a cell via the API, a stale save is
-#      refused, and the downloaded PDF shows the edit
-#   h) requirements: import the workbook into records, publish the next
+#   f) requirements: import the workbook into records, publish the next
 #      version (PDF report in Overpass, no DejaVu), and re-importing the
 #      published Excel gives the same records and totals
-#   i) deleting the document works and removes its files (this also cleans up)
+#   g) deleting the document works and removes its files (this also cleans up)
 #
 # Downloaded PDFs live in a private temp dir that is deleted on exit.
 #
@@ -134,62 +131,7 @@ for sample in "${samples[@]}"; do
     fail "e) uploading V1 again returned HTTP $code_dup (expected 409)"
   fi
 
-  # --- f) in-browser editor ---------------------------------------------------------
-  code_ed="$(curl -sS -o "$work/edit.json" -w '%{http_code}' -X POST -H "X-Role: network-admin" \
-    -H "X-User: smoke-test" "$API/documents/$doc_id/versions/$version/edit")"
-  if [ "$code_ed" = "200" ]; then
-    editor_url="$(jq -r '.editor_url' "$work/edit.json")"
-    token="$(jq -r '.access_token' "$work/edit.json")"
-    wopi_src="$(python3 -c 'import sys, urllib.parse as u; print(u.parse_qs(u.urlparse(sys.argv[1]).query)["WOPISrc"][0])' "$editor_url")"
-    code_page="$(curl -sS -o /dev/null -w '%{http_code}' "${editor_url%%\?*}")"
-    # CheckFileInfo as Collabora would call it, from inside the compose network.
-    wopi_name="$(docker compose -f "$ROOT/docker-compose.yml" exec -T backend python -c \
-      'import sys, httpx; print(httpx.get(sys.argv[1], params={"access_token": sys.argv[2]}).json().get("BaseFileName", ""))' \
-      "$wopi_src" "$token" 2>/dev/null || true)"
-    if [ "$code_page" = "200" ] && [ -n "$wopi_name" ]; then
-      pass "f) editor opens: Collabora page loads and can read '$wopi_name'"
-    else
-      fail "f) editor page HTTP $code_page, WOPI file name '${wopi_name}'"
-    fi
-  else
-    fail "f) starting an edit session returned HTTP $code_ed"
-  fi
-
-  # --- g) live sheet -----------------------------------------------------------------
-  code_ls="$(curl -sS -o "$work/sheet.json" -w '%{http_code}' -X POST -H "X-Role: network-admin" \
-    -H "X-User: smoke-test" -H 'Content-Type: application/json' -d '{}' "$API/documents/$doc_id/sheet")"
-  if [ "$code_ls" = "200" ]; then
-    # Put a marker into the first row of the first sheet, in its widest column
-    # (narrow columns clip text in the PDF, as Excel does), and save it.
-    python3 - "$work/sheet.json" "$work/save.json" <<'PY'
-import json, sys
-sheet = json.load(open(sys.argv[1]))
-first = sheet["data"]["sheets"][0]
-col = max(first["columns"], key=lambda c: c.get("width", 100))["id"]
-cell = first["rows"][0]["cells"].get(col, {})
-cell.update({"v": "SMOKE-LIVE-EDIT", "kind": "text"})
-cell.pop("source", None); cell.pop("expr", None)
-first["rows"][0]["cells"][col] = cell
-json.dump({"data": sheet["data"], "revision": sheet["revision"]}, open(sys.argv[2], "w"))
-PY
-    save() { curl -sS -o /dev/null -w '%{http_code}' -X PUT -H "X-Role: network-admin" -H "X-User: smoke-test" \
-      -H 'Content-Type: application/json' --data-binary @"$work/save.json" "$API/documents/$doc_id/sheet"; }
-    code_save="$(save)"; code_stale="$(save)"  # the second save reuses the old revision
-    code_lpdf="$(curl -sS -o "$work/live.pdf" -w '%{http_code}' -H "X-Role: network-admin" \
-      "$API/documents/$doc_id/sheet/download?format=pdf")"
-    live_pages="$(pdfinfo "$work/live.pdf" 2>/dev/null | awk '/^Pages:/ {print $2}')"
-    if [ "$code_save" = "200" ] && [ "$code_stale" = "409" ] && [ "$code_lpdf" = "200" ] \
-       && pdftotext "$work/live.pdf" "$work/live.txt" && grep -q "SMOKE-LIVE-EDIT" "$work/live.txt" \
-       && [ "$live_pages" = "$sheets" ]; then
-      pass "g) live sheet: edit saved, stale save refused, PDF shows the edit ($live_pages pages)"
-    else
-      fail "g) live sheet: save HTTP $code_save, stale save HTTP $code_stale, PDF HTTP $code_lpdf, pages ${live_pages:-?}"
-    fi
-  else
-    fail "g) creating the live sheet returned HTTP $code_ls"
-  fi
-
-  # --- h) structured requirements: import -> publish -> re-import round trip ----------
+  # --- f) structured requirements: import -> publish -> re-import round trip ----------
   ev="$API/events/$doc_id"
   admin=(-H "X-Role: network-admin" -H "X-User: smoke-test")
   code_imp="$(curl -sS -o "$work/import.json" -w '%{http_code}' -X POST "${admin[@]}" \
@@ -221,9 +163,9 @@ PY
     fi
     h_detail="$records records, published V$pub_version, report fonts: $(awk 'NR > 2 {sub(/^[A-Z]+\+/, "", $1); print $1}' "$work/report.fonts" | sort -u | tr '\n' ' ')round trip $([ "${a:-}" = "${b:-x}" ] && echo identical || echo DIFFERENT)"
   fi
-  if [ "$h_ok" = yes ]; then pass "h) requirements: $h_detail"; else fail "h) requirements: $h_detail"; fi
+  if [ "$h_ok" = yes ]; then pass "f) requirements: $h_detail"; else fail "f) requirements: $h_detail"; fi
 
-  # --- i) archive, then delete (also cleans up the smoke document) -------------
+  # --- g) archive, then delete (also cleans up the smoke document) -------------
   code_early="$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE -H "X-Role: network-admin" \
     "$API/documents/$doc_id")"
   code_arch="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "X-Role: network-admin" \
@@ -232,9 +174,9 @@ PY
     "$API/documents/$doc_id")"
   code_after="$(download "$doc_id" network-admin "$work/after.pdf")"
   if [ "$code_early" = "409" ] && [ "$code_arch" = "200" ] && [ "$code_del" = "204" ] && [ "$code_after" = "404" ]; then
-    pass "i) delete refused until archived; then deleted and its files are no longer downloadable"
+    pass "g) delete refused until archived; then deleted and its files are no longer downloadable"
   else
-    fail "i) delete before archive HTTP $code_early, archive HTTP $code_arch, delete HTTP $code_del, download afterwards HTTP $code_after (expected 409, 200, 204, 404)"
+    fail "g) delete before archive HTTP $code_early, archive HTTP $code_arch, delete HTTP $code_del, download afterwards HTTP $code_after (expected 409, 200, 204, 404)"
   fi
 done
 

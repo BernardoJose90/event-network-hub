@@ -33,30 +33,8 @@ CREATE TABLE IF NOT EXISTS document_versions (
     warnings     TEXT NOT NULL DEFAULT '[]',
     error        TEXT,
     edited_from  INTEGER,
-    source       TEXT NOT NULL DEFAULT 'upload',  -- upload | edit | publish
+    source       TEXT NOT NULL DEFAULT 'upload',  -- upload | publish ('edit' from the removed spreadsheet editor)
     UNIQUE (document_id, version)
-);
-
--- The editable in-app copy of a document's workbook ("live sheet"). revision
--- increases on every save so concurrent editors can't overwrite each other.
-CREATE TABLE IF NOT EXISTS live_sheets (
-    document_id   INTEGER PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
-    base_version  INTEGER NOT NULL,
-    data          TEXT NOT NULL,
-    revision      INTEGER NOT NULL,
-    updated_by    TEXT NOT NULL,
-    updated_at    TEXT NOT NULL
-);
-
--- One row per in-browser editing session. Its first save creates
--- saved_version; later saves in the same session update that version.
-CREATE TABLE IF NOT EXISTS edit_sessions (
-    id             TEXT PRIMARY KEY,
-    document_id    INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    base_version   INTEGER NOT NULL,
-    saved_version  INTEGER,
-    user           TEXT NOT NULL,
-    created_at     TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS download_log (
@@ -112,6 +90,9 @@ def init_db(path: Path) -> None:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.executescript(SCHEMA)
         _migrate(conn)
+        # The spreadsheet editor and live sheet were removed; drop their tables if they exist.
+        conn.execute("DROP TABLE IF EXISTS edit_sessions")
+        conn.execute("DROP TABLE IF EXISTS live_sheets")
         from .records import store as records_store  # records tables reference documents/versions
 
         records_store.init(conn)
@@ -336,67 +317,3 @@ def log_download(conn: sqlite3.Connection, *, version_id: int, user: str, format
             (version_id, user, format, utcnow()),
         )
 
-
-# --- edit sessions --------------------------------------------------------
-
-
-def create_edit_session(
-    conn: sqlite3.Connection, *, session_id: str, document_id: int, base_version: int, user: str
-) -> dict[str, Any]:
-    with conn:
-        conn.execute(
-            "INSERT INTO edit_sessions (id, document_id, base_version, user, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (session_id, document_id, base_version, user, utcnow()),
-        )
-    return get_edit_session(conn, session_id)  # type: ignore[return-value]
-
-
-def get_edit_session(conn: sqlite3.Connection, session_id: str) -> dict[str, Any] | None:
-    row = conn.execute("SELECT * FROM edit_sessions WHERE id = ?", (session_id,)).fetchone()
-    return dict(row) if row else None
-
-
-def set_edit_session_saved_version(conn: sqlite3.Connection, session_id: str, version: int) -> None:
-    with conn:
-        conn.execute("UPDATE edit_sessions SET saved_version = ? WHERE id = ?", (version, session_id))
-
-
-# --- live sheets ----------------------------------------------------------
-
-
-def get_live_sheet(conn: sqlite3.Connection, document_id: int) -> dict[str, Any] | None:
-    row = conn.execute("SELECT * FROM live_sheets WHERE document_id = ?", (document_id,)).fetchone()
-    return dict(row) if row else None
-
-
-def put_live_sheet(
-    conn: sqlite3.Connection, *, document_id: int, base_version: int, data: str, user: str
-) -> dict[str, Any]:
-    """Create the live sheet, or replace it ("start again"), bumping the revision."""
-    with conn:
-        conn.execute(
-            """
-            INSERT INTO live_sheets (document_id, base_version, data, revision, updated_by, updated_at)
-            VALUES (?, ?, ?, 1, ?, ?)
-            ON CONFLICT (document_id) DO UPDATE SET
-                base_version = excluded.base_version, data = excluded.data,
-                revision = live_sheets.revision + 1,
-                updated_by = excluded.updated_by, updated_at = excluded.updated_at
-            """,
-            (document_id, base_version, data, user, utcnow()),
-        )
-    return get_live_sheet(conn, document_id)  # type: ignore[return-value]
-
-
-def save_live_sheet(
-    conn: sqlite3.Connection, *, document_id: int, data: str, expected_revision: int, user: str
-) -> dict[str, Any] | None:
-    """Save edits if nobody saved since ``expected_revision``; None means a conflict."""
-    with conn:
-        cur = conn.execute(
-            "UPDATE live_sheets SET data = ?, revision = revision + 1, updated_by = ?, updated_at = ? "
-            "WHERE document_id = ? AND revision = ?",
-            (data, user, utcnow(), document_id, expected_revision),
-        )
-    return get_live_sheet(conn, document_id) if cur.rowcount == 1 else None

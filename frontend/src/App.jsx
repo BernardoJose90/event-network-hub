@@ -353,15 +353,6 @@ function DocumentHeader({ document, identity, onDeleted, onChanged }) {
           )}
           {isAdmin && !archived && (
             <>
-              <details className="legacy">
-                <summary>Legacy</summary>
-                <div className="legacy-menu">
-                  <button className="secondary" onClick={() => window.location.assign(`/sheet/${document.id}`)}>
-                    Open live sheet
-                  </button>
-                  <p className="muted small">Uploaded versions can be opened in the Excel-style editor (Edit). Published versions can't be edited.</p>
-                </div>
-              </details>
               <button className="secondary" onClick={() => setArchived(true)} disabled={busy}>
                 Archive event
               </button>
@@ -383,7 +374,7 @@ function DocumentHeader({ document, identity, onDeleted, onChanged }) {
   )
 }
 
-function VersionTable({ documentId, versions, identity, readOnly, onView, onEdit }) {
+function VersionTable({ documentId, versions, identity, onView }) {
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
   const dialog = useDialog()
@@ -430,11 +421,6 @@ function VersionTable({ documentId, versions, identity, readOnly, onView, onEdit
   }
 
   const hasReady = versions.some((v) => v.status === 'ready')
-  const latestReadyRow = versions.find((v) => v.status === 'ready')
-  const latestReady = latestReadyRow?.version
-  // Published versions are a fixed record; changes go through the requirements and a new publish.
-  const editable = (v) => v && v.status === 'ready' && v.source !== 'publish'
-  const isAdmin = identity.role === 'network-admin'
 
   return (
     <section className="panel">
@@ -448,11 +434,6 @@ function VersionTable({ documentId, versions, identity, readOnly, onView, onEdit
           <button onClick={() => onView(null)} disabled={!hasReady || busy}>
             View
           </button>
-          {isAdmin && !readOnly && editable(latestReadyRow) && (
-            <button onClick={() => onEdit(latestReady)} disabled={busy}>
-              Edit
-            </button>
-          )}
           <button onClick={() => download(null, 'pdf')} disabled={!hasReady || busy}>
             Download PDF
           </button>
@@ -504,15 +485,6 @@ function VersionTable({ documentId, versions, identity, readOnly, onView, onEdit
                       >
                         View
                       </button>
-                      {isAdmin && !readOnly && v.source !== 'publish' && (
-                        <button
-                          className="secondary"
-                          onClick={() => onEdit(v.version)}
-                          disabled={v.status !== 'ready' || busy}
-                        >
-                          Edit
-                        </button>
-                      )}
                       <button
                         className="secondary"
                         onClick={() => download(v.version, 'pdf')}
@@ -599,11 +571,6 @@ export default function App() {
 
   useEffect(closePreview, [selectedId, closePreview])
 
-  // The editor is its own full-screen page (see EditorPage.jsx).
-  const openEditor = useCallback((documentId, version) => {
-    window.location.assign(`/edit/${documentId}/${version}`)
-  }, [])
-
   const refreshDocuments = useCallback(async () => {
     try {
       setDocuments(await listDocuments())
@@ -688,9 +655,7 @@ export default function App() {
                 documentId={selected.id}
                 versions={versions}
                 identity={identity}
-                readOnly={!!selected.archived_at}
                 onView={(version) => viewPdf(selected.id, selected.name, version)}
-                onEdit={(version) => openEditor(selected.id, version)}
               />
               {preview && <PdfViewer preview={preview} onClose={closePreview} />}
             </>

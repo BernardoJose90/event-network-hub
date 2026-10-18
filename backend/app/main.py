@@ -14,19 +14,16 @@ from fastapi.responses import JSONResponse
 from . import db
 from .config import Settings, load_settings
 from .converter import GotenbergConverter
-from .collabora import CollaboraDiscovery
 from .ictrequests.routes import admin_router as requests_admin_router, public_router as requests_public_router
 from .notifications import keys as notification_keys, service as notifications, worker as notification_worker
 from .notifications.routes import router as notifications_router, watchers_router
 from .records.routes import events_router, router as records_router
 from .reports import router as reports_router
 from .routes import router
-from .sheet_routes import router as sheet_router
 from .service import DocumentGone
 from .storage import LocalStorage
 from .tickets import outbox
 from .tickets.routes import bot_router, router as tickets_router, settings_router as helpdesk_router
-from .wopi import router as wopi_router
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -37,7 +34,7 @@ _TOKEN_IN_URL = re.compile(r"(access_token=)[^&\s\"]+")
 
 
 class RedactAccessTokens(logging.Filter):
-    """WOPI puts access tokens in URLs; keep them out of access logs."""
+    """Keep any access_token query parameter out of access logs."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         if isinstance(record.args, tuple):
@@ -64,7 +61,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.settings = settings
         app.state.storage = LocalStorage(settings.files_dir)
         app.state.converter = converter
-        app.state.discovery = CollaboraDiscovery(settings.collabora_url)
         vapid, app.state.vapid_public_key = notification_keys.load(settings)
         notifications.configure(notifications.Channels(
             push=True, slack=bool(settings.slack_webhook_url), email=bool(settings.smtp_host),
@@ -90,8 +86,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="Event Network Hub", lifespan=lifespan)
     app.include_router(router)
-    app.include_router(wopi_router)
-    app.include_router(sheet_router)
     app.include_router(records_router)
     app.include_router(events_router)
     app.include_router(tickets_router)

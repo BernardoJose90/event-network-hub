@@ -20,7 +20,6 @@ Then open <http://localhost:5173>.
 |-----------|--------------------------------|---------------------------------------------|
 | frontend  | `127.0.0.1:5173`               | Vite dev server; proxies `/api` to backend  |
 | backend   | `127.0.0.1:8000`               | FastAPI; data in the `appdata` volume       |
-| collabora | `127.0.0.1:9980`               | In-browser spreadsheet editor (Collabora Online, CODE edition); the browser loads it directly |
 | gotenberg | not published                  | Reachable only from the backend             |
 
 Configuration defaults live in `docker-compose.yml`; copy `.env.example` to `.env` to override them. Nothing in the repo is a secret.
@@ -53,10 +52,8 @@ For each `samples/*.xlsx`, the script uploads the file, downloads the PDF as eac
 - **c)** the page count equals the number of visible sheets;
 - **d)** the Excel download is byte-identical to the uploaded file;
 - **e)** uploading the same version number again is rejected;
-- **f)** the in-browser editor opens: Collabora's page loads and it can read the file through WOPI;
-- **g)** the live sheet: it's created, an edit saved through the API appears in its PDF, and a stale save is refused;
-- **h)** requirements: the workbook imports into records, publishing gives the next version (PDF report in Overpass, no DejaVu), and re-importing the published Excel gives identical records and totals;
-- **i)** deleting is refused until the document is archived; then it works and removes its files. This also cleans up, so smoke runs leave no documents behind.
+- **f)** requirements: the workbook imports into records, publishing gives the next version (PDF report in Overpass, no DejaVu), and re-importing the published Excel gives identical records and totals;
+- **g)** deleting is refused until the document is archived; then it works and removes its files. This also cleans up, so smoke runs leave no documents behind.
 
 The smoke test uploads your file under a throwaway `SMOKE<n>` event code, so it never touches your real documents.
 
@@ -152,7 +149,7 @@ The importer also reads Partners Custom Orders, the Setup or settings lists, and
 - It shows the **net result**: five edits to one item become one line, and a change that was undone doesn't appear. Wi-Fi password values never appear, only "password changed".
 
 Where to see it:
-- **Compare versions…** on the Events page, for any two ready versions (the latest two by default), for example V3 → V6. Every new version is added automatically, whether it was published, uploaded or edited in the spreadsheet editor:
+- **Compare versions…** on the Events page, for any two ready versions (the latest two by default), for example V3 → V6. Every new version is added automatically, whether it was published or uploaded (or edited in the spreadsheet editor, before it was removed):
   - published versions use the item list saved when they were published;
   - uploaded and edited versions are read from their Excel file the first time they're compared, then cached (table `workbook_snapshots`). The comparison says so in a note;
   - items read from a workbook have no record IDs, so they're matched on what identifies them (Wi-Fi: venue and SSID; Ethernet: venue, section, purpose, location and room; partner orders: partner and stand). Changing one of those fields shows as removed plus added.
@@ -188,51 +185,9 @@ Code: `backend/app/records/` (models, store, service, importer, publish, routes)
 | POST | `/api/events/{id}/publish` | `{note?}`; next version (Excel + PDF report) |
 | GET | `/api/events/{id}/changelog?to=<version|draft>&from=<version>` | item-level changelog |
 
-## Editing in the browser
+## Editing
 
-Network admins can click **Edit** on any ready uploaded or edited version. Versions created by **Publish** have no Edit button and the API refuses them (409): they are a fixed record of the requirements, so change the requirements and publish again. That opens a full-screen editor page, `/edit/<document id>/<version>`, in the same tab. The workbook appears in **Collabora Online**, a LibreOffice-based office suite, with every sheet, the formatting, formulas and an Excel-style toolbar. **Saving creates a new version** numbered after the newest one, e.g. V6 becomes V7. It's marked "edited from V6", converted to PDF like any upload, and the opened version stays unchanged. Later saves in the same session, including autosaves, update that same new version, so one editing session produces one version. **Back to documents** saves unsaved changes first, then returns to that document (`/?doc=<id>`), where the new version is listed.
-
-How it fits together, using the standard WOPI protocol:
-
-1. The page calls `POST /api/documents/{id}/versions/{n}/edit`. The backend records an edit session and signs a short-lived access token (HMAC; it names the session, the user and an expiry). It returns the editor URL, found from Collabora's `/hosting/discovery`.
-2. The page POSTs the token into an iframe pointing at Collabora (`localhost:9980`).
-3. Collabora calls the backend's WOPI endpoints on the compose network (`http://backend:8000/wopi/files/{session}`): `CheckFileInfo`, `GetFile` and `PutFile`. `PutFile` runs `service.save_edit`. Collabora only accepts that WOPI host (`aliasgroup1`), and only our page may frame it.
-4. Access tokens are masked in the access logs.
-
-| Method | Path | Notes |
-|--------|------|-------|
-| POST | `/api/documents/{id}/versions/{n}/edit` | Needs `X-Role: network-admin`. Returns `editor_url`, `access_token`, `access_token_ttl` |
-| GET  | `/wopi/files/{session}` | WOPI CheckFileInfo (called by Collabora) |
-| GET  | `/wopi/files/{session}/contents` | WOPI GetFile |
-| POST | `/wopi/files/{session}/contents` | WOPI PutFile; saves as the session's new version |
-
-## Live sheet (edit in the app, not Excel)
-
-**Open live sheet** on a document (network admins) opens `/sheet/<document id>`: an editable web grid that looks like the workbook. It has one tab per sheet, the same fills, fonts and column widths, and frozen header rows.
-
-- **Editing:** click a cell and type; Enter, Tab and the arrow keys move; Delete clears; double-click edits.
-- **Dropdowns and tick-boxes:** cells that had dropdowns offer the same lists, taken from the Setup sheet or a fixed list such as Yes/No/TBC. TRUE/FALSE cells are tick-boxes.
-- **Rows and columns:** right-click a row number, column letter or cell to insert or delete. A new row copies the dropdowns, tick-boxes and look of its neighbours.
-- **Automatic totals:**
-  - each section total adds every row in its section, including rows added later;
-  - the overall total adds the section totals;
-  - per-row formulas such as Change Qty (`V6 - V5`) recalculate as you type.
-  The original workbook's totals don't always match these:
-  - **Altice Arena – Ethernet Req:** INTERNAL WORKSPACES was `=SUM(H3:H22)` and missed three rows (108 → 232). Four totals were broken `sum(#REF!)`.
-  - **FIL 1-5 Ethernet Req:** Registration Areas missed one row (15 → 19), and its overall total left out INTERNAL WORKSPACES.
-- **Saving:** automatic, about 1.5 s after the last change, with undo and redo (Ctrl+Z / Ctrl+Shift+Z). Each save carries a revision number. If someone else saved in the meantime, the save is refused (409) and the page offers to reload, so edits are never silently overwritten.
-- **Separate from versions:** the live sheet starts from the latest version. Later uploads don't touch it; the page shows "V8 uploaded since. Start again from V8".
-- **Downloads:** Excel and PDF are generated from the live sheet on download. Totals are written as real `SUM` formulas over their current ranges.
-- **Not supported yet:** writing new formulas, changing colours or bold, multi-cell copy and paste, charts and images. Formulas it can't represent keep their last value and are listed as import notes.
-
-Code: `backend/app/sheets/` (model, importer, engine, exporter) and `backend/app/sheet_routes.py`; `frontend/src/SheetPage.jsx` and `frontend/src/sheet/` (grid, ops, engine). The calculation rules exist twice, in `sheets/engine.py` for downloads and `sheet/engine.js` for the page, and must stay in step.
-
-| Method | Path | Notes |
-|--------|------|-------|
-| GET  | `/api/documents/{id}/sheet` | 404 until created |
-| POST | `/api/documents/{id}/sheet` | create, or start again, from the latest ready version |
-| PUT  | `/api/documents/{id}/sheet` | `{data, revision}`; 409 if someone else saved first |
-| GET  | `/api/documents/{id}/sheet/download?format=xlsx\|pdf` | generated on demand |
+Changes are made only in the requirements (**Open Network Requirements**), then **Publish** creates the next version. Versions themselves can't be edited: they can be viewed, downloaded and compared. The in-browser spreadsheet editor (Collabora) and the live sheet were removed; versions they created earlier (marked "edited from V<n>") are kept in the history and can still be viewed and compared.
 
 ## Help desk (ICT tickets for live events)
 
@@ -443,7 +398,7 @@ The interface follows these published standards:
   - confirmations before hard-to-reverse steps (error prevention);
   - plain-language errors that say how to recover.
 
-Shared pieces live in `frontend/src/ui/` (`Dialog.jsx`, `Notice.jsx`) and `frontend/src/event/grid.js`. The browser's built-in pop-ups remain only on the legacy Excel editor and live sheet pages.
+Shared pieces live in `frontend/src/ui/` (`Dialog.jsx`, `Notice.jsx`) and `frontend/src/event/grid.js`.
 
 **Accessibility audit.** It runs axe-core 4.10.2, pinned as a dev dependency, against every page of an event and a template, using headless Chrome. It only views pages and exits 1 on any violation:
 
@@ -468,13 +423,6 @@ Automated checks find only part of the problems. Keyboard use and screen-reader 
   - Structured JSON logs with request IDs.
 - **Database.** Move from SQLite to Postgres (RDS) with migrations (Alembic). The unique-constraint-and-retry logic carries over unchanged.
 - **Conversion off the request path.** Run uploads as a queued job (for example SQS plus a worker), so the API returns immediately with status `processing`. Gotenberg becomes an internal-only Deployment, scaled horizontally, with a NetworkPolicy that allows only the backend or worker to reach it.
-- **Spreadsheet editor (Collabora).**
-  - Licensing: CODE is the development edition, for testing and small teams. Production needs a Collabora Online subscription and its enterprise image.
-  - Transport: serve it over HTTPS behind the ingress, set `server_name` to its public hostname, restrict `aliasgroup1` to the backend's internal service and set `frame_ancestors` to the portal's origin.
-  - Secrets: set `WOPI_TOKEN_SECRET` from the secret store. Locally a random one is generated per start, which ends open editor sessions.
-  - Authentication: issue editor tokens from the real authenticated user.
-  - Integrity: validate Collabora's WOPI proof-key signatures (`X-WOPI-Proof`). The local container has no proof key and the backend doesn't check them yet.
-  - Scaling: Collabora pins each document to one instance, so use sticky routing by WOPISrc when running more than one.
 - **Hardening.**
   - Enforce the upload size limit at the ingress.
   - Run containers with a read-only root filesystem and drop all capabilities.

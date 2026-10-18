@@ -109,37 +109,6 @@ a.button:hover {
   margin: 0;
 }
 
-/* Full-screen editor tab */
-.editor-page {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-}
-
-.editor-bar {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 8px 16px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
-}
-
-.editor-status {
-  flex: 1;
-}
-
-.editor-fullscreen {
-  flex: 1;
-  width: 100%;
-  border: 0;
-  background: #fff;
-}
-
-.editor-message {
-  padding: 24px 16px;
-}
-
 .pdf-frame {
   display: block;
   width: 100%;
@@ -444,14 +413,7 @@ th {
   overflow-wrap: anywhere;
 }
 
-/* --- Live sheet page -------------------------------------------------------- */
-
-.sheet-page {
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  background: var(--panel);
-}
+/* --- Top bar of the requirements page ------------------------------------- */
 
 .sheet-bar {
   display: flex;
@@ -472,236 +434,8 @@ th {
   color: var(--muted);
 }
 
-.sheet-status.failed,
-.sheet-status.conflict {
-  color: var(--error);
-}
-
-.sheet-actions {
-  display: flex;
-  gap: 8px;
-}
-
-.sheet-banner {
-  padding: 8px 16px;
-  background: var(--info-bg);
-  color: var(--info);
-  font-size: 0.9rem;
-  border-bottom: 1px solid var(--border);
-}
-
-.sheet-banner.error-banner {
-  background: var(--error-bg);
-  color: var(--error);
-}
-
-.sheet-notes {
-  padding: 4px 16px;
-  font-size: 0.85rem;
-  color: var(--muted);
-  border-bottom: 1px solid var(--border);
-}
-
 .sheet-message {
   padding: 24px 16px;
-}
-
-.sheet-tabs {
-  display: flex;
-  gap: 2px;
-  padding: 0 8px;
-  border-top: 1px solid var(--border);
-  background: var(--bg);
-  overflow-x: auto;
-  flex-shrink: 0;
-}
-
-.sheet-tabs button {
-  background: transparent;
-  color: var(--text);
-  border: 0;
-  border-radius: 0;
-  padding: 8px 14px;
-  white-space: nowrap;
-  border-bottom: 3px solid transparent;
-}
-
-.sheet-tabs button:hover:not(:disabled) {
-  background: var(--panel);
-}
-
-.sheet-tabs button.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-  background: var(--panel);
-  font-weight: 600;
-}
-
-/* Grid */
-.grid-wrap {
-  flex: 1;
-  overflow: auto;
-  outline: none;
-  position: relative;
-}
-
-.grid {
-  border-collapse: separate;
-  border-spacing: 0;
-  table-layout: fixed;
-  width: max-content;
-  color: #000;
-}
-
-.grid th,
-.grid td {
-  height: 22px;
-  padding: 0 4px;
-  border-right: 1px solid #e2e2e2;
-  border-bottom: 1px solid #e2e2e2;
-  overflow: hidden;
-  text-overflow: clip;
-  vertical-align: middle;
-  background: #fff;
-  font-weight: normal;
-  text-transform: none;
-  letter-spacing: normal;
-  color: inherit;
-}
-
-.grid thead th {
-  position: sticky;
-  top: 0;
-  z-index: 3;
-  height: 24px;
-  background: #f1f3f4;
-  color: #5f6368;
-  text-align: center;
-  font-family: system-ui, sans-serif;
-  font-size: 11px;
-  cursor: default;
-  user-select: none;
-}
-
-.grid th.row-head {
-  position: sticky;
-  left: 0;
-  z-index: 1;
-  background: #f1f3f4;
-  color: #5f6368;
-  text-align: center;
-  font-family: system-ui, sans-serif;
-  font-size: 11px;
-  user-select: none;
-}
-
-.grid th.corner {
-  left: 0;
-  z-index: 4;
-}
-
-.grid th.active {
-  background: #d3e3fd;
-  color: #0b57d0;
-  font-weight: 600;
-}
-
-.grid tr.frozen > * {
-  position: sticky;
-  top: var(--top);
-  z-index: 2;
-}
-
-.grid tr.frozen > th.row-head {
-  z-index: 3;
-}
-
-.grid tr.frozen > td {
-  border-bottom-color: #bdc1c6;
-}
-
-.grid td.cell {
-  cursor: cell;
-}
-
-.grid td.selected {
-  outline: 2px solid #1a73e8;
-  outline-offset: -2px;
-}
-
-.grid td.calculated {
-  cursor: default;
-}
-
-.grid td.check {
-  text-align: center;
-}
-
-.grid td.check input {
-  margin: 0;
-  cursor: pointer;
-}
-
-.grid .dd {
-  display: flex;
-  justify-content: space-between;
-  gap: 4px;
-}
-
-.grid .dd > span:first-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.grid .dd-arrow {
-  color: #80868b;
-  font-size: 0.75em;
-}
-
-.grid .cell-editor {
-  width: 100%;
-  height: 20px;
-  padding: 0 2px;
-  border: 0;
-  border-radius: 0;
-  font: inherit;
-  color: inherit;
-  background: #fff;
-  outline: none;
-}
-
-.ctx-menu {
-  position: fixed;
-  z-index: 50;
-  list-style: none;
-  margin: 0;
-  padding: 4px 0;
-  background: #fff;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-  min-width: 180px;
-}
-
-.ctx-menu button {
-  display: block;
-  width: 100%;
-  text-align: left;
-  background: transparent;
-  color: var(--text);
-  border: 0;
-  border-radius: 0;
-  padding: 6px 14px;
-}
-
-.ctx-menu button:hover {
-  background: var(--bg);
-}
-
-.ctx-sep {
-  height: 1px;
-  margin: 4px 0;
-  background: var(--border);
 }
 
 /* --- Requirements page -------------------------------------------------------- */
@@ -1016,10 +750,6 @@ button.link:hover:not(:disabled) {
   padding: 6px 10px;
 }
 
-.center {
-  text-align: center;
-}
-
 /* Lists */
 .lists-grid {
   display: grid;
@@ -1080,33 +810,6 @@ button.link:hover:not(:disabled) {
 
 .history td {
   font-size: 0.85rem;
-}
-
-/* Legacy menu on the documents page */
-.legacy {
-  position: relative;
-}
-
-.legacy summary {
-  cursor: pointer;
-  padding: 7px 10px;
-  color: var(--muted);
-  list-style: none;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-}
-
-.legacy-menu {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 4px);
-  z-index: 5;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 10px;
-  width: 220px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
 }
 
 /* New event form and legacy upload in the documents sidebar */
@@ -1244,8 +947,7 @@ button:focus-visible {
 
 /* Navy bars at the top of every page */
 .topbar,
-.sheet-bar,
-.editor-bar {
+.sheet-bar {
   background: var(--navy);
   color: #fff;
   border-bottom: 0;
@@ -1266,15 +968,13 @@ button:focus-visible {
   color: #ffcc00;
 }
 
-.sheet-bar button.secondary,
-.editor-bar button.secondary {
+.sheet-bar button.secondary {
   background: transparent;
   color: #fff;
   border-color: rgba(255, 255, 255, 0.6);
 }
 
-.sheet-bar button.secondary:hover:not(:disabled),
-.editor-bar button.secondary:hover:not(:disabled) {
+.sheet-bar button.secondary:hover:not(:disabled) {
   background: #fff;
   color: var(--navy);
 }
@@ -1425,8 +1125,7 @@ button:focus-visible {
 }
 
 .topbar :focus-visible,
-.sheet-bar :focus-visible,
-.editor-bar :focus-visible {
+.sheet-bar :focus-visible {
   outline-color: #fff;
 }
 

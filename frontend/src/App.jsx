@@ -359,7 +359,7 @@ function DocumentHeader({ document, identity, onDeleted, onChanged }) {
                   <button className="secondary" onClick={() => window.location.assign(`/sheet/${document.id}`)}>
                     Open live sheet
                   </button>
-                  <p className="muted small">The Excel-style editor is on each version: Edit.</p>
+                  <p className="muted small">Uploaded versions can be opened in the Excel-style editor (Edit). Published versions can't be edited.</p>
                 </div>
               </details>
               <button className="secondary" onClick={() => setArchived(true)} disabled={busy}>
@@ -427,7 +427,10 @@ function VersionTable({ documentId, versions, identity, readOnly, onView, onEdit
   }
 
   const hasReady = versions.some((v) => v.status === 'ready')
-  const latestReady = versions.find((v) => v.status === 'ready')?.version
+  const latestReadyRow = versions.find((v) => v.status === 'ready')
+  const latestReady = latestReadyRow?.version
+  // Published versions are a fixed record; changes go through the requirements and a new publish.
+  const editable = (v) => v && v.status === 'ready' && v.source !== 'publish'
   const isAdmin = identity.role === 'network-admin'
 
   return (
@@ -442,8 +445,8 @@ function VersionTable({ documentId, versions, identity, readOnly, onView, onEdit
           <button onClick={() => onView(null)} disabled={!hasReady || busy}>
             View
           </button>
-          {isAdmin && !readOnly && (
-            <button onClick={() => onEdit(latestReady)} disabled={!hasReady || busy}>
+          {isAdmin && !readOnly && editable(latestReadyRow) && (
+            <button onClick={() => onEdit(latestReady)} disabled={busy}>
               Edit
             </button>
           )}
@@ -498,7 +501,7 @@ function VersionTable({ documentId, versions, identity, readOnly, onView, onEdit
                       >
                         View
                       </button>
-                      {isAdmin && !readOnly && (
+                      {isAdmin && !readOnly && v.source !== 'publish' && (
                         <button
                           className="secondary"
                           onClick={() => onEdit(v.version)}

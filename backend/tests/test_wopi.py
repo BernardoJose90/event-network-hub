@@ -124,6 +124,17 @@ def test_edit_missing_or_failed_version(client: TestClient) -> None:
     assert client.post(f"/api/documents/{doc_id}/versions/7/edit", headers=ADMIN).status_code == 409
 
 
+def test_published_version_cannot_be_edited(client: TestClient) -> None:
+    doc_id = _doc(client)
+    conn = db.connect(client.settings.db_path)
+    with conn:
+        conn.execute("UPDATE document_versions SET source = 'publish' WHERE document_id = ? AND version = 6", (doc_id,))
+    conn.close()
+    r = client.post(f"/api/documents/{doc_id}/versions/6/edit", headers=ADMIN)
+    assert r.status_code == 409
+    assert "can't be edited" in r.json()["detail"]
+
+
 def test_editor_unavailable_is_503(client: TestClient) -> None:
     from app.collabora import EditorUnavailable
 

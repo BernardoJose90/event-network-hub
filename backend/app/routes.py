@@ -223,6 +223,10 @@ def start_edit(request: Request, document_id: int, version: int, conn: Conn, pri
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Version {version} not found")
     if row["status"] != db.STATUS_READY:
         raise HTTPException(status.HTTP_409_CONFLICT, f"Version {version} is {row['status']}")
+    if row["source"] == "publish":
+        # Published versions are a fixed record of the requirements; change those and publish again.
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"V{version} was published and can't be edited. Change the requirements and publish again.")
 
     settings = request.app.state.settings
     discovery = request.app.state.discovery

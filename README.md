@@ -152,7 +152,10 @@ The importer also reads Partners Custom Orders, the Setup or settings lists, and
 - It shows the **net result**: five edits to one item become one line, and a change that was undone doesn't appear. Wi-Fi password values never appear, only "password changed".
 
 Where to see it:
-- **Compare versions…** on the Events page, for any two published versions (the latest two by default), for example V3 → V6.
+- **Compare versions…** on the Events page, for any two ready versions (the latest two by default), for example V3 → V6. Every new version is added automatically, whether it was published, uploaded or edited in the spreadsheet editor:
+  - published versions use the item list saved when they were published;
+  - uploaded and edited versions are read from their Excel file the first time they're compared, then cached (table `workbook_snapshots`). The comparison says so in a note;
+  - items read from a workbook have no record IDs, so they're matched on what identifies them (Wi-Fi: venue and SSID; Ethernet: venue, section, purpose, location and room; partner orders: partner and stand). Changing one of those fields shows as removed plus added.
 - The publish dialog, before you publish.
 - Overview → "Not yet published".
 - Inside the published PDF ("Changes in this version") and Excel (the "Changes - Log" sheet).

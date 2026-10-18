@@ -76,6 +76,13 @@ CREATE TABLE IF NOT EXISTS published_snapshots (
     document_id  INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
     data         TEXT NOT NULL
 );
+
+-- Item lists read from uploaded or edited workbooks, so every version can be compared.
+-- A cache: versions are immutable, and a row can always be rebuilt from the stored file.
+CREATE TABLE IF NOT EXISTS workbook_snapshots (
+    version_id   INTEGER PRIMARY KEY REFERENCES document_versions(id) ON DELETE CASCADE,
+    data         TEXT NOT NULL
+);
 """
 
 
@@ -279,3 +286,14 @@ def published_versions(conn: sqlite3.Connection, doc: int) -> list[int]:
 def save_snapshot(conn: sqlite3.Connection, *, version_id: int, doc: int, data: dict[str, Any]) -> None:
     conn.execute("INSERT OR REPLACE INTO published_snapshots (version_id, document_id, data) VALUES (?, ?, ?)",
                  (version_id, doc, json.dumps(data)))
+
+
+def workbook_snapshot(conn: sqlite3.Connection, version_id: int) -> dict[str, Any] | None:
+    row = conn.execute("SELECT data FROM workbook_snapshots WHERE version_id = ?", (version_id,)).fetchone()
+    return json.loads(row[0]) if row else None
+
+
+def save_workbook_snapshot(conn: sqlite3.Connection, version_id: int, data: dict[str, Any]) -> None:
+    with conn:
+        conn.execute("INSERT OR REPLACE INTO workbook_snapshots (version_id, data) VALUES (?, ?)",
+                     (version_id, json.dumps(data)))

@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from openpyxl import Workbook
+from pydantic import ValidationError
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter, quote_sheetname
 from openpyxl.worksheet.datavalidation import DataValidation
@@ -23,8 +24,9 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from .. import db
 from ..converter import ConversionError, Converter
 from ..service import FULL_PDF, ORIGINAL, allocate_next_version
-from ..storage import Storage, version_key
+from ..storage import ObjectNotFound, Storage, version_key
 from . import changelog, service, store
+from .importer import import_workbook
 from .models import LABELS
 
 log = logging.getLogger(__name__)
@@ -378,26 +380,84 @@ def publish(conn: sqlite3.Connection, storage: Storage, converter: Converter, *,
     return db.get_version_by_id(conn, version["id"]), failure  # type: ignore[return-value]
 
 
-def changelog_between(conn: sqlite3.Connection, doc: int, *, to: str, from_version: int | None = None
-                      ) -> dict[str, Any]:
-    """Changelog for a published version (against the one before it, or ``from_version``), or for
-    the unpublished draft (to='draft') against the latest published version."""
+def _from_workbook(result) -> dict[str, Any]:
+    """A snapshot built from an imported workbook (no record IDs; same data shape as published)."""
+    records, ports = [], {}
+    for rec in result.records:
+        try:
+            data = service.validate_data(rec.type, {k: v for k, v in rec.data.items() if k != "ref_id"})
+        except ValidationError:
+            continue
+        records.append({"id": None, "type": rec.type, "venue": rec.venue, "group": rec.group, "data": data})
+        if rec.type == "ethernet":
+            ports[rec.venue] = ports.get(rec.venue, 0) + (data.get("ports") or 0)
+    tidy = lambda x: int(x) if float(x).is_integer() else x  # noqa: E731
+    return {"venues": list(result.venues), "records": records,
+            "totals": {"ethernet": [{"venue": v, "total": tidy(ports.get(v, 0))} for v in result.venues]}}
+
+
+SOURCE_WORDS = {"upload": "uploaded", "edit": "edited in the spreadsheet editor"}
+
+
+def version_snapshot(conn: sqlite3.Connection, storage: Storage, doc: int, n: int) -> tuple[dict[str, Any], str | None]:
+    """(snapshot, notice) for any ready version. Published versions use the snapshot saved at
+    publish; uploaded and edited ones are read from their workbook once and cached."""
+    snap = store.snapshot_for(conn, doc, n)
+    if snap is not None:
+        return snap, None
+    version = db.get_version(conn, doc, n)
+    if version is None:
+        raise service.RecordError(404, f"Version {n} not found")
+    if version["status"] != db.STATUS_READY:
+        raise service.RecordError(409, f"V{n} is {version['status']}, so it can't be compared")
+    notice = f"V{n} was {SOURCE_WORDS.get(version['source'], 'uploaded')}, so its items were read from its Excel file."
+    cached = store.workbook_snapshot(conn, version["id"])
+    if cached is not None:
+        return cached, notice
+    try:
+        result = import_workbook(storage.get(version_key(doc, n, ORIGINAL)))
+    except ObjectNotFound:
+        raise service.RecordError(500, f"The stored workbook for V{n} is missing")
+    except Exception:
+        log.exception("could not read document %s V%s for comparison", doc, n)
+        raise service.RecordError(422, f"V{n}'s workbook could not be read, so it can't be compared")
+    if not result.records:
+        raise service.RecordError(422, f"V{n} has no Wi-Fi, Ethernet or partner sheets to compare")
+    snap = _from_workbook(result)
+    store.save_workbook_snapshot(conn, version["id"], snap)
+    return snap, notice
+
+
+def comparable_versions(conn: sqlite3.Connection, doc: int) -> list[int]:
+    return [r[0] for r in conn.execute(
+        "SELECT version FROM document_versions WHERE document_id = ? AND status = ? ORDER BY version",
+        (doc, db.STATUS_READY))]
+
+
+def changelog_between(conn: sqlite3.Connection, storage: Storage, doc: int, *, to: str,
+                      from_version: int | None = None) -> dict[str, Any]:
+    """Changelog between any two ready versions (published, uploaded or edited), or for the
+    unpublished draft (to='draft') against the latest published version. Without ``from_version``
+    a version is compared with the ready version before it."""
+    notices: list[str] = []
     if to == "draft":
         new, to_label = snapshot(conn, doc), "draft"
         previous = store.previous_snapshot(conn, doc)
     else:
         n = int(to)
-        new = store.snapshot_for(conn, doc, n)
-        if new is None:
-            raise service.RecordError(422, f"V{n} wasn't published from the requirements, so it has no item list "
-                                           "to compare. Uploaded and edited workbooks can only be viewed.")
+        new, notice = version_snapshot(conn, storage, doc, n)
         to_label = n
-        previous = store.previous_snapshot(conn, doc, before=n)
+        if from_version is None:
+            earlier = [v for v in comparable_versions(conn, doc) if v < n]
+            from_version = earlier[-1] if earlier else None
+        previous = None
+        if notice:
+            notices.append(notice)
     if from_version is not None:
-        old = store.snapshot_for(conn, doc, from_version)
-        if old is None:
-            raise service.RecordError(422, f"V{from_version} wasn't published from the requirements, so it can't be compared.")
+        old, notice = version_snapshot(conn, storage, doc, from_version)
         previous = (from_version, old)
+        if notice:
+            notices.insert(0, notice)
     log = changelog.diff(previous[1] if previous else None, new)
-    return log | {"from_version": previous[0] if previous else None, "to_version": to_label,
+    return log | {"from_version": previous[0] if previous else None, "to_version": to_label, "notices": notices,
                   "published_versions": store.published_versions(conn, doc)}

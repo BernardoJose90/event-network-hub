@@ -7,9 +7,11 @@ const KIND = { added: 'Added', removed: 'Removed', changed: 'Changed' }
 export default function Changelog({ log, compact = false, limit, headingLevel = 3 }) {
   const H = `h${headingLevel}`
   if (!log) return null
+  const notices = (log.notices || []).map((n) => <p key={n} className="changelog-note"><strong>Note:</strong> {n}</p>)
   if (log.first) {
     return (
       <div className="changelog">
+        {notices}
         {log.note && <p className="changelog-note"><strong>Note:</strong> {log.note}</p>}
         <p>First version: {log.items} items.</p>
       </div>
@@ -19,6 +21,7 @@ export default function Changelog({ log, compact = false, limit, headingLevel = 
   if (!added && !removed && !changed) {
     return (
       <div className="changelog">
+        {notices}
         {log.note && <p className="changelog-note"><strong>Note:</strong> {log.note}</p>}
         <p className="muted">No changes to the requirements{log.from_version ? ` since V${log.from_version}` : ''}.</p>
       </div>
@@ -34,6 +37,7 @@ export default function Changelog({ log, compact = false, limit, headingLevel = 
   const total = added + removed + changed
   return (
     <div className={`changelog${compact ? ' compact' : ''}`}>
+      {notices}
       {log.note && <p className="changelog-note"><strong>Note:</strong> {log.note}</p>}
       <p className="changelog-counts">
         <span className="badge-pill status-resolved">{added} added</span>{' '}

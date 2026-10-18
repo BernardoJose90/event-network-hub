@@ -69,8 +69,10 @@ def test_first_version_and_draft(client: TestClient, event: int) -> None:
     assert draft["items"] == 14 and draft["published_versions"] == []
     client.post(f"/api/events/{event}/publish", headers=ADMIN)
     assert _log(client, event)["counts"] == {"added": 0, "removed": 0, "changed": 0}
-    v2 = _log(client, event, to=2)
-    assert v2["first"] and v2["to_version"] == 2
+    v2 = _log(client, event, to=2)  # compared with V1, the uploaded workbook the records came from
+    assert not v2["first"] and v2["from_version"] == 1 and v2["to_version"] == 2
+    assert v2["counts"] == {"added": 0, "removed": 0, "changed": 0}
+    assert v2["notices"] == ["V1 was uploaded, so its items were read from its Excel file."]
 
 
 def test_net_changes_between_versions(client: TestClient, event: int) -> None:
@@ -136,7 +138,39 @@ def test_compare_any_two_versions(client: TestClient, event: int) -> None:
     assert _section(across, "ethernet")["changed"][0]["fields"][0]["old"] == "2"
     assert _log(client, event)["published_versions"] == [2, 3, 4]
 
-    r = client.get(f"/api/events/{event}/changelog", headers=VIEWER, params={"to": 1})
-    assert r.status_code == 422 and "wasn't published" in r.json()["detail"]  # V1 was an upload
+    v1 = _log(client, event, to=1)  # the uploaded workbook: nothing before it
+    assert v1["first"] and v1["items"] == 14
+    from_upload = _log(client, event, to=4, **{"from": 1})
+    fields = next(c for c in _section(from_upload, "ethernet")["changed"] if c["name"] == "Photographers Office")
+    assert fields["fields"] == [{"field": "ports", "label": "Ethernet Points", "old": "2", "new": "6"}]
+    assert from_upload["counts"] == {"added": 0, "removed": 0, "changed": 1}
+    assert client.get(f"/api/events/{event}/changelog", headers=VIEWER, params={"to": 9}).status_code == 404
     assert client.get(f"/api/events/{event}/changelog", headers=VIEWER, params={"to": "x"}).status_code == 422
     assert client.get(f"/api/events/{event}/changelog", headers={}).status_code == 403
+
+
+
+def test_edited_workbook_version_is_compared_by_content(client: TestClient, event: int) -> None:
+    from openpyxl import load_workbook as load
+
+    client.post(f"/api/events/{event}/publish", headers=ADMIN)  # V2
+    # A workbook changed outside the app (as the spreadsheet editor would): one Ethernet item's points.
+    wb = load(io.BytesIO(client.app.state.storage.get(version_key(event, 2, "original.xlsx"))))
+    ws = next(w for w in wb.worksheets if "Ethernet" in w.title)
+    header = next(r for r in ws.iter_rows() if any(c.value == "Purpose" for c in r))
+    col = {c.value: c.column for c in header}
+    row = next(r for r in ws.iter_rows() if r[col["Purpose"] - 1].value == "Photographers Office")
+    ws.cell(row[0].row, col["Ethernet Points"], 9)
+    buf = io.BytesIO()
+    wb.save(buf)
+    r = client.post("/api/documents/upload", headers=ADMIN,
+                    files={"file": ("LIS26 _ Event_Network_Requirements_V3.xlsx", buf.getvalue(), XLSX)})
+    assert r.status_code in (200, 201), r.text
+
+    log = _log(client, event, to=3)  # compared with V2 by default
+    assert log["from_version"] == 2 and log["counts"] == {"added": 0, "removed": 0, "changed": 1}
+    change = _section(log, "ethernet")["changed"][0]
+    assert change["name"] == "Photographers Office" and change["fields"][0]["new"] == "9"
+    assert log["notices"] == ["V3 was uploaded, so its items were read from its Excel file."]
+    again = _log(client, event, to=3)  # second read comes from the cache
+    assert again["counts"] == log["counts"]

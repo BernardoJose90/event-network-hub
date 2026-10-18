@@ -377,14 +377,14 @@ def publish_version(request: Request, document_id: int, conn: Conn, principal: E
 
 
 @router.get("/changelog")
-def version_changelog(document_id: int, conn: Conn, principal: Reader,
+def version_changelog(request: Request, document_id: int, conn: Conn, principal: Reader,
                       to: Annotated[str, Query(pattern=r"^(draft|\d{1,4})$")] = "draft",
                       from_: Annotated[int | None, Query(alias="from", ge=1)] = None) -> dict[str, Any]:
     """Item-level changes: added, removed and changed items (with old -> new values) and
-    Ethernet point totals. to=<version> compares it with the previous published version
-    (or from=<version>); to=draft shows what the next publish would contain."""
+    Ethernet point totals. to=<version> compares any version (published, uploaded or edited) with the
+    version before it (or from=<version>); to=draft shows what the next publish would contain."""
     _document(conn, document_id)
-    return _run(lambda: changelog_between(conn, document_id, to=to, from_version=from_))
+    return _run(lambda: changelog_between(conn, request.app.state.storage, document_id, to=to, from_version=from_))
 
 
 @router.get("/changes")

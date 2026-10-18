@@ -387,8 +387,10 @@ function VersionTable({ documentId, versions, identity, readOnly, onView, onEdit
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
   const dialog = useDialog()
-  const published = versions.filter((v) => v.source === 'publish' && v.status === 'ready').map((v) => v.version)
-    .sort((a, b) => a - b)
+  // Every ready version can be compared: published ones by their saved item list, uploaded and
+  // edited ones by reading their Excel file.
+  const comparable = versions.filter((v) => v.status === 'ready').sort((a, b) => a.version - b.version)
+  const origin = { publish: 'published', edit: 'edited in Excel', upload: 'uploaded' }
 
   async function showChanges(params, title) {
     setError(null)
@@ -402,12 +404,13 @@ function VersionTable({ documentId, versions, identity, readOnly, onView, onEdit
   }
 
   async function compare() {
-    const options = published.map((n) => ({ value: String(n), label: `V${n}` }))
+    const options = comparable.map((v) => ({ value: String(v.version), label: `V${v.version} (${origin[v.source] || 'uploaded'})` }))
+    const last = comparable.length - 1
     const values = await dialog.form({
       title: 'Compare versions', confirmLabel: 'Compare',
       fields: [
-        { name: 'from', label: 'From', type: 'select', required: true, options, initial: String(published[published.length - 2]) },
-        { name: 'to', label: 'To', type: 'select', required: true, options, initial: String(published[published.length - 1]),
+        { name: 'from', label: 'From', type: 'select', required: true, options, initial: String(comparable[last - 1].version) },
+        { name: 'to', label: 'To', type: 'select', required: true, options, initial: String(comparable[last].version),
           validate: (v, all) => (Number(v) > Number(all.from) ? null : 'Choose a later version than "From"') },
       ],
     })
@@ -437,7 +440,7 @@ function VersionTable({ documentId, versions, identity, readOnly, onView, onEdit
     <section className="panel">
       <div className="row space-between">
         <h3>Versions</h3>
-        {published.length >= 2 && (
+        {comparable.length >= 2 && (
           <button type="button" className="secondary" onClick={compare}>Compare versions…</button>
         )}
         <div className="row">

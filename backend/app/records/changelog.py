@@ -22,14 +22,36 @@ NAME_FIELD = {"wifi": "ssid", "ethernet": "purpose", "partner": "partner"}
 IGNORED = {"ref_id"}
 
 
-def _items(snap: dict[str, Any] | None) -> dict[tuple[str, Any], dict[str, Any]]:
+# Versions read from a workbook have no record IDs, so items are matched on what identifies
+# them instead. Changing one of these fields shows as removed + added.
+def _natural_key(r: dict[str, Any]) -> tuple:
+    d = r["data"]
+    if r["type"] == "wifi":
+        return (r.get("venue"), d.get("ssid"))
+    if r["type"] == "ethernet":
+        return (r.get("venue"), r.get("group"), d.get("purpose"), d.get("location"), d.get("room"))
+    return (d.get("partner"), d.get("stand"))
+
+
+def _has_ids(snap: dict[str, Any] | None) -> bool:
+    return all(r.get("id") is not None for r in (snap or {}).get("records", []))
+
+
+def _items(snap: dict[str, Any] | None, by_content: bool = False) -> dict[tuple[str, Any], dict[str, Any]]:
     out: dict[tuple[str, Any], dict[str, Any]] = {}
     if not snap:
         return out
+    seen: dict[tuple, int] = {}
     for r in snap.get("records", []):
         if r["type"] not in NAME_FIELD:
             continue  # retired types (VLAN extensions)
-        out[(r["type"], r.get("id"))] = {
+        if by_content:
+            key = (r["type"], *_natural_key(r))
+            seen[key] = seen.get(key, 0) + 1
+            key = (*key, seen[key])  # the nth item with the same identity
+        else:
+            key = (r["type"], r.get("id"))
+        out[key] = {
             "type": r["type"], "data": r["data"], "venue": r.get("venue"), "group": r.get("group"),
         }
     return out
@@ -94,7 +116,8 @@ def _field_changes(old: dict[str, Any], new: dict[str, Any]) -> list[dict[str, s
 
 def diff(old: dict[str, Any] | None, new: dict[str, Any]) -> dict[str, Any]:
     """What changed from snapshot ``old`` (None for the first version) to snapshot ``new``."""
-    before, after = _items(old), _items(new)
+    by_content = not (_has_ids(old) and _has_ids(new))
+    before, after = _items(old, by_content), _items(new, by_content)
     sections = []
     counts = {"added": 0, "removed": 0, "changed": 0}
     for record_type, title in TYPES:

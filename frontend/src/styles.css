@@ -1635,12 +1635,78 @@ button.danger-solid:hover:not(:disabled) {
 /* Dialogs (native <dialog>, WAI-ARIA APG modal / alert dialog) */
 dialog.dialog {
   width: min(520px, calc(100vw - 32px));
-  max-height: calc(100vh - 64px);
-  padding: 24px;
+  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
+  padding: 0;
+  overflow: hidden;
   border: 0;
   border-radius: var(--radius);
   box-shadow: 0 24px 64px rgba(12, 20, 57, 0.35);
   color: var(--text);
+}
+
+/* Title and buttons stay in view; only the content between them scrolls. */
+dialog.dialog > form {
+  display: flex;
+  flex-direction: column;
+  max-height: inherit;
+}
+
+dialog.dialog .dialog-title {
+  padding: 20px 24px 8px;
+}
+
+.dialog-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 4px 24px 8px;
+}
+
+dialog.dialog .dialog-actions {
+  margin: 0;
+  padding: 14px 24px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.dialog-section {
+  min-width: 0; /* fieldsets otherwise grow to their content */
+  margin: 0 0 12px;
+  padding: 0;
+  border: 0;
+}
+
+@media (min-width: 761px) {
+  .dialog-section.cols-4 .dialog-fields.grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.dialog-section + .dialog-section {
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.dialog-section > legend {
+  float: left; /* keeps the legend in the flow, so the gap below it is just the margin */
+  width: 100%;
+  padding: 0;
+  margin-bottom: 8px;
+  font-weight: 700;
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.dialog-section .field {
+  margin-bottom: 0;
+}
+
+.dialog-section > .dialog-fields {
+  width: 100%; /* a grid in a fieldset otherwise sizes to its widest option text */
 }
 
 dialog.dialog::backdrop {
@@ -2357,7 +2423,7 @@ tr.rec-group .add:hover:not(:disabled) {
 
 /* Dialog form layout */
 dialog.dialog.wide {
-  width: min(720px, calc(100vw - 32px));
+  width: min(860px, calc(100vw - 32px));
 }
 
 .dialog-fields {
@@ -2368,12 +2434,20 @@ dialog.dialog.wide {
 
 .dialog-fields.grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr)); /* long option text can't widen a column */
   gap: 10px 14px;
 }
 
 .dialog-fields .span-all {
   grid-column: 1 / -1;
+}
+
+.dialog-fields .field input,
+.dialog-fields .field select,
+.dialog-fields .field textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .field textarea,
@@ -2962,4 +3036,21 @@ dialog.dialog.wide {
 
 .link-contact {
   flex-basis: 100%;
+}
+
+/* Phones: the dialog becomes a full-screen sheet. */
+@media (max-width: 600px) {
+  dialog.dialog,
+  dialog.dialog.wide {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    margin: 0;
+    border-radius: 0;
+  }
+
+  dialog.dialog > form {
+    height: 100%;
+  }
 }

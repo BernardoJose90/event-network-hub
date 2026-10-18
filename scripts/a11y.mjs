@@ -77,6 +77,13 @@ try {
 
   for (const [name, route] of pages) {
     await send('Page.navigate', { url: APP + route }); await sleep(1800)
+    // A page that failed to load (e.g. a deleted event id) would pass axe trivially, so count it as a failure.
+    const loadError = await evaluate(`document.querySelector('h1, h2')?.textContent.match(/^Couldn.t (open|load)/) ? document.body.innerText.slice(0, 120) : ''`)
+    if (loadError) {
+      failed += 1
+      console.log(`FAIL  ${name}: page didn't load (${loadError.replace(/\s+/g, ' ')})`)
+      continue
+    }
     await evaluate(`${axeSource};1`)
     const violations = await evaluate(`axe.run(document, { runOnly: { type: 'tag', values: ${JSON.stringify(TAGS)} } })
       .then((r) => r.violations.map((v) => ({ id: v.id, impact: v.impact, help: v.help, nodes: v.nodes.map((n) => n.target.join(' ')) })))`)

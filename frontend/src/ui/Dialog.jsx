@@ -114,7 +114,7 @@ function Field({ field, value, error, onChange, inputRef, ids }) {
       {hint && <p id={ids.hint} className="field-hint">{hint}</p>}
       {error && <p id={ids.error} className="field-error"><span className="visually-hidden">Error: </span>{error}</p>}
       {type === 'textarea' ? (
-        <textarea rows={4} {...common} />
+        <textarea rows={field.rows || 4} {...common} />
       ) : type === 'select' ? (
         <select {...common}>
           {!required && <option value="">—</option>}
@@ -129,6 +129,19 @@ function Field({ field, value, error, onChange, inputRef, ids }) {
       )}
     </div>
   )
+}
+
+// Consecutive fields with the same `section` are grouped under a heading (fieldset/legend);
+// `columns: 4` on a field lays its section out four across on wide screens.
+function sections(fields) {
+  const out = []
+  for (const f of fields) {
+    const last = out[out.length - 1]
+    if (last && last.section === (f.section || null)) last.items.push(f)
+    else out.push({ section: f.section || null, items: [f] })
+    if (f.columns) out[out.length - 1].columns = f.columns
+  }
+  return out
 }
 
 function DialogView({ request, onClose }) {
@@ -194,23 +207,33 @@ function DialogView({ request, onClose }) {
     >
       <form method="dialog" onSubmit={submit} noValidate>
         <h2 id={titleId} className="dialog-title">{title}</h2>
-        {body && <div id={bodyId} className="dialog-body">{typeof body === 'string' ? <p>{body}</p> : body}</div>}
-        {fields.length > 0 && (
-          <div className={`dialog-fields${fields.length > 3 ? ' grid' : ''}`}>
-            {fields.map((f, i) => (
-              <div key={f.name} className={f.full || f.type === 'textarea' ? 'span-all' : undefined}>
-                <Field field={f} value={values[f.name]} error={errors[f.name]}
-                  inputRef={(el) => { fieldRefs.current[f.name] = el }}
-                  ids={{ input: `${baseId}-${i}`, hint: `${baseId}-${i}-hint`, error: `${baseId}-${i}-error`,
-                    list: `${baseId}-${i}-list` }}
-                  onChange={(name, v) => {
-                    setValues((vs) => ({ ...vs, [name]: v }))
-                    setErrors((es) => ({ ...es, [name]: undefined }))
-                  }} />
+        <div className="dialog-scroll">
+          {body && <div id={bodyId} className="dialog-body">{typeof body === 'string' ? <p>{body}</p> : body}</div>}
+          {sections(fields).map(({ section, items, columns }, g) => {
+            const grid = (
+              <div className={`dialog-fields${items.length > 3 || (section && items.length > 1) ? ' grid' : ''}`}>
+                {items.map((f) => {
+                  const i = fields.indexOf(f)
+                  return (
+                    <div key={f.name} className={f.full || f.type === 'textarea' ? 'span-all' : undefined}>
+                      <Field field={f} value={values[f.name]} error={errors[f.name]}
+                        inputRef={(el) => { fieldRefs.current[f.name] = el }}
+                        ids={{ input: `${baseId}-${i}`, hint: `${baseId}-${i}-hint`, error: `${baseId}-${i}-error`,
+                          list: `${baseId}-${i}-list` }}
+                        onChange={(name, v) => {
+                          setValues((vs) => ({ ...vs, [name]: v }))
+                          setErrors((es) => ({ ...es, [name]: undefined }))
+                        }} />
+                    </div>
+                  )
+                })}
               </div>
-            ))}
-          </div>
-        )}
+            )
+            return section
+              ? <fieldset key={section} className={`dialog-section${columns === 4 ? ' cols-4' : ''}`}><legend>{section}</legend>{grid}</fieldset>
+              : <div key={`fields-${g}`}>{grid}</div>
+          })}
+        </div>
         <div className="dialog-actions">
           {cancelLabel !== null && (
             <button type="button" ref={cancelRef} className="secondary" onClick={() => onClose(cancelValue)}>

@@ -42,6 +42,7 @@ class Settings:
     # Paused features keep their data but have no pages, links, API or background jobs.
     helpdesk_enabled: bool = True
     reports_enabled: bool = True
+    websummit_theme_enabled: bool = True  # off: the pages use a plain, neutral look
 
     @property
     def db_path(self) -> Path:
@@ -73,6 +74,7 @@ def load_settings() -> Settings:
         slack_webhook_url=os.environ.get("SLACK_WEBHOOK_URL") or None,
         helpdesk_enabled=_flag("FEATURE_HELPDESK"),
         reports_enabled=_flag("FEATURE_REPORTS"),
+        websummit_theme_enabled=_flag("FEATURE_WEBSUMMIT_THEME"),
         smtp_host=os.environ.get("SMTP_HOST") or None,
         smtp_port=int(os.environ.get("SMTP_PORT") or 587),
         smtp_username=os.environ.get("SMTP_USERNAME") or None,

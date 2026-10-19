@@ -5,6 +5,7 @@ import EventPage from './event/EventPage.jsx'
 import HelpdeskPage from './helpdesk/HelpdeskPage.jsx'
 import ReportsPage from './reports/ReportsPage.jsx'
 import RequestPage from './request/RequestPage.jsx'
+import { applyTheme } from './features.js'
 import { DialogProvider } from './ui/Dialog.jsx'
 import FeatureGate from './ui/FeatureGate.jsx'
 import './styles.css'
@@ -15,6 +16,8 @@ const eventMatch = window.location.pathname.match(/^\/event\/(\d+)\/?$/)
 const helpdeskMatch = /^\/helpdesk\/?$/.test(window.location.pathname)
 const reportsMatch = /^\/reports\/?$/.test(window.location.pathname)
 const requestMatch = window.location.pathname.match(/^\/request\/([A-Za-z0-9_-]{16,64})\/?$/)
+
+applyTheme()
 
 let page = <App />
 if (eventMatch) page = <EventPage documentId={Number(eventMatch[1])} />

@@ -199,6 +199,15 @@ The **Help desk** and **Reports** are paused: `FEATURE_HELPDESK` and `FEATURE_RE
 
 To switch one back on, set it to `true` in `.env` and run `docker compose up -d backend`. `GET /api/features` reports which areas are on.
 
+The **Web Summit look** is paused the same way (`FEATURE_WEBSUMMIT_THEME=false`). The pages then use a plain, neutral look:
+- dark grey bars and table headers;
+- blue buttons and highlights, with no gradient;
+- grey section rows;
+- standard corners and the system font;
+- no Web Summit logo.
+
+Layout, contrast and focus styles don't change. It's done with colour overrides under `html[data-brand="plain"]` at the end of `styles.css`, so the theme itself is untouched. Pages start in the plain look and switch to the Web Summit look only when `/api/features` says it's on, so the brand never flashes while paused.
+
 ## Help desk (ICT tickets for live events)
 
 `/helpdesk` (the **Help desk** link in the top bar) is the system of record for ICT issues during build, live days and breakdown. It covers Wi-Fi, wired connectivity, network hardware, partner stand connectivity and venue-wide problems. Every issue becomes a ticket with an owner, severity, timestamps and a full audit trail. Tickets are never deleted, and they stay in the history across events, even if the event is deleted later.

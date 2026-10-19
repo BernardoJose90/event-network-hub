@@ -20,8 +20,8 @@ def _client(tmp_path: Path, **flags) -> TestClient:
 
 
 def test_paused_areas_have_no_api(tmp_path: Path) -> None:
-    with _client(tmp_path, helpdesk_enabled=False, reports_enabled=False) as c:
-        assert c.get("/api/features").json() == {"helpdesk": False, "reports": False}
+    with _client(tmp_path, helpdesk_enabled=False, reports_enabled=False, websummit_theme_enabled=False) as c:
+        assert c.get("/api/features").json() == {"helpdesk": False, "reports": False, "websummit_theme": False}
         for path in ("/api/tickets", "/api/tickets/meta", "/api/reports"):
             assert c.get(path, headers=ADMIN).status_code == 404, path
         assert c.post("/api/bot/tickets", json={}).status_code == 404
@@ -30,7 +30,7 @@ def test_paused_areas_have_no_api(tmp_path: Path) -> None:
 
 def test_enabled_by_default(tmp_path: Path) -> None:
     with _client(tmp_path) as c:
-        assert c.get("/api/features").json() == {"helpdesk": True, "reports": True}
+        assert c.get("/api/features").json() == {"helpdesk": True, "reports": True, "websummit_theme": True}
         assert c.get("/api/tickets/meta", headers=ADMIN).status_code == 200
         assert c.get("/api/reports", headers=ADMIN).status_code == 200
 

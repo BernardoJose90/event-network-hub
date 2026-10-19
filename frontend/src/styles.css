@@ -2872,3 +2872,53 @@ thead th.rec-comments {
   color: var(--muted);
   white-space: pre-wrap;
 }
+
+/* --- Plain look: the Web Summit theme switched off (FEATURE_WEBSUMMIT_THEME=false) ---------- */
+/* Neutral colours, standard corners, the system font and no logo. Layout, contrast (WCAG 2.2 AA)
+   and focus styles are unchanged: every text/background pair below still meets 4.5:1. */
+
+html[data-brand='plain'] {
+  --navy: #1f2328;
+  --navy-soft: #e5e7eb;
+  --pink: #0b5cad;
+  --pink-hover: #094a8c;
+  --pink-soft: #e8f0fa;
+  --pink-text: #0b5cad;
+  --teal: #4b5563;
+  --teal-soft: #f1f3f5;
+  --teal-text: #374151;
+  --focus: #0b5cad;
+  --gradient: linear-gradient(#0b5cad, #0b5cad);
+  --radius: 8px;
+}
+
+html[data-brand='plain'] {
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+html[data-brand='plain'] button,
+html[data-brand='plain'] a.button,
+html[data-brand='plain'] .segmented,
+html[data-brand='plain'] .app-nav a,
+html[data-brand='plain'] .comment-button {
+  border-radius: 6px;
+}
+
+html[data-brand='plain'] button.link {
+  border-radius: 0;
+}
+
+html[data-brand='plain'] .brand-mark {
+  display: none;
+}
+
+html[data-brand='plain'] input:focus,
+html[data-brand='plain'] select:focus,
+html[data-brand='plain'] button:focus-visible {
+  outline-color: var(--focus);
+}
+
+html[data-brand='plain'] .sev-P3 { color: var(--teal-text); }
+html[data-brand='plain'] .status-new { color: var(--pink-text); }
+html[data-brand='plain'] .status-acknowledged,
+html[data-brand='plain'] .status-in_progress { color: var(--navy); background: var(--navy-soft); }

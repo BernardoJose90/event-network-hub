@@ -103,8 +103,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/features")
     def features() -> dict[str, bool]:
-        """Which optional areas are on (FEATURE_HELPDESK, FEATURE_REPORTS); the pages hide paused ones."""
-        return {"helpdesk": settings.helpdesk_enabled, "reports": settings.reports_enabled}
+        """Which optional parts are on (FEATURE_HELPDESK, FEATURE_REPORTS, FEATURE_WEBSUMMIT_THEME)."""
+        return {"helpdesk": settings.helpdesk_enabled, "reports": settings.reports_enabled,
+                "websummit_theme": settings.websummit_theme_enabled}
 
     @app.exception_handler(DocumentGone)
     async def document_gone(_: Request, __: DocumentGone) -> JSONResponse:

@@ -6,9 +6,16 @@ let request = null
 
 export function loadFeatures() {
   request ??= fetch('/api/features')
-    .then((res) => (res.ok ? res.json() : { helpdesk: false, reports: false }))
-    .catch(() => ({ helpdesk: false, reports: false }))
+    .then((res) => (res.ok ? res.json() : { helpdesk: false, reports: false, websummit_theme: false }))
+    .catch(() => ({ helpdesk: false, reports: false, websummit_theme: false }))
   return request
+}
+
+// The Web Summit look is on only when the server says so; index.html starts in the plain look.
+export function applyTheme() {
+  loadFeatures().then((f) => {
+    if (f.websummit_theme) delete document.documentElement.dataset.brand
+  })
 }
 
 export function useFeatures() {

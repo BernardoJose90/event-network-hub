@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useDialog } from '../ui/Dialog.jsx'
 import { CHOICE_LABELS, COLUMNS, TITLES, recordName } from './columns.js'
+import { useItemComments } from './comments.jsx'
 import { useGridKeyboard } from './grid.js'
 import { usePendingDeletes } from './pendingDeletes.js'
 
@@ -93,12 +94,16 @@ function CellEditor({ col, value, options, seed, label, onCommit, onCancel }) {
   )
 }
 
-export default function RecordTable({ type, api, overview, isAdmin, notify, onChanged }) {
+export default function RecordTable({ type, api, overview, isAdmin, notify, onChanged, comments, canComment,
+  onCommentsChanged }) {
   const columns = COLUMNS[type]
   const groupKind = GROUPED[type]
   const venues = overview.venues
   const groups = groupKind ? overview.groups.filter((g) => g.kind === groupKind) : [null]
   const dialog = useDialog()
+  const openComments = useItemComments({ api, canComment, notify, onCommentsChanged })
+  // Comments are for events (not templates); the column shows once they've loaded.
+  const withComments = !!comments
   const [venueId, setVenueId] = useState(venues[0]?.id ?? null)
   const [records, setRecords] = useState([])
   const [search, setSearch] = useState('')
@@ -330,6 +335,7 @@ export default function RecordTable({ type, api, overview, isAdmin, notify, onCh
     const list = siblings(record)
     const index = list.findIndex((r) => r.id === record.id)
     const name = recordName(type, record.data)
+    const open = comments?.by_record?.[record.id] || 0
     return (
       <tr key={record.id}>
         {columns.map((col) => cell(record, col))}
@@ -343,11 +349,25 @@ export default function RecordTable({ type, api, overview, isAdmin, notify, onCh
               onClick={() => remove(record)}>Delete</button>
           </td>
         )}
+        {withComments && (
+          <td className="rec-comments">
+            <button className={`comment-button${open ? ' has-open' : ''}`} data-nav={`a:${record.id}:comments`}
+              tabIndex={-1} onClick={() => openComments(type, record)}
+              aria-label={`Comments on ${name}${open ? `: ${open} open` : ''}`}
+              title={open ? `${open} open comment${open === 1 ? '' : 's'}` : canComment ? 'Comment on this item' : 'Comments'}>
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" fill="none" stroke="currentColor"
+                  strokeWidth="2" strokeLinejoin="round" />
+              </svg>
+              {open > 0 && <span className="comment-count" aria-hidden="true">{open}</span>}
+            </button>
+          </td>
+        )}
       </tr>
     )
   }
 
-  const span = columns.length + (isAdmin ? 1 : 0)
+  const span = columns.length + (withComments ? 1 : 0) + (isAdmin ? 1 : 0)
   const totalIndex = totalCol ? columns.indexOf(totalCol) : -1
   const venueName = venues.find((v) => v.id === venueId)?.name
 
@@ -380,11 +400,13 @@ export default function RecordTable({ type, api, overview, isAdmin, notify, onCh
         <colgroup>
           {columns.map((c) => <col key={c.field} style={{ width: c.width }} />)}
           {isAdmin && <col style={{ width: 150 }} />}
+          {withComments && <col style={{ width: 56 }} />}
         </colgroup>
         <thead>
           <tr>
             {columns.map((c) => <th key={c.field} scope="col" className={c.kind === 'number' ? 'num' : undefined}>{c.label}</th>)}
             {isAdmin && <th scope="col"><span className="visually-hidden">Actions</span></th>}
+            {withComments && <th scope="col" className="rec-comments"><span className="visually-hidden">Comments</span></th>}
           </tr>
         </thead>
         <tbody>

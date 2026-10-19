@@ -75,6 +75,11 @@ export function eventApi(documentId, identity) {
     approveRequest: (id, body) => call('POST', `${base}/ict-requests/${id}/approve`, identity, body),
     requestNeedsInfo: (id, revision, note) => call('POST', `${base}/ict-requests/${id}/needs-info`, identity, { revision, note }),
     declineRequest: (id, revision, note) => call('POST', `${base}/ict-requests/${id}/decline`, identity, { revision, note }),
+    comments: (params = {}) => call('GET', `${base}/comments?${new URLSearchParams(params)}`, identity),
+    addComment: (body, recordId) => call('POST', `${base}/comments`, identity, { body, record_id: recordId ?? null }),
+    replyComment: (id, body) => call('POST', `${base}/comments/${id}/replies`, identity, { body }),
+    resolveComment: (id) => call('POST', `${base}/comments/${id}/resolve`, identity),
+    reopenComment: (id) => call('POST', `${base}/comments/${id}/reopen`, identity),
     saveAsTemplate: (name) => call('POST', '/api/templates', identity, { name, event_id: Number(documentId) }),
   }
 }

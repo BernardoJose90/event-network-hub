@@ -11,7 +11,7 @@ export function Overview({ overview, api, isAdmin, notify, onChanged, onPublish,
   const dialog = useDialog()
 
   useEffect(() => {
-    if (!overview.has_records) return
+    if (!overview.has_records || overview.showing) return // viewers see the published version, not the draft
     api.changelog({ to: 'draft' }).then(setDraft).catch((err) => notify(err.message, 'error'))
   }, [api, overview, notify])
 
@@ -111,6 +111,13 @@ export function Overview({ overview, api, isAdmin, notify, onChanged, onPublish,
         ))}
       </div>
 
+      {!isTemplate && overview.open_comments > 0 && (
+        <div className="notice info">
+          {overview.open_comments} open comment{overview.open_comments === 1 ? '' : 's'} on this event.{' '}
+          <button className="link" onClick={() => goTo('comments')}>View comments</button>
+        </div>
+      )}
+
       {overview.flagged_list_values > 0 && (
         <div className="notice info">
           {overview.flagged_list_values} list value(s) were added by the import because records used them.{' '}
@@ -151,7 +158,7 @@ export function Overview({ overview, api, isAdmin, notify, onChanged, onPublish,
             orders and aren&apos;t published.
           </p>
         </div>
-      ) : (
+      ) : !overview.showing && (
       <div className="panel">
         <div className="row space-between">
           <h3>
@@ -346,7 +353,7 @@ export function ListsPanel({ api, overview, isAdmin, notify, onChanged }) {
 const ENTITY_LABELS = {
   '': 'Everything', wifi: 'Wi-Fi networks', ethernet: 'Ethernet', partner: 'Partner orders',
   vlan_extension: 'VLAN extensions', list: 'Setup lists', venue: 'Venues', group: 'Sections', event: 'Imports & publishing',
-  request: 'ICT requests', legacy: 'Old change log (imported)',
+  request: 'ICT requests', comment: 'Comments', legacy: 'Old change log (imported)',
 }
 
 export function HistoryPanel({ api, notify }) {

@@ -17,10 +17,10 @@ from pydantic import BaseModel, Field
 from .. import db
 from ..naming import event_document_name, short_code
 from ..validation import UploadRejected
-from ..auth import Principal, current_principal, require_admin, require_known_role
+from ..auth import ROLE_NETWORK_ADMIN, Principal, current_principal, require_admin, require_known_role
 from ..service import ORIGINAL
 from ..storage import ObjectNotFound, version_key
-from . import service, store
+from . import published, service, store
 from .importer import import_workbook
 from .models import ListValue, NamedItem, NewRecord, RecordMove, RecordPatch
 from .publish import SKIPPED_ACTIONS, changelog_between, changes_since_last_publish, publish
@@ -145,9 +145,29 @@ def delete_template(template_id: int, conn: Conn, principal: Editor) -> None:
 # --- overview, history ---------------------------------------------------------
 
 
+def _viewer_view(conn: sqlite3.Connection, document_id: int, principal: Principal) -> dict[str, Any] | None:
+    """Viewers see the latest published version (None: an admin, or nothing published yet)."""
+    if principal.role == ROLE_NETWORK_ADMIN:
+        return None
+    return published.latest(conn, document_id)
+
+
 @router.get("/overview")
 def overview(document_id: int, conn: Conn, principal: Reader) -> dict[str, Any]:
+    from .comments import open_counts  # comments imports this module
+
     document = _document(conn, document_id)
+    open_comments = open_counts(conn, document_id)["open"] if document["kind"] == "event" else 0
+    view = _viewer_view(conn, document_id, principal)
+    if view is not None:
+        latest = db.latest_version(conn, document_id, statuses=(db.STATUS_READY,))
+        return {
+            "document": document, "has_records": bool(view["counts"]), "counts": view["counts"],
+            "venues": view["venues"], "groups": view["groups"], "lists": view["lists"], "flagged_list_values": 0,
+            "totals": view["totals"], "unpublished_changes": 0,
+            "latest_version": latest["version"] if latest else None, "open_comments": open_comments,
+            "showing": {"version": view["version"], "published_at": view["published_at"]},
+        }
     counts: dict[str, int] = {}
     for record in store.records(conn, document_id):
         counts[record["type"]] = counts.get(record["type"], 0) + 1
@@ -167,6 +187,8 @@ def overview(document_id: int, conn: Conn, principal: Reader) -> dict[str, Any]:
         "totals": service.totals(conn, document_id),
         "unpublished_changes": len(unpublished),
         "latest_version": latest["version"] if latest else None,
+        "open_comments": open_comments,
+        "showing": None,  # the live requirements (admins, or nothing published yet)
     }
 
 
@@ -226,6 +248,9 @@ def import_version(request: Request, document_id: int, conn: Conn, principal: Ed
 def list_records(document_id: int, record_type: RecordTypePath, conn: Conn, principal: Reader,
                  ) -> list[dict[str, Any]]:
     _document(conn, document_id)
+    view = _viewer_view(conn, document_id, principal)
+    if view is not None:
+        return published.records(view, record_type)
     records = store.records(conn, document_id, record_type)
     numbers = service.row_numbers(records)  # the ID column: row numbers in display order
     return [service.public(r) | {"data": service.public(r)["data"] | {"ref_id": numbers[r["id"]]}}
@@ -271,8 +296,12 @@ def move_record(document_id: int, record_type: RecordTypePath, record_id: int, b
 
 @router.post("/records/wifi/{record_id}/reveal")
 def reveal_password(document_id: int, record_id: int, conn: Conn, principal: Reader) -> dict[str, Any]:
-    """Return a Wi-Fi password and log who revealed it."""
+    """Return a Wi-Fi password and log who revealed it (viewers: the published one)."""
     _document(conn, document_id)
+    view = _viewer_view(conn, document_id, principal)
+    if view is not None:
+        return {"password": _run(lambda: service.reveal_published_secret(
+            conn, document_id, published.wifi(view, record_id), user=principal.user))}
     return {"password": _run(lambda: service.reveal_secret(conn, document_id, record_id, user=principal.user))}
 
 

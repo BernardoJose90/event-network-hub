@@ -281,6 +281,17 @@ def reveal_secret(conn: sqlite3.Connection, doc: int, record_id: int, *, user: s
     return record["data"].get("password")
 
 
+def reveal_published_secret(conn: sqlite3.Connection, doc: int, record: dict[str, Any] | None, *,
+                            user: str) -> str | None:
+    """A viewer reveals a password as published (it may differ from the draft). Logged the same way."""
+    if record is None:
+        raise RecordError(404, "Wi-Fi network not found in the published version")
+    with conn:
+        store.log(conn, doc=doc, entity="wifi", record_id=record["id"], action="reveal", user=user,
+                  summary=f"Revealed the published password of {_describe('wifi', record['data'])}")
+    return record["data"].get("password")
+
+
 # --- lists, venues, groups ---------------------------------------------------
 
 

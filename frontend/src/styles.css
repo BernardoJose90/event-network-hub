@@ -2748,3 +2748,127 @@ dialog.dialog.wide {
   max-width: 640px;
   padding: 32px 16px;
 }
+
+/* --- Comments ------------------------------------------------------------------------- */
+
+/* Pinned to the right edge, so the comment button stays in view on wide tables. */
+.rec-comments {
+  position: sticky;
+  right: 0;
+  z-index: 1;
+  text-align: center;
+  background: var(--panel);
+  box-shadow: -1px 0 0 var(--border);
+}
+
+thead th.rec-comments {
+  background: var(--navy);
+}
+
+.comment-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 32px;
+  min-height: 28px;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.comment-button:hover {
+  border-color: var(--control-border);
+  color: var(--text);
+}
+
+.comment-button.has-open {
+  background: var(--teal-soft);
+  color: var(--teal-text);
+  font-weight: 700;
+}
+
+.comments-bar {
+  margin-bottom: 8px;
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--control-border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.segmented button {
+  border: 0;
+  border-radius: 0;
+  background: var(--panel);
+  color: var(--text);
+}
+
+.segmented button.active {
+  background: var(--navy);
+  color: #fff;
+}
+
+.comment-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.comment-thread {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.comment-thread.resolved {
+  background: var(--bg);
+}
+
+.comment-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.comment-item {
+  flex: 1 1 auto;
+}
+
+.comment-by {
+  margin: 6px 0 2px;
+}
+
+.comment-body {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.comment-replies {
+  margin: 10px 0 0;
+  padding: 0 0 0 14px;
+  border-left: 3px solid var(--border);
+  list-style: none;
+}
+
+.comment-replies li + li {
+  margin-top: 8px;
+}
+
+.comment-actions {
+  margin-top: 10px;
+}
+
+.comment-quote {
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border-left: 3px solid var(--border);
+  color: var(--muted);
+  white-space: pre-wrap;
+}

@@ -50,7 +50,8 @@ PARTNER_WIDTHS = [6, 40, 8, 14, 42, 18, 14, 18, 8, 8, 40, 12]
 def _col(fields: list[str], field: str) -> int:
     """1-based spreadsheet column of a field."""
     return fields.index(field) + 1
-SKIPPED_ACTIONS = ("reveal", "legacy", "publish", "request", "review")  # not changes to the requirements
+SKIPPED_ACTIONS = ("reveal", "legacy", "publish", "request", "review",  # not changes to the requirements
+                   "comment", "reply", "resolve", "reopen")
 
 
 # --- snapshot --------------------------------------------------------------------

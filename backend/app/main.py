@@ -17,6 +17,7 @@ from .converter import GotenbergConverter
 from .ictrequests.routes import admin_router as requests_admin_router, public_router as requests_public_router
 from .notifications import keys as notification_keys, service as notifications, worker as notification_worker
 from .notifications.routes import router as notifications_router, watchers_router
+from .records.comments import router as comments_router
 from .records.routes import events_router, router as records_router
 from .reports import router as reports_router
 from .routes import router
@@ -88,6 +89,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(router)
     app.include_router(records_router)
     app.include_router(events_router)
+    app.include_router(comments_router)
     if settings.helpdesk_enabled:  # paused: no API (404), no bot intake, no SLA checks
         app.include_router(tickets_router)
         app.include_router(bot_router)

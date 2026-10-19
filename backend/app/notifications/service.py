@@ -95,6 +95,7 @@ PUSH_TYPES = {
     "sla": "Help desk SLA warnings and breaches",
     "assigned": "Tickets assigned to me",
     "requests": "New ICT requests",
+    "comments": "New comments on event requirements",
 }
 DEFAULT_PUSH_TYPES = ["ticket_urgent", "sla", "assigned"]
 

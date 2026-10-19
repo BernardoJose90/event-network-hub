@@ -6,6 +6,7 @@ import NotificationBell from '../ui/Notifications.jsx'
 import { StatusMessages } from '../ui/Notice.jsx'
 import { eventApi } from './api.js'
 import { TITLES } from './columns.js'
+import { CommentsPanel } from './comments.jsx'
 import { HistoryPanel, ListsPanel, Overview } from './panels.jsx'
 import RecordTable from './RecordTable.jsx'
 import { RequestsPanel } from './requests.jsx'
@@ -19,6 +20,7 @@ const VIEWS = [
   ['ethernet', TITLES.ethernet],
   ['partner', TITLES.partner],
   ['requests', 'ICT requests'],
+  ['comments', 'Comments'],
   ['lists', 'Setup'],
   ['history', 'History'],
 ]
@@ -29,6 +31,7 @@ export default function EventPage({ documentId }) {
   const api = useMemo(() => eventApi(documentId, identity), [documentId, identity])
   const dialog = useDialog()
   const [overview, setOverview] = useState(null)
+  const [comments, setComments] = useState(null)
   const [error, setError] = useState(null)
   const [view, setView] = useState(() => {
     const v = new URLSearchParams(window.location.search).get('view')
@@ -51,6 +54,24 @@ export default function EventPage({ documentId }) {
   useEffect(() => {
     refresh()
   }, [refresh])
+
+  const isEvent = overview?.document.kind === 'event'
+  const reloadComments = useCallback(async () => {
+    try {
+      setComments(await api.comments())
+    } catch {
+      // the counts just stay as they were; the Comments page shows its own errors on retry
+    }
+  }, [api])
+
+  useEffect(() => {
+    if (isEvent) reloadComments()
+  }, [isEvent, reloadComments])
+
+  const onCommentsChanged = useCallback(() => {
+    reloadComments()
+    refresh()
+  }, [reloadComments, refresh])
 
   // Page title names the event and the view (WCAG 2.4.2).
   useEffect(() => {
@@ -156,7 +177,8 @@ export default function EventPage({ documentId }) {
 
   const archived = !!overview.document.archived_at
   const canEdit = isAdmin && !archived // archived events are read-only, even for admins
-  const props = { api, overview, isAdmin: canEdit, notify, onChanged: refresh }
+  const canComment = !archived && !isTemplate
+  const props = { api, overview, isAdmin: canEdit, notify, onChanged: refresh, comments, canComment, onCommentsChanged }
   const viewLabel = VIEWS.find(([k]) => k === view)?.[1]
   const points = overview.totals.ethernet.reduce((sum, t) => sum + t.total, 0)
   return (
@@ -186,6 +208,17 @@ export default function EventPage({ documentId }) {
         )}
       </header>
       <StatusMessages notice={notice} onDismiss={() => setNotice(null)} className="event-notice" />
+      {!isAdmin && !isTemplate && overview.has_records && (
+        <div className="notice info event-notice banner" role="region" aria-label="Version shown">
+          <span>
+            {overview.showing
+              ? <><strong>Showing V{overview.showing.version}</strong>, the latest published version
+                {overview.showing.published_at && ` (${new Date(overview.showing.published_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })})`}.
+                {canComment && ' Use the comment button on a row, or the Comments page, to send feedback.'}</>
+              : <><strong>Not published yet.</strong> This is the working draft and may change.</>}
+          </span>
+        </div>
+      )}
       {archived && (
         <div className="notice info event-notice banner" role="region" aria-label="Archived">
           <span>
@@ -195,16 +228,16 @@ export default function EventPage({ documentId }) {
       )}
       <div className="event-body">
         <nav className="event-nav" aria-label="Requirements sections">
-          {VIEWS.filter(([key]) => !(isTemplate && (key === 'partner' || key === 'requests'))).map(([key, label]) => {
-            const count = key === 'ethernet' ? points : overview.counts?.[key]
+          {VIEWS.filter(([key]) => !(isTemplate && ['partner', 'requests', 'comments'].includes(key))).map(([key, label]) => {
+            const count = key === 'ethernet' ? points : key === 'comments' ? overview.open_comments : overview.counts?.[key]
             return (
               <button key={key} className={view === key ? 'active' : ''} onClick={() => goTo(key)}
                 aria-current={view === key ? 'page' : undefined}
-                disabled={!overview.has_records && overview.venues.length === 0 && key !== 'overview' && key !== 'history'}>
+                disabled={!overview.has_records && overview.venues.length === 0 && !['overview', 'history', 'comments'].includes(key)}>
                 <span>{label}</span>
                 {count !== undefined && (
                   <span className="nav-count">
-                    {count}<span className="visually-hidden">{key === 'ethernet' ? ' Ethernet points' : ' items'}</span>
+                    {count}<span className="visually-hidden">{key === 'ethernet' ? ' Ethernet points' : key === 'comments' ? ' open' : ' items'}</span>
                   </span>
                 )}
                 {key === 'lists' && overview.flagged_list_values > 0 && (
@@ -221,6 +254,7 @@ export default function EventPage({ documentId }) {
           {view === 'overview' && <Overview {...props} onPublish={publish} goTo={goTo} />}
           {['wifi', 'ethernet', 'partner'].includes(view) && <RecordTable key={view} type={view} {...props} />}
           {view === 'requests' && !isTemplate && <RequestsPanel {...props} />}
+          {view === 'comments' && !isTemplate && <CommentsPanel {...props} />}
           {view === 'lists' && <ListsPanel {...props} />}
           {view === 'history' && <HistoryPanel {...props} />}
         </main>

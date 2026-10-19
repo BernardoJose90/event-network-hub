@@ -96,6 +96,9 @@ def init_db(path: Path) -> None:
         from .records import store as records_store  # records tables reference documents/versions
 
         records_store.init(conn)
+        from .records import comments as records_comments
+
+        records_comments.init(conn)
         from .tickets import store as tickets_store
 
         tickets_store.init(conn)

@@ -353,6 +353,30 @@ Internal teams (AV, Photographers & Videographers, Engineering, CCTV) request co
 
 API: `GET /api/reports[?events=1,2]` and `GET /api/reports/export[?events=…][&format=xlsx|csv]`. Code: `backend/app/reports.py` and `frontend/src/reports/`.
 
+## Comments
+
+Viewers and network admins can comment on an event's requirements. Network admins reply and resolve.
+
+- **What viewers see:** viewers see the **latest published version**, with a banner such as "Showing V3, the latest published version (18 Oct 2026)", so their comments are about what was released. Network admins keep working on the draft. Before anything is published, viewers see the draft with a "Not published yet" banner.
+  - Passwords revealed by a viewer are the published ones, and each reveal is logged.
+- **Where to comment:**
+  - on an item, with the comment button pinned to the right of each row in Wi-Fi networks, Ethernet requirements and Partner orders (it shows the number of open comments);
+  - in general, with **Add general comment** on the **Comments** page.
+- **Comments page:** the event's left menu, with the number of open comments. Filter by Open, Resolved or All, then Reply, Resolve or Reopen. Only network admins resolve and reopen.
+- **Raised on a version:** each comment is marked with the version it was raised on ("On V3"). Open comments stay open across later versions.
+- **Kept after changes:** the item's name and place are copied onto the comment, so it still reads correctly after the item is changed or deleted.
+- **Not changes:** comments never change the requirements and don't count as unpublished changes. They appear in History under "Comments".
+- **Notifications:**
+  - a new comment notifies network admins in the bell (browser push if they turn on "New comments");
+  - replies and resolutions notify the person who started the thread.
+- **Rules:**
+  - a name is required (the TEST ONLY name box);
+  - up to 2000 characters;
+  - archived events can be read but not commented on;
+  - templates don't take comments.
+
+API: `GET /api/events/{id}/comments[?state=open|resolved|all&record_id=]`, `POST …/comments {body, record_id?}`, `POST …/comments/{cid}/replies {body}`, `POST …/comments/{cid}/resolve` and `/reopen` (network admins). Code: `backend/app/records/comments.py`, `backend/app/records/published.py` and `frontend/src/event/comments.jsx`.
+
 ## Notifications
 
 Every notification lands in the **bell** (top bar and event pages): an unread count, the latest 30 items, and "Mark all as read". Read state is kept per person. Live updates arrive over server-sent events, and if the stream is blocked the bell polls every 30 s. Other channels are added only where they help:
@@ -366,6 +390,8 @@ Every notification lands in the **bell** (top bar and event pages): an unread co
 | P3/P4 misses its SLA | network admins | | | |
 | ICT request submitted | network admins | opt-in | | |
 | Request approved, needs info, or declined | | | | the requester |
+| New comment on an event | network admins | opt-in | | |
+| Reply to a comment, or comment resolved | the comment's author (a reply by the author goes to network admins) | | | |
 | Request link emailed, deadline in 7 days and 1 day | | | | the link's contact |
 | New version published | everyone | | | the event's followers |
 

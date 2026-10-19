@@ -36,7 +36,7 @@ docker compose run --rm --build tests
 cd backend && python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt && .venv/bin/pytest
 ```
 
-These cover upload validation, sha256 duplicate detection, version-number race retry, formula error detection and the download API.
+These cover upload validation, sha256 duplicate detection, version-number race retry and the download API.
 
 **Smoke test** (needs the stack running, plus `jq` and poppler's `pdffonts` and `pdfinfo`, e.g. `brew install poppler jq`):
 
@@ -67,9 +67,8 @@ On upload, the backend:
 
 1. validates the file;
 2. checks the file name, then finds or creates the event's document and refuses a version number that already exists;
-3. records formula-error warnings;
-4. sends the workbook to Gotenberg's LibreOffice route (`POST /forms/libreoffice/convert`, `singlePageSheets=true`);
-5. stores `original.xlsx` and `full.pdf`.
+3. sends the workbook to Gotenberg's LibreOffice route (`POST /forms/libreoffice/convert`, `singlePageSheets=true`);
+4. stores `original.xlsx` and `full.pdf`.
 
 Files go through a small `Storage` interface (`put`/`get`; local volume today). Metadata is in SQLite: `documents`, `document_versions` (unique on document and version, with conflicting inserts retried) and `download_log`. Downloads serve the latest `ready` version, or `?version=N`, to any known role, and every download is logged.
 
@@ -79,7 +78,7 @@ Gotenberg runs a custom image based on `gotenberg/gotenberg:8.37.0`. It adds Lat
 backend/app/
   config.py      settings + FORMULA_ERRORS constant
   validation.py  upload validation
-  xlsx.py        formula error scan + sheet count (openpyxl)
+  xlsx.py        visible sheet count (openpyxl)
   converter.py   Gotenberg client
   service.py     upload pipeline (dedup, version allocation, convert, store)
   storage.py     Storage protocol + LocalStorage
@@ -105,7 +104,7 @@ backend/app/
 - **File names drive documents and versions.** Uploads must be named like `LIS26 _ Event_Network_Requirements_V1.xlsx`. Spaces, underscores and hyphens are interchangeable, so `VAN26 _ Event Network Requirements - V1.xlsx` also works. `|` also works after the event code, and matching ignores case. The older title "Event Network Matrix" is accepted in place of "Event Network Requirements", the version may be bracketed (`[V4]`, `(V4)`), and a browser's repeat-download suffix such as ` (1)` is ignored. Every spelling maps to the same document and version, so a version can't be uploaded twice under a differently written name. The event code (`LIS26`) picks the document, named `LIS26 | Event_Network_Requirements`, which is created on the first upload. `V<n>` is the version number. Each version number can be uploaded once; a different file under an existing number is rejected. A version whose conversion failed can be uploaded again to retry. Versions may arrive out of order, and View/Download use the highest ready version. The rule lives in `app/naming.py`, with the required text in `config.REQUIRED_NAME`.
 - **No redaction.** Viewers are trusted, so every role sees the workbook as-is, passwords included. The role header is kept so real authorization can be added later.
 - **Print gridlines are turned off for conversion.** With `singlePageSheets=true`, LibreOffice draws "print gridlines" at the wrong positions, so lines cut through the text. Seen with LibreOffice 26.8.0.3 (gotenberg 8.37.0) and 26.8.1.1 (gotenberg 8.38.1). `app/pdf_prep.py` removes the flag from the copy sent to Gotenberg; the stored original is untouched, and cell borders still render.
-- **Formula errors may look different in the PDF.** LibreOffice recalculates formulas, so a broken formula such as `sum(#REF!)`, saved as `#REF!`, can appear as `#NAME?`. Both are errors in the source workbook and are listed as upload warnings.
+- **Formula errors may look different in the PDF.** LibreOffice recalculates formulas, so a broken formula such as `sum(#REF!)`, saved as `#REF!`, can appear as `#NAME?`. Both are errors in the source workbook.
 - **Clipped text.** Text wider than its column is cut off in the PDF, exactly as Excel prints it. Widen the column in the source workbook if a value must be readable in full.
 
 ## Requirements (the app as the master copy)

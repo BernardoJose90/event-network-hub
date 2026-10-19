@@ -29,5 +29,7 @@ def test_migration_adds_format_column_and_keeps_rows(tmp_path: Path) -> None:
 
     conn = db.connect(path)
     rows = [dict(r) for r in conn.execute("SELECT user, format FROM download_log")]
+    version_columns = {r["name"] for r in conn.execute("PRAGMA table_info(document_versions)")}
     conn.close()
     assert rows == [{"user": "alice", "format": "pdf"}]
+    assert "warnings" not in version_columns and {"edited_from", "source"} <= version_columns

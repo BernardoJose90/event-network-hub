@@ -13,7 +13,6 @@ from .converter import ConversionError, Converter
 from .naming import ParsedName
 from .pdf_prep import prepare_for_pdf
 from .storage import Storage, version_key
-from .xlsx import find_formula_errors
 
 log = logging.getLogger(__name__)
 
@@ -60,7 +59,6 @@ def _claim_version(
     version: int,
     sha256: str,
     uploaded_by: str,
-    warnings: list[dict[str, str]],
 ) -> dict[str, Any]:
     """Insert the version row, refusing a version number that was already uploaded.
 
@@ -81,7 +79,6 @@ def _claim_version(
             version=version,
             sha256=sha256,
             uploaded_by=uploaded_by,
-            warnings=warnings,
         )
     except sqlite3.IntegrityError:
         if db.get_document(conn, document["id"]) is None:
@@ -104,12 +101,11 @@ def upload_file(
     The caller must have validated ``data`` and parsed the file name already.
     Raises VersionExists if that version number is already taken.
     """
-    warnings = find_formula_errors(data)
     document = find_or_create_document(conn, parsed.document_name)
     db.ensure_not_archived(conn, document["id"])
     version = _claim_version(
         conn, storage, document=document, version=parsed.version, sha256=sha256_hex(data),
-        uploaded_by=uploaded_by, warnings=warnings,
+        uploaded_by=uploaded_by,
     )
     reason = store_and_convert(conn, storage, converter, document_id=document["id"], version=version, data=data)
     result = dict(
@@ -158,7 +154,7 @@ MAX_VERSION_ALLOCATION_ATTEMPTS = 5
 
 def allocate_next_version(
     conn: sqlite3.Connection, *, document_id: int, sha256: str, user: str,
-    warnings: list[dict[str, str]], edited_from: int | None, source: str,
+    edited_from: int | None, source: str,
 ) -> dict[str, Any]:
     """Insert the version after the newest one, retrying if a concurrent save or upload took it."""
     db.ensure_not_archived(conn, document_id)
@@ -167,7 +163,7 @@ def allocate_next_version(
         try:
             return db.insert_version(
                 conn, document_id=document_id, version=number, sha256=sha256,
-                uploaded_by=user, warnings=warnings, edited_from=edited_from, source=source,
+                uploaded_by=user, edited_from=edited_from, source=source,
             )
         except sqlite3.IntegrityError:
             if db.get_document(conn, document_id) is None:

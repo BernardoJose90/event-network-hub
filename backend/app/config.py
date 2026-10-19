@@ -14,8 +14,6 @@ from pathlib import Path
 # Every uploaded file name must contain this, e.g. "LIS26 _ Event_Network_Requirements_V1.xlsx".
 REQUIRED_NAME = "Event_Network_Requirements"
 
-# Spreadsheet error values surfaced to users as warnings.
-FORMULA_ERRORS: frozenset[str] = frozenset({"#REF!", "#NAME?", "#DIV/0!", "#VALUE!", "#N/A"})
 
 
 @dataclass(frozen=True)

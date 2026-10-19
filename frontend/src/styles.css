@@ -360,17 +360,6 @@ th {
   color: var(--error);
 }
 
-.warn {
-  color: var(--warn);
-  cursor: pointer;
-}
-
-.warning-list {
-  margin: 6px 0 0;
-  padding-left: 18px;
-  font-size: 0.9rem;
-}
-
 .notice {
   margin-top: 12px;
   padding: 10px 14px;

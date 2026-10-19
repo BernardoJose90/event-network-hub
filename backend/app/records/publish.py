@@ -349,7 +349,7 @@ def publish(conn: sqlite3.Connection, storage: Storage, converter: Converter, *,
     version_hint = db.max_version(conn, doc) + 1
     xlsx = build_workbook(snap, changes, version=version_hint)
     version = allocate_next_version(conn, document_id=doc, sha256=hashlib.sha256(xlsx).hexdigest(), user=user,
-                                    warnings=[], edited_from=None, source="publish")
+                                    edited_from=None, source="publish")
     n = version["version"]
     if n != version_hint:  # someone published or uploaded at the same moment
         xlsx = build_workbook(snap, changes, version=n)

@@ -22,38 +22,11 @@ function formatTime(iso) {
   return new Date(iso).toLocaleString()
 }
 
-function Warnings({ warnings }) {
-  if (!warnings || warnings.length === 0) return <span className="muted">None</span>
-  return (
-    <details>
-      <summary className="warn">
-        {warnings.length} formula error{warnings.length === 1 ? '' : 's'}
-      </summary>
-      <ul className="warning-list">
-        {warnings.map((w) => (
-          <li key={`${w.sheet}!${w.cell}`}>
-            <code>
-              {w.sheet}!{w.cell}
-            </code>{' '}
-            {w.error}
-          </li>
-        ))}
-      </ul>
-    </details>
-  )
-}
-
 function UploadResult({ result }) {
   const tone = { created: 'ok', unchanged: 'info', failed: 'error' }[result.outcome]
   return (
     <div className={`notice ${tone}`}>
       <p>{result.message}</p>
-      {result.version.warnings.length > 0 && (
-        <>
-          <p className="small">This upload contains formula errors:</p>
-          <Warnings warnings={result.version.warnings} />
-        </>
-      )}
     </div>
   )
 }
@@ -454,7 +427,6 @@ function VersionTable({ documentId, versions, identity, onView }) {
                 <th>Uploaded by</th>
                 <th>Uploaded at</th>
                 <th>Status</th>
-                <th>Warnings</th>
                 <th><span className="visually-hidden">Actions</span></th>
               </tr>
             </thead>
@@ -472,9 +444,6 @@ function VersionTable({ documentId, versions, identity, onView }) {
                     <span className={`status ${v.status}`} title={v.error || undefined}>
                       {v.status}
                     </span>
-                  </td>
-                  <td>
-                    <Warnings warnings={v.warnings} />
                   </td>
                   <td>
                     <div className="row nowrap">

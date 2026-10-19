@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,7 +29,6 @@ CREATE TABLE IF NOT EXISTS document_versions (
     uploaded_by  TEXT NOT NULL,
     uploaded_at  TEXT NOT NULL,
     status       TEXT NOT NULL CHECK (status IN ('processing', 'ready', 'failed')),
-    warnings     TEXT NOT NULL DEFAULT '[]',
     error        TEXT,
     edited_from  INTEGER,
     source       TEXT NOT NULL DEFAULT 'upload',  -- upload | publish ('edit' from the removed spreadsheet editor)
@@ -69,6 +67,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE document_versions ADD COLUMN edited_from INTEGER")
     if "source" not in columns:
         conn.execute("ALTER TABLE document_versions ADD COLUMN source TEXT NOT NULL DEFAULT 'upload'")
+    if "warnings" in columns:  # the formula-error warnings were removed
+        conn.execute("ALTER TABLE document_versions DROP COLUMN warnings")
 
 
 def utcnow() -> str:
@@ -199,11 +199,7 @@ def delete_document(conn: sqlite3.Connection, document_id: int) -> None:
 
 
 def _version(row: sqlite3.Row | None) -> dict[str, Any] | None:
-    if row is None:
-        return None
-    out = dict(row)
-    out["warnings"] = json.loads(out["warnings"])
-    return out
+    return dict(row) if row is not None else None
 
 
 def insert_version(
@@ -213,7 +209,6 @@ def insert_version(
     version: int,
     sha256: str,
     uploaded_by: str,
-    warnings: list[dict[str, str]],
     edited_from: int | None = None,
     source: str = "upload",
 ) -> dict[str, Any]:
@@ -225,11 +220,10 @@ def insert_version(
         cur = conn.execute(
             """
             INSERT INTO document_versions
-                (document_id, version, sha256, uploaded_by, uploaded_at, status, warnings, edited_from, source)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (document_id, version, sha256, uploaded_by, uploaded_at, status, edited_from, source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (document_id, version, sha256, uploaded_by, utcnow(), STATUS_PROCESSING,
-             json.dumps(warnings), edited_from, source),
+            (document_id, version, sha256, uploaded_by, utcnow(), STATUS_PROCESSING, edited_from, source),
         )
     return get_version_by_id(conn, cur.lastrowid)  # type: ignore[return-value]
 
@@ -239,18 +233,6 @@ def max_version(conn: sqlite3.Connection, document_id: int) -> int:
         "SELECT COALESCE(MAX(version), 0) FROM document_versions WHERE document_id = ?", (document_id,)
     ).fetchone()
     return int(row[0])
-
-
-def update_version_content(
-    conn: sqlite3.Connection, version_id: int, *, sha256: str, warnings: list[dict[str, str]]
-) -> None:
-    """A later save in the same edit session replaced this version's file."""
-    with conn:
-        conn.execute(
-            "UPDATE document_versions SET sha256 = ?, warnings = ?, status = ?, error = NULL, "
-            "uploaded_at = ? WHERE id = ?",
-            (sha256, json.dumps(warnings), STATUS_PROCESSING, utcnow(), version_id),
-        )
 
 
 def delete_version(conn: sqlite3.Connection, version_id: int) -> None:

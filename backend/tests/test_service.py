@@ -124,21 +124,12 @@ def test_document_deleted_during_upload(conn, storage, converter, monkeypatch) -
         _upload(conn, storage, converter, _wb("v1"))
 
 
-def test_warnings_are_stored_on_version(conn, storage, converter) -> None:
-    def build(wb: Workbook) -> None:
-        wb.active.title = "Sheet1"
-        wb.active["B2"] = "#REF!"
-
-    result = _upload(conn, storage, converter, xlsx_bytes(build))
-    assert result.version["warnings"] == [{"sheet": "Sheet1", "cell": "B2", "error": "#REF!"}]
-
-
 def test_unique_constraint_enforced(conn, document) -> None:
     import sqlite3
 
-    db.insert_version(conn, document_id=document["id"], version=1, sha256="x", uploaded_by="t", warnings=[])
+    db.insert_version(conn, document_id=document["id"], version=1, sha256="x", uploaded_by="t")
     with pytest.raises(sqlite3.IntegrityError):
-        db.insert_version(conn, document_id=document["id"], version=1, sha256="y", uploaded_by="t", warnings=[])
+        db.insert_version(conn, document_id=document["id"], version=1, sha256="y", uploaded_by="t")
 
 
 def test_missing_object_raises(storage) -> None:

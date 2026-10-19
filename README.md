@@ -454,6 +454,21 @@ node scripts/a11y.mjs <event id> [<template id>]   # APP_URL and CHROME can be o
 
 Automated checks find only part of the problems. Keyboard use and screen-reader announcements were also checked by hand. Before a release, test the requirement tables and dialogs with a screen reader (VoiceOver or NVDA).
 
+## Sharing the prototype with outside testers
+
+The quickest way is a Cloudflare quick tunnel. It needs no account and gives a random public HTTPS address that forwards to the app on this laptop:
+
+```bash
+brew install cloudflared
+cloudflared tunnel --url http://localhost:5173
+# prints e.g. https://random-words.trycloudflare.com: share that link
+```
+
+- The frontend accepts `*.trycloudflare.com` (`VITE_ALLOWED_HOSTS`). The API goes through the same address, so nothing else needs exposing.
+- To make links in emails and ICT request links use the tunnel address, set `APP_PUBLIC_URL=<tunnel address>` in `.env` and run `docker compose up -d backend`.
+- The address changes every time the tunnel starts. It only works while the laptop is awake, Docker is running and the `cloudflared` command is open. Stop sharing with Ctrl+C.
+- **Prototype only:** there's no login. Anyone with the link can choose any role in the TEST ONLY box, including Network admin, so share it only with people you trust, and don't put real passwords in it.
+
 ## What changes for production
 
 - **Storage: S3 with presigned URLs.** Add an `S3Storage` implementing `put`/`get`, plus a `presign(key)` method. Downloads return a short-lived presigned GET URL, after the authorization check and the `download_log` write, instead of streaming bytes through the API. Use bucket encryption (SSE-KMS), block all public access, and add a lifecycle policy for old versions.

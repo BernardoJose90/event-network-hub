@@ -68,7 +68,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.notification_sender = notification_worker.Sender(settings, vapid)
         notifier = asyncio.create_task(notification_worker.run(settings, app.state.notification_sender))
         worker = None
-        if settings.bot_callback_url:
+        if settings.bot_callback_url and settings.helpdesk_enabled:
             if not settings.bot_callback_secret:
                 raise RuntimeError("BOT_CALLBACK_SECRET is required when BOT_CALLBACK_URL is set")
             worker = asyncio.create_task(outbox.run(settings))
@@ -88,14 +88,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(router)
     app.include_router(records_router)
     app.include_router(events_router)
-    app.include_router(tickets_router)
-    app.include_router(bot_router)
-    app.include_router(helpdesk_router)
+    if settings.helpdesk_enabled:  # paused: no API (404), no bot intake, no SLA checks
+        app.include_router(tickets_router)
+        app.include_router(bot_router)
+        app.include_router(helpdesk_router)
     app.include_router(requests_public_router)
     app.include_router(requests_admin_router)
-    app.include_router(reports_router)
+    if settings.reports_enabled:
+        app.include_router(reports_router)
     app.include_router(notifications_router)
     app.include_router(watchers_router)
+
+    @app.get("/api/features")
+    def features() -> dict[str, bool]:
+        """Which optional areas are on (FEATURE_HELPDESK, FEATURE_REPORTS); the pages hide paused ones."""
+        return {"helpdesk": settings.helpdesk_enabled, "reports": settings.reports_enabled}
 
     @app.exception_handler(DocumentGone)
     async def document_gone(_: Request, __: DocumentGone) -> JSONResponse:

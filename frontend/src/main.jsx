@@ -6,6 +6,7 @@ import HelpdeskPage from './helpdesk/HelpdeskPage.jsx'
 import ReportsPage from './reports/ReportsPage.jsx'
 import RequestPage from './request/RequestPage.jsx'
 import { DialogProvider } from './ui/Dialog.jsx'
+import FeatureGate from './ui/FeatureGate.jsx'
 import './styles.css'
 
 // "/event/<id>" the requirements, "/helpdesk", "/reports", "/request/<token>" the public form;
@@ -17,8 +18,8 @@ const requestMatch = window.location.pathname.match(/^\/request\/([A-Za-z0-9_-]{
 
 let page = <App />
 if (eventMatch) page = <EventPage documentId={Number(eventMatch[1])} />
-else if (helpdeskMatch) page = <HelpdeskPage />
-else if (reportsMatch) page = <ReportsPage />
+else if (helpdeskMatch) page = <FeatureGate feature="helpdesk" title="Help desk"><HelpdeskPage /></FeatureGate>
+else if (reportsMatch) page = <FeatureGate feature="reports" title="Reports"><ReportsPage /></FeatureGate>
 else if (requestMatch) page = <RequestPage token={requestMatch[1]} />
 
 createRoot(document.getElementById('root')).render(

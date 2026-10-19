@@ -39,6 +39,9 @@ class Settings:
     smtp_from: str = "Event Network Hub <no-reply@websummit.com>"
     smtp_starttls: bool = True
     escalation_emails: tuple[str, ...] = ()  # emailed when a P1/P2 ticket misses its acknowledge SLA
+    # Paused features keep their data but have no pages, links, API or background jobs.
+    helpdesk_enabled: bool = True
+    reports_enabled: bool = True
 
     @property
     def db_path(self) -> Path:
@@ -47,6 +50,11 @@ class Settings:
     @property
     def files_dir(self) -> Path:
         return self.data_dir / "files"
+
+
+def _flag(name: str, default: bool = True) -> bool:
+    value = (os.environ.get(name) or "").strip().lower()
+    return default if not value else value in ("1", "true", "yes", "on")
 
 
 def load_settings() -> Settings:
@@ -63,6 +71,8 @@ def load_settings() -> Settings:
         vapid_private_key=(os.environ.get("VAPID_PRIVATE_KEY") or "").replace("\\n", "\n") or None,
         vapid_subject=os.environ.get("VAPID_SUBJECT") or "mailto:ict@websummit.com",
         slack_webhook_url=os.environ.get("SLACK_WEBHOOK_URL") or None,
+        helpdesk_enabled=_flag("FEATURE_HELPDESK"),
+        reports_enabled=_flag("FEATURE_REPORTS"),
         smtp_host=os.environ.get("SMTP_HOST") or None,
         smtp_port=int(os.environ.get("SMTP_PORT") or 587),
         smtp_username=os.environ.get("SMTP_USERNAME") or None,

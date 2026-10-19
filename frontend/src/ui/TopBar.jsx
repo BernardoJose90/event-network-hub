@@ -1,7 +1,9 @@
+import { useFeatures } from '../features.js'
 import { ROLES } from '../identity.js'
 import NotificationBell from './Notifications.jsx'
 
 // The app's top bar: brand, the areas (Events, Help desk, Reports) and the TEST ONLY identity.
+// Paused areas (see features.js) are left out.
 const AREAS = [
   ['events', 'Events', '/'],
   ['helpdesk', 'Help desk', '/helpdesk'],
@@ -9,6 +11,8 @@ const AREAS = [
 ]
 
 export default function TopBar({ identity, onChange, current }) {
+  const features = useFeatures()
+  const areas = AREAS.filter(([key]) => key === 'events' || features?.[key])
   return (
     <header className="topbar">
       <div className="topbar-start">
@@ -17,7 +21,7 @@ export default function TopBar({ identity, onChange, current }) {
           Event Network Hub
         </p>
         <nav aria-label="Main" className="app-nav">
-          {AREAS.map(([key, label, href]) => (
+          {areas.map(([key, label, href]) => (
             <a key={key} href={href} className={current === key ? 'active' : undefined}
               aria-current={current === key ? 'page' : undefined}>
               {label}

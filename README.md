@@ -188,6 +188,17 @@ Code: `backend/app/records/` (models, store, service, importer, publish, routes)
 
 Changes are made only in the requirements (**Open Network Requirements**), then **Publish** creates the next version. Versions themselves can't be edited: they can be viewed, downloaded and compared. The in-browser spreadsheet editor (Collabora) and the live sheet were removed; versions they created earlier (marked "edited from V<n>") are kept in the history and can still be viewed and compared.
 
+## Paused areas
+
+The **Help desk** and **Reports** are paused: `FEATURE_HELPDESK` and `FEATURE_REPORTS` default to `false` in `docker-compose.yml`. While an area is paused:
+
+- its link is hidden from the top bar, and its page (`/helpdesk`, `/reports`) says it's paused;
+- its API returns 404, including the WhatsApp bot intake (`/api/bot/...`), and no SLA checks or bot updates run;
+- help desk alert types are hidden from the bell's Settings, and each person's choices are kept;
+- all its data (tickets, history, settings) is kept.
+
+To switch one back on, set it to `true` in `.env` and run `docker compose up -d backend`. `GET /api/features` reports which areas are on.
+
 ## Help desk (ICT tickets for live events)
 
 `/helpdesk` (the **Help desk** link in the top bar) is the system of record for ICT issues during build, live days and breakdown. It covers Wi-Fi, wired connectivity, network hardware, partner stand connectivity and venue-wide problems. Every issue becomes a ticket with an owner, severity, timestamps and a full audit trail. Tickets are never deleted, and they stay in the history across events, even if the event is deleted later.

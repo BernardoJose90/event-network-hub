@@ -108,13 +108,23 @@ async def stream(request: Request, user: Annotated[str, Query(max_length=100)] =
 # --- preferences and browser push -----------------------------------------------------------------
 
 
+# Alert types that belong to the help desk; hidden while it's paused (choices are kept).
+HELPDESK_PUSH_TYPES = {"ticket_urgent", "ticket_all", "sla", "assigned"}
+
+
+def _hidden_types(request: Request) -> set[str]:
+    return set() if request.app.state.settings.helpdesk_enabled else HELPDESK_PUSH_TYPES
+
+
 @router.get("/settings")
 def settings(request: Request, conn: Conn, principal: Reader) -> dict[str, Any]:
     chosen = service.push_types_for(conn, principal.user)
+    hidden = _hidden_types(request)
     return {
         "push_available": service.CHANNELS.push,
         "vapid_public_key": request.app.state.vapid_public_key if service.CHANNELS.push else None,
-        "push_types": [{"key": k, "label": v, "on": k in chosen} for k, v in service.PUSH_TYPES.items()],
+        "push_types": [{"key": k, "label": v, "on": k in chosen} for k, v in service.PUSH_TYPES.items()
+                       if k not in hidden],
         "devices": service.subscriptions_for(conn, principal.user),
         "channels": {"slack": service.CHANNELS.slack, "email": service.CHANNELS.email},
     }
@@ -125,8 +135,11 @@ class Prefs(BaseModel):
 
 
 @router.put("/settings")
-def save_settings(body: Prefs, conn: Conn, principal: Reader) -> dict[str, Any]:
-    return {"push_types": service.save_push_types(conn, principal.user, body.push_types)}
+def save_settings(request: Request, body: Prefs, conn: Conn, principal: Reader) -> dict[str, Any]:
+    hidden = _hidden_types(request)
+    kept = [k for k in service.push_types_for(conn, principal.user) if k in hidden]  # not shown, so keep them
+    saved = service.save_push_types(conn, principal.user, [k for k in body.push_types if k not in hidden] + kept)
+    return {"push_types": [k for k in saved if k not in hidden]}
 
 
 class Keys(BaseModel):

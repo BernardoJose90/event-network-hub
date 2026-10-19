@@ -2742,3 +2742,9 @@ dialog.dialog.wide {
     height: 100%;
   }
 }
+
+/* "Paused" page for a switched-off area (help desk, reports) */
+.paused-page {
+  max-width: 640px;
+  padding: 32px 16px;
+}

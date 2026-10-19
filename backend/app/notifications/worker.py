@@ -219,7 +219,7 @@ async def run(settings, sender: Sender) -> None:
     tick = 0
     while True:
         try:
-            if tick % 6 == 0:
+            if tick % 6 == 0 and settings.helpdesk_enabled:
                 await run_in_threadpool(check_sla, settings.db_path)
             if tick % 720 == 0:
                 await run_in_threadpool(check_deadlines, settings.db_path)

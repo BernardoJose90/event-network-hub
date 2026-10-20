@@ -29,11 +29,11 @@ services:
       BOT_CALLBACK_URL: ${BOT_CALLBACK_URL:-}
       BOT_CALLBACK_SECRET: ${BOT_CALLBACK_SECRET:-}
       APP_PUBLIC_URL: ${APP_PUBLIC_URL:-http://localhost:5173}
-      # Paused areas: set to true to switch the help desk or reports back on (data is kept).
-      FEATURE_HELPDESK: ${FEATURE_HELPDESK:-false}
-      FEATURE_REPORTS: ${FEATURE_REPORTS:-false}
-      # The Web Summit look (colours, logo, gradient). false = a plain, neutral look.
-      FEATURE_WEBSUMMIT_THEME: ${FEATURE_WEBSUMMIT_THEME:-false}
+      # Feature switches (on by default). false pauses the help desk or reports (data is kept),
+      # or swaps the Web Summit look for a plain, neutral one.
+      FEATURE_HELPDESK: ${FEATURE_HELPDESK:-true}
+      FEATURE_REPORTS: ${FEATURE_REPORTS:-true}
+      FEATURE_WEBSUMMIT_THEME: ${FEATURE_WEBSUMMIT_THEME:-true}
       # Notifications (each channel off when empty). Secrets come from .env, never the repo.
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}

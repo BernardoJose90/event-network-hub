@@ -1,0 +1,49 @@
+# Keeps the pinned versions current: the actions' commit SHAs, the Python and npm pins, and the
+# base images. Updates wait 14 days after a release (cooldown), so a hijacked release is usually
+# caught and pulled before it reaches this repository. Security updates aren't delayed.
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      python-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directories: [/backend, /frontend, /gotenberg]
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14

@@ -1,0 +1,271 @@
+# Checks every pull request (and main after a merge): tests, builds, scans. On main only, once
+# every check has passed, the 3 images are pushed to ECR (infra_shared_services, eu-west-2), tagged
+# with the commit SHA. No secrets are stored: the push job gets short-lived AWS credentials through
+# GitHub OIDC, for the EventNetworkHubEcrPush role, which trusts only runs on main of this repo.
+# Set the repository variable AWS_ACCOUNT_ID (Settings > Secrets and variables > Actions > Variables).
+#
+# Hardening (GitHub's "secure use" guide): the token has no permissions unless a job asks for
+# them, every action is pinned to a full commit SHA (Dependabot keeps the pins current, see
+# .github/dependabot.yml), checkouts don't keep the token, and zizmor lints this file.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]  # CodeQL and the secret scan also need a baseline for main
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  # A new push to a pull request cancels the old run; on main every commit runs to the end, so
+  # each one gets its images.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  backend-tests:
+    name: Backend tests (PostgreSQL)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    services:
+      postgres:
+        # The same version as docker-compose.yml, pinned by digest (Dependabot doesn't update service images).
+        image: postgres:17.11-alpine3.24@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+        env:
+          POSTGRES_USER: enh
+          POSTGRES_PASSWORD: enh  # a throwaway database inside the job
+          POSTGRES_DB: enh
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U enh -d enh"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"  # the backend image's Python
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      # Builds the schema with the migrations (and tests upgrade/downgrade), then runs everything.
+      - run: pytest
+        env:
+          TEST_DATABASE_URL: postgresql://enh:enh@127.0.0.1:5432/enh_test
+
+  frontend-build:
+    name: Frontend build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: "22.23.3"  # the frontend image's Node
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+
+  images:
+    name: Image (${{ matrix.image }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: backend
+            target: runtime
+          - image: frontend
+            target: runtime
+          - image: gotenberg
+            target: ""
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        with:
+          context: ${{ matrix.image }}
+          target: ${{ matrix.target }}
+          push: false  # built to prove it builds; the publish job pushes, on main only
+          build-args: GIT_SHA=${{ github.sha }}
+          tags: event-network-hub-${{ matrix.image }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      # Fails if the pull request adds a dependency with a known vulnerability (moderate or worse).
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294  # v5.0.0
+        with:
+          fail-on-severity: moderate
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0  # the commits of the pull request (or push), not just the last one
+          persist-credentials: false
+      # Scans the new commits. Fails on verified secrets and on ones it couldn't check.
+      - uses: trufflesecurity/trufflehog@4c282f54c0160102ccbebba421b89f3c3af6404d  # v3.98.1
+        with:
+          version: 3.98.1  # the scanner image; the action's default is "latest"
+          extra_args: --results=verified,unknown
+
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write  # to upload the results to the Security tab
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript, actions]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2  # v4.38.2
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended
+      - uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2  # v4.38.2
+        with:
+          category: /language:${{ matrix.language }}
+
+  workflow-lint:
+    name: Workflow lint (zizmor)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: pip install zizmor==1.30.1
+      - run: zizmor --offline --format=github --persona=pedantic .github
+
+  # The one check to require in branch protection: it passes only if every job above passed
+  # (dependency review is skipped outside pull requests, which counts as passed).
+  ci-passed:
+    name: CI passed
+    if: always()
+    needs: [backend-tests, frontend-build, images, dependency-review, secret-scan, codeql, workflow-lint]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every job passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in success|skipped) ;; *) exit 1 ;; esac
+          done
+
+  publish:
+    name: Push image (${{ matrix.image }})
+    needs: [ci-passed]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write  # the OIDC token that AWS exchanges for the push role's temporary credentials
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: backend
+            target: runtime
+          - image: frontend
+            target: runtime
+          - image: gotenberg
+            target: ""
+    env:
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      REPOSITORY: event-network-hub/${{ matrix.image }}
+      TAG: ${{ github.sha }}
+    steps:
+      - name: Check the configuration
+        run: |
+          if [ -z "$AWS_ACCOUNT_ID" ]; then
+            echo "::error::Set the repository variable AWS_ACCOUNT_ID to the infra_shared_services account ID"
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd  # v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/EventNetworkHubEcrPush
+          role-session-name: event-network-hub-${{ github.run_id }}
+          aws-region: eu-west-2
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd  # v2.1.7
+      # Tags are immutable, so a re-run for the same commit would fail on the push: skip instead.
+      - name: Already pushed?
+        id: existing
+        run: |
+          if out=$(aws ecr describe-images --repository-name "$REPOSITORY" --image-ids imageTag="$TAG" 2>&1); then
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
+            echo "$REPOSITORY:$TAG is already in ECR; nothing to push."
+          elif grep -q ImageNotFoundException <<< "$out"; then
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "$out"
+            exit 1
+          fi
+      - if: steps.existing.outputs.pushed == 'false'
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+      # Built from scratch, without the build cache that pull requests also write to, so nothing a
+      # pull request ran can end up in a pushed image.
+      - if: steps.existing.outputs.pushed == 'false'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        with:
+          context: ${{ matrix.image }}
+          target: ${{ matrix.target }}
+          push: true
+          build-args: GIT_SHA=${{ github.sha }}
+          tags: ${{ steps.ecr.outputs.registry }}/${{ env.REPOSITORY }}:${{ env.TAG }}
+          provenance: mode=max  # how and from which commit it was built, stored next to the image
+          sbom: true  # the list of packages inside, also stored next to the image

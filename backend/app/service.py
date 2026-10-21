@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
@@ -40,19 +39,19 @@ def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def find_or_create_document(conn: sqlite3.Connection, name: str) -> dict[str, Any]:
+def find_or_create_document(conn: db.Connection, name: str) -> dict[str, Any]:
     existing = db.get_document_by_name(conn, name)
     if existing is not None:
         return existing
     try:
         return db.create_document(conn, name)
-    except sqlite3.IntegrityError:
+    except db.IntegrityError:
         # A concurrent upload created it first.
         return db.get_document_by_name(conn, name)  # type: ignore[return-value]
 
 
 def _claim_version(
-    conn: sqlite3.Connection,
+    conn: db.Connection,
     storage: Storage,
     *,
     document: dict[str, Any],
@@ -80,7 +79,7 @@ def _claim_version(
             sha256=sha256,
             uploaded_by=uploaded_by,
         )
-    except sqlite3.IntegrityError:
+    except db.IntegrityError:
         if db.get_document(conn, document["id"]) is None:
             raise DocumentGone(document["id"])
         # The UNIQUE (document_id, version) constraint caught a concurrent upload.
@@ -88,7 +87,7 @@ def _claim_version(
 
 
 def upload_file(
-    conn: sqlite3.Connection,
+    conn: db.Connection,
     storage: Storage,
     converter: Converter,
     *,
@@ -121,7 +120,7 @@ def upload_file(
 
 
 def store_and_convert(
-    conn: sqlite3.Connection,
+    conn: db.Connection,
     storage: Storage,
     converter: Converter,
     *,
@@ -153,7 +152,7 @@ MAX_VERSION_ALLOCATION_ATTEMPTS = 5
 
 
 def allocate_next_version(
-    conn: sqlite3.Connection, *, document_id: int, sha256: str, user: str,
+    conn: db.Connection, *, document_id: int, sha256: str, user: str,
     edited_from: int | None, source: str,
 ) -> dict[str, Any]:
     """Insert the version after the newest one, retrying if a concurrent save or upload took it."""
@@ -165,7 +164,7 @@ def allocate_next_version(
                 conn, document_id=document_id, version=number, sha256=sha256,
                 uploaded_by=user, edited_from=edited_from, source=source,
             )
-        except sqlite3.IntegrityError:
+        except db.IntegrityError:
             if db.get_document(conn, document_id) is None:
                 raise DocumentGone(document_id)
     raise RuntimeError("could not allocate a version number")

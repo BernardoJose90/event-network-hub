@@ -1,6 +1,76 @@
 name: portal-pdf-test
 
+# Settings shared by the API and the worker (same image, different command).
+x-backend-env: &backend-env
+  DATABASE_URL: ${DATABASE_URL:-postgresql://enh:enh@postgres:5432/enh}
+  DB_POOL_MAX_SIZE: ${DB_POOL_MAX_SIZE:-10}
+  GOTENBERG_URL: ${GOTENBERG_URL:-http://gotenberg:3000}
+  GOTENBERG_TIMEOUT_SECONDS: ${GOTENBERG_TIMEOUT_SECONDS:-90}
+  DATA_DIR: ${DATA_DIR:-/data}
+  # Files: "local" keeps them in the appdata volume; "s3" uses S3_BUCKET (as in the cluster).
+  STORAGE_BACKEND: ${STORAGE_BACKEND:-local}
+  S3_BUCKET: ${S3_BUCKET:-}
+  S3_PREFIX: ${S3_PREFIX:-}
+  MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10485760}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  # Help desk WhatsApp bot integration (off when empty). Secrets come from .env, never the repo.
+  BOT_API_TOKEN: ${BOT_API_TOKEN:-}
+  BOT_CALLBACK_URL: ${BOT_CALLBACK_URL:-}
+  BOT_CALLBACK_SECRET: ${BOT_CALLBACK_SECRET:-}
+  APP_PUBLIC_URL: ${APP_PUBLIC_URL:-http://localhost:5173}
+  # Feature switches (on by default). false pauses the help desk or reports (data is kept),
+  # or swaps the Web Summit look for a plain, neutral one.
+  FEATURE_HELPDESK: ${FEATURE_HELPDESK:-true}
+  FEATURE_REPORTS: ${FEATURE_REPORTS:-true}
+  FEATURE_WEBSUMMIT_THEME: ${FEATURE_WEBSUMMIT_THEME:-true}
+  # Notifications (each channel off when empty). Secrets come from .env, never the repo.
+  VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+  VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+  VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:ict@websummit.com}
+  SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_USERNAME: ${SMTP_USERNAME:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_FROM: ${SMTP_FROM:-Event Network Hub <no-reply@websummit.com>}
+  SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
+  ESCALATION_EMAILS: ${ESCALATION_EMAILS:-}
+
+x-backend-build: &backend-build
+  context: ./backend
+  target: runtime
+  args:
+    GIT_SHA: ${GIT_SHA:-unknown}
+
 services:
+  # Local PostgreSQL (RDS in the cluster). Not published: only the containers reach it.
+  # The password is for this local database only.
+  postgres:
+    image: postgres:17.11-alpine3.24
+    environment:
+      POSTGRES_USER: enh
+      POSTGRES_PASSWORD: enh
+      POSTGRES_DB: enh
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "enh", "-d", "enh"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # Brings the schema up to date, then exits; the API and the worker start after it.
+  migrate:
+    build: *backend-build
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://enh:enh@postgres:5432/enh}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   gotenberg:
     build: ./gotenberg
     # No "ports": Gotenberg is reachable only from the backend on the compose network.
@@ -15,48 +85,37 @@ services:
     restart: unless-stopped
 
   backend:
-    build:
-      context: ./backend
-      target: runtime
-    environment:
-      GOTENBERG_URL: ${GOTENBERG_URL:-http://gotenberg:3000}
-      GOTENBERG_TIMEOUT_SECONDS: ${GOTENBERG_TIMEOUT_SECONDS:-90}
-      DATA_DIR: ${DATA_DIR:-/data}
-      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10485760}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      # Help desk WhatsApp bot integration (off when empty). Secrets come from .env, never the repo.
-      BOT_API_TOKEN: ${BOT_API_TOKEN:-}
-      BOT_CALLBACK_URL: ${BOT_CALLBACK_URL:-}
-      BOT_CALLBACK_SECRET: ${BOT_CALLBACK_SECRET:-}
-      APP_PUBLIC_URL: ${APP_PUBLIC_URL:-http://localhost:5173}
-      # Feature switches (on by default). false pauses the help desk or reports (data is kept),
-      # or swaps the Web Summit look for a plain, neutral one.
-      FEATURE_HELPDESK: ${FEATURE_HELPDESK:-true}
-      FEATURE_REPORTS: ${FEATURE_REPORTS:-true}
-      FEATURE_WEBSUMMIT_THEME: ${FEATURE_WEBSUMMIT_THEME:-true}
-      # Notifications (each channel off when empty). Secrets come from .env, never the repo.
-      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
-      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
-      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:ict@websummit.com}
-      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USERNAME: ${SMTP_USERNAME:-}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      SMTP_FROM: ${SMTP_FROM:-Event Network Hub <no-reply@websummit.com>}
-      SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
-      ESCALATION_EMAILS: ${ESCALATION_EMAILS:-}
+    build: *backend-build
+    environment: *backend-env
     volumes:
       - appdata:/data
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       gotenberg:
         condition: service_healthy
     restart: unless-stopped
 
+  # Notification deliveries, SLA and deadline checks, bot updates: python -m app.worker.
+  worker:
+    build: *backend-build
+    command: ["python", "-m", "app.worker"]
+    environment: *backend-env
+    volumes:
+      - appdata:/data  # the generated VAPID keys, shared with the API
+    healthcheck:
+      disable: true  # no HTTP server; it exits on failure and is restarted
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      target: dev
     environment:
       VITE_API_PROXY_TARGET: ${VITE_API_PROXY_TARGET:-http://backend:8000}
       # Public test address (prototype): host names allowed besides localhost, comma-separated.
@@ -67,12 +126,32 @@ services:
       backend:
         condition: service_healthy
 
-  # Unit tests: docker compose run --rm tests
+  # The production frontend image (static build on nginx): docker compose --profile prod up web
+  web:
+    build:
+      context: ./frontend
+      target: runtime
+    profiles: ["prod"]
+    environment:
+      API_UPSTREAM: http://backend:8000
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  # Unit tests on PostgreSQL: docker compose run --rm tests
   tests:
     build:
       context: ./backend
       target: test
+    environment:
+      TEST_DATABASE_URL: postgresql://enh:enh@postgres:5432/enh_test
+    depends_on:
+      postgres:
+        condition: service_healthy
     profiles: ["test"]
 
 volumes:
   appdata:
+  pgdata:

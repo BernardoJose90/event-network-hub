@@ -18,10 +18,17 @@ REQUIRED_NAME = "Event_Network_Requirements"
 
 @dataclass(frozen=True)
 class Settings:
-    data_dir: Path
+    data_dir: Path  # local files (STORAGE_BACKEND=local) and the generated VAPID keys
     gotenberg_url: str
     gotenberg_timeout_seconds: float
     max_upload_bytes: int
+    database_url: str = field(repr=False)  # postgresql://user:password@host:5432/dbname
+    # Uploaded and published files: "local" (under data_dir) or "s3" (pods have no permanent disk).
+    storage_backend: str = "local"
+    s3_bucket: str | None = None
+    s3_prefix: str = ""  # e.g. "prod/": keys are <prefix>documents/<id>/v<n>/<file>
+    s3_endpoint_url: str | None = None  # only for S3-compatible stores in local testing
+    git_sha: str = "unknown"  # the commit this image was built from (reported by /api/health)
     # Help desk: WhatsApp bot integration (both unset = integration off)
     bot_api_token: str | None = field(default=None, repr=False)  # the bot sends it as a Bearer token
     bot_callback_url: str | None = None  # where status updates for reporters are POSTed
@@ -45,10 +52,6 @@ class Settings:
     websummit_theme_enabled: bool = True  # off: the pages use a plain, neutral look
 
     @property
-    def db_path(self) -> Path:
-        return self.data_dir / "portal.sqlite3"
-
-    @property
     def files_dir(self) -> Path:
         return self.data_dir / "files"
 
@@ -59,11 +62,25 @@ def _flag(name: str, default: bool = True) -> bool:
 
 
 def load_settings() -> Settings:
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        raise RuntimeError("DATABASE_URL is required, e.g. postgresql://user:password@host:5432/dbname")
+    storage_backend = (os.environ.get("STORAGE_BACKEND") or "local").strip().lower()
+    if storage_backend not in ("local", "s3"):
+        raise RuntimeError(f"STORAGE_BACKEND must be 'local' or 's3', not {storage_backend!r}")
+    if storage_backend == "s3" and not os.environ.get("S3_BUCKET"):
+        raise RuntimeError("S3_BUCKET is required when STORAGE_BACKEND=s3")
     return Settings(
         data_dir=Path(os.environ.get("DATA_DIR", "/data")),
         gotenberg_url=os.environ.get("GOTENBERG_URL", "http://gotenberg:3000").rstrip("/"),
         gotenberg_timeout_seconds=float(os.environ.get("GOTENBERG_TIMEOUT_SECONDS", "90")),
         max_upload_bytes=int(os.environ.get("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024))),
+        database_url=database_url,
+        storage_backend=storage_backend,
+        s3_bucket=os.environ.get("S3_BUCKET") or None,
+        s3_prefix=os.environ.get("S3_PREFIX", ""),
+        s3_endpoint_url=os.environ.get("S3_ENDPOINT_URL") or None,
+        git_sha=os.environ.get("GIT_SHA") or "unknown",
         bot_api_token=os.environ.get("BOT_API_TOKEN") or None,
         bot_callback_url=(os.environ.get("BOT_CALLBACK_URL") or "").rstrip("/") or None,
         bot_callback_secret=os.environ.get("BOT_CALLBACK_SECRET", ""),

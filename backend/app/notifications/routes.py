@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sqlite3
 import time
 from collections.abc import Iterator
 from typing import Annotated, Any
@@ -27,15 +26,15 @@ router = APIRouter(prefix="/api/notifications")
 watchers_router = APIRouter(prefix="/api/events/{document_id}/watchers")
 
 
-def _conn(request: Request) -> Iterator[sqlite3.Connection]:
-    conn = db.connect(request.app.state.settings.db_path)
+def _conn(request: Request) -> Iterator[db.Connection]:
+    conn = db.connect(request.app.state.settings.database_url)
     try:
         yield conn
     finally:
         conn.close()
 
 
-Conn = Annotated[sqlite3.Connection, Depends(_conn)]
+Conn = Annotated[db.Connection, Depends(_conn)]
 
 
 def _reader(principal: Annotated[Principal, Depends(current_principal)]) -> Principal:
@@ -74,10 +73,10 @@ async def stream(request: Request, user: Annotated[str, Query(max_length=100)] =
     user = user.strip()[:100] or "anonymous"
     if role not in KNOWN_ROLES:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Choose a role first")
-    db_path = request.app.state.settings.db_path
+    database_url = request.app.state.settings.database_url
 
     def snapshot() -> dict[str, Any]:
-        conn = db.connect(db_path)
+        conn = db.connect(database_url)
         try:
             return service.list_for(conn, user, role, limit=10)
         finally:
@@ -189,7 +188,7 @@ class WatcherBody(BaseModel):
     email: str = Field(min_length=3, max_length=200)
 
 
-def _event(conn: sqlite3.Connection, document_id: int) -> None:
+def _event(conn: db.Connection, document_id: int) -> None:
     document = db.get_document(conn, document_id)
     if document is None or document["kind"] != "event":
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")

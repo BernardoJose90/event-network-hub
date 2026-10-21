@@ -125,10 +125,8 @@ def test_document_deleted_during_upload(conn, storage, converter, monkeypatch) -
 
 
 def test_unique_constraint_enforced(conn, document) -> None:
-    import sqlite3
-
     db.insert_version(conn, document_id=document["id"], version=1, sha256="x", uploaded_by="t")
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises(db.IntegrityError):
         db.insert_version(conn, document_id=document["id"], version=1, sha256="y", uploaded_by="t")
 
 

@@ -96,22 +96,22 @@ def _email_text(n: dict[str, Any]) -> str:
                                    "This is an automatic message from Event Network Hub (Web Summit ICT).") if x)
 
 
-def deliver_due(db_path, sender: Sender) -> int:
+def deliver_due(database_url, sender: Sender) -> int:
     """Send every due delivery once. Returns how many were sent."""
-    conn = db.connect(db_path)
+    conn = db.connect(database_url)
     sent = 0
     try:
         now = datetime.now(timezone.utc)
         due = conn.execute(
             "SELECT d.*, n.title, n.body, n.link, n.severity, n.id AS nid FROM notification_deliveries d "
-            "JOIN notifications n ON n.id = d.notification_id WHERE d.status = 'pending' AND d.next_try_at <= ? "
+            "JOIN notifications n ON n.id = d.notification_id WHERE d.status = 'pending' AND d.next_try_at <= %s "
             "ORDER BY d.id LIMIT 50", (now.isoformat(timespec="seconds"),)).fetchall()
         for d in due:
             n = dict(d)
             attempts = d["attempts"] + 1
             try:
                 if d["channel"] == "push":
-                    sub = conn.execute("SELECT * FROM push_subscriptions WHERE id = ?", (int(d["target"]),)).fetchone()
+                    sub = conn.execute("SELECT * FROM push_subscriptions WHERE id = %s", (int(d["target"]),)).fetchone()
                     if sub is None:
                         raise DeliveryError("subscription removed", gone=True)
                     sender.send_push(dict(sub), {"title": n["title"], "body": n["body"] or "",
@@ -125,18 +125,18 @@ def deliver_due(db_path, sender: Sender) -> int:
                 gone = isinstance(exc, DeliveryError) and exc.gone
                 if gone and d["channel"] == "push":
                     with conn:
-                        conn.execute("DELETE FROM push_subscriptions WHERE id = ?", (int(d["target"]),))
+                        conn.execute("DELETE FROM push_subscriptions WHERE id = %s", (int(d["target"]),))
                 final = gone or attempts >= MAX_ATTEMPTS
                 delay = min(15 * 2 ** (attempts - 1), 3600)
                 with conn:
                     conn.execute(
-                        "UPDATE notification_deliveries SET status = ?, attempts = ?, last_error = ?, next_try_at = ? "
-                        "WHERE id = ?", ("failed" if final else "pending", attempts, str(exc)[:500],
+                        "UPDATE notification_deliveries SET status = %s, attempts = %s, last_error = %s, next_try_at = %s "
+                        "WHERE id = %s", ("failed" if final else "pending", attempts, str(exc)[:500],
                                          (now + timedelta(seconds=delay)).isoformat(timespec="seconds"), d["id"]))
                 log.warning("%s delivery %s failed (attempt %s): %s", d["channel"], d["id"], attempts, exc)
                 continue
             with conn:
-                conn.execute("UPDATE notification_deliveries SET status = 'sent', attempts = ?, sent_at = ? WHERE id = ?",
+                conn.execute("UPDATE notification_deliveries SET status = 'sent', attempts = %s, sent_at = %s WHERE id = %s",
                              (attempts, now.isoformat(timespec="seconds"), d["id"]))
             sent += 1
     finally:
@@ -147,13 +147,13 @@ def deliver_due(db_path, sender: Sender) -> int:
 # --- scheduled checks ----------------------------------------------------------------------------
 
 
-def check_sla(db_path, now: datetime | None = None) -> int:
+def check_sla(database_url, now: datetime | None = None) -> int:
     """P1/P2 tickets not acknowledged: warn at 4 minutes, escalate when the 5-minute SLA is
     missed (Slack, push, and the escalation emails). Lower severities: in-app only on breach."""
     from ..tickets import service as tickets_service, store as tickets_store
 
     now = now or datetime.now(timezone.utc)
-    conn = db.connect(db_path)
+    conn = db.connect(database_url)
     created = 0
     try:
         with conn:
@@ -183,10 +183,10 @@ def check_sla(db_path, now: datetime | None = None) -> int:
     return created
 
 
-def check_deadlines(db_path, today: date | None = None) -> int:
+def check_deadlines(database_url, today: date | None = None) -> int:
     """Remind team contacts 7 days and 1 day before an event's ICT request deadline."""
     today = today or datetime.now(timezone.utc).date()
-    conn = db.connect(db_path)
+    conn = db.connect(database_url)
     created = 0
     try:
         with conn:
@@ -220,10 +220,10 @@ async def run(settings, sender: Sender) -> None:
     while True:
         try:
             if tick % 6 == 0 and settings.helpdesk_enabled:
-                await run_in_threadpool(check_sla, settings.db_path)
+                await run_in_threadpool(check_sla, settings.database_url)
             if tick % 720 == 0:
-                await run_in_threadpool(check_deadlines, settings.db_path)
-            await run_in_threadpool(deliver_due, settings.db_path, sender)
+                await run_in_threadpool(check_deadlines, settings.database_url)
+            await run_in_threadpool(deliver_due, settings.database_url, sender)
         except Exception:
             log.exception("notification worker failed")
         tick += 1

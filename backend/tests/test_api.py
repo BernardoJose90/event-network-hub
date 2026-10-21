@@ -12,7 +12,7 @@ from app import db
 from app.config import Settings
 from app.main import create_app
 
-from .conftest import FakeConverter, xlsx_bytes
+from .conftest import TEST_DATABASE_URL, FakeConverter, xlsx_bytes
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 ADMIN = {"X-Role": "network-admin"}
@@ -23,7 +23,7 @@ NAME_V1 = "LIS26 _ Event_Network_Requirements_V1.xlsx"
 def client(tmp_path: Path):
     settings = Settings(
         data_dir=tmp_path, gotenberg_url="http://unused", gotenberg_timeout_seconds=1,
-        max_upload_bytes=1024 * 1024,
+        max_upload_bytes=1024 * 1024, database_url=TEST_DATABASE_URL,
     )
     app = create_app(settings)
     with TestClient(app) as c:
@@ -189,7 +189,7 @@ def test_admin_deletes_document_with_everything(client: TestClient) -> None:
     assert client.get(f"/api/documents/{doc_id}/versions").status_code == 404
     assert client.get(f"/api/documents/{doc_id}/download", headers=ADMIN).status_code == 404
     assert not files_dir.exists()
-    conn = db.connect(client.settings.db_path)
+    conn = db.connect(client.settings.database_url)
     counts = [conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
               for t in ("documents", "document_versions", "download_log")]
     conn.close()
@@ -237,8 +237,8 @@ def test_every_role_gets_the_full_pdf(client: TestClient, role) -> None:
     assert r.headers["content-type"] == "application/pdf"
     assert r.content.endswith(b"-v1.xlsx")  # FakeConverter echoes the filename
 
-    conn = db.connect(client.settings.db_path)
-    rows = [dict(x) for x in conn.execute("SELECT user, format FROM download_log")]
+    conn = db.connect(client.settings.database_url)
+    rows = [dict(x) for x in conn.execute('SELECT "user", format FROM download_log')]
     conn.close()
     assert rows == [{"user": "bob", "format": "pdf"}]
 

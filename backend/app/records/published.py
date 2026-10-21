@@ -8,14 +8,13 @@ that no longer exist get negative IDs. Before anything is published, viewers see
 
 from __future__ import annotations
 
-import sqlite3
 from typing import Any
 
 from .. import db
 from . import service, store
 
 
-def latest(conn: sqlite3.Connection, doc: int) -> dict[str, Any] | None:
+def latest(conn: db.Connection, doc: int) -> dict[str, Any] | None:
     """The latest published version as {version, published_at, venues, groups, lists, records, totals,
     counts}, or None if nothing has been published."""
     found = store.previous_snapshot(conn, doc)

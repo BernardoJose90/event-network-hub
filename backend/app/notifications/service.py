@@ -19,74 +19,12 @@ from __future__ import annotations
 import json
 import logging
 import re
-import sqlite3
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..db import utcnow
+from ..db import Connection, utcnow
 
 log = logging.getLogger(__name__)
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS notifications (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    type        TEXT NOT NULL,
-    severity    TEXT NOT NULL CHECK (severity IN ('urgent', 'normal', 'low')),
-    title       TEXT NOT NULL,
-    body        TEXT,
-    link        TEXT,
-    audience    TEXT NOT NULL,
-    event_id    INTEGER REFERENCES documents(id) ON DELETE SET NULL,
-    dedup_key   TEXT UNIQUE,
-    created_at  TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS notifications_by_audience ON notifications (audience, id);
-
-CREATE TABLE IF NOT EXISTS notification_reads (
-    notification_id  INTEGER NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
-    user             TEXT NOT NULL,
-    read_at          TEXT NOT NULL,
-    PRIMARY KEY (notification_id, user)
-);
-
-CREATE TABLE IF NOT EXISTS notification_prefs (
-    user        TEXT PRIMARY KEY,
-    push_types  TEXT NOT NULL  -- JSON list of PUSH_TYPES keys
-);
-
-CREATE TABLE IF NOT EXISTS push_subscriptions (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    user        TEXT NOT NULL,
-    role        TEXT NOT NULL,
-    endpoint    TEXT NOT NULL UNIQUE,
-    p256dh      TEXT NOT NULL,
-    auth        TEXT NOT NULL,
-    created_at  TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS notification_deliveries (
-    id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    notification_id  INTEGER NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
-    channel          TEXT NOT NULL CHECK (channel IN ('push', 'slack', 'email')),
-    target           TEXT NOT NULL,  -- subscription id, 'channel', or an email address
-    status           TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'failed')),
-    attempts         INTEGER NOT NULL DEFAULT 0,
-    next_try_at      TEXT NOT NULL,
-    last_error       TEXT,
-    created_at       TEXT NOT NULL,
-    sent_at          TEXT
-);
-CREATE INDEX IF NOT EXISTS notification_deliveries_due ON notification_deliveries (status, next_try_at);
-
--- People emailed when a version of the event is published (contractors, venue, ICT).
-CREATE TABLE IF NOT EXISTS event_watchers (
-    document_id  INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    email        TEXT NOT NULL,
-    created_by   TEXT NOT NULL,
-    created_at   TEXT NOT NULL,
-    PRIMARY KEY (document_id, email)
-);
-"""
 
 # Browser push types a person can choose (in-app always shows everything for them).
 PUSH_TYPES = {
@@ -117,16 +55,14 @@ class Channels:
 CHANNELS = Channels()
 
 
+def channels_for(settings: Any) -> Channels:
+    return Channels(push=True, slack=bool(settings.slack_webhook_url), email=bool(settings.smtp_host),
+                    escalation_emails=settings.escalation_emails, public_url=settings.app_public_url)
+
+
 def configure(channels: Channels) -> None:
     global CHANNELS
     CHANNELS = channels
-
-
-def init(conn: sqlite3.Connection) -> None:
-    conn.executescript(SCHEMA)
-    columns = {r["name"] for r in conn.execute("PRAGMA table_info(request_links)")}
-    if columns and "contact_email" not in columns:  # request link contacts get deadline reminders
-        conn.execute("ALTER TABLE request_links ADD COLUMN contact_email TEXT")
 
 
 def is_email(value: str | None) -> bool:
@@ -142,7 +78,7 @@ def absolute(link: str | None) -> str | None:
 # --- create ----------------------------------------------------------------------------------
 
 
-def notify(conn: sqlite3.Connection, *, type: str, title: str, body: str | None = None, link: str | None = None,
+def notify(conn: Connection, *, type: str, title: str, body: str | None = None, link: str | None = None,
            severity: str = "normal", audience: str = "admins", event_id: int | None = None,
            dedup_key: str | None = None, push_type: str | None = None, slack: bool = False,
            emails: list[str] | tuple[str, ...] = ()) -> int | None:
@@ -152,17 +88,18 @@ def notify(conn: sqlite3.Connection, *, type: str, title: str, body: str | None 
     Returns the notification id, or None if dedup_key was already used.
     """
     now = utcnow()
-    try:
-        notification_id = conn.execute(
-            "INSERT INTO notifications (type, severity, title, body, link, audience, event_id, dedup_key, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (type, severity, title[:300], (body or "")[:2000] or None, link, audience, event_id, dedup_key, now)).lastrowid
-    except sqlite3.IntegrityError:
+    # ON CONFLICT rather than catching the error: a failed statement would abort the caller's transaction.
+    row = conn.execute(
+        "INSERT INTO notifications (type, severity, title, body, link, audience, event_id, dedup_key, created_at) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT (dedup_key) DO NOTHING RETURNING id",
+        (type, severity, title[:300], (body or "")[:2000] or None, link, audience, event_id, dedup_key, now)).fetchone()
+    if row is None:
         return None  # already notified (dedup)
+    notification_id = row[0]
 
     def queue(channel: str, target: str) -> None:
         conn.execute("INSERT INTO notification_deliveries (notification_id, channel, target, next_try_at, created_at) "
-                     "VALUES (?, ?, ?, ?, ?)", (notification_id, channel, target, now, now))
+                     "VALUES (%s, %s, %s, %s, %s)", (notification_id, channel, target, now, now))
 
     if CHANNELS.push and push_type:
         for sub in _push_targets(conn, audience, push_type):
@@ -175,13 +112,13 @@ def notify(conn: sqlite3.Connection, *, type: str, title: str, body: str | None 
     return notification_id
 
 
-def _push_targets(conn: sqlite3.Connection, audience: str, push_type: str) -> list[int]:
+def _push_targets(conn: Connection, audience: str, push_type: str) -> list[int]:
     if audience == "admins":
-        subs = conn.execute("SELECT id, user FROM push_subscriptions WHERE role = 'network-admin'").fetchall()
+        subs = conn.execute("""SELECT id, "user" FROM push_subscriptions WHERE role = 'network-admin'""").fetchall()
     elif audience == "all":
-        subs = conn.execute("SELECT id, user FROM push_subscriptions").fetchall()
+        subs = conn.execute('SELECT id, "user" FROM push_subscriptions').fetchall()
     elif audience.startswith("user:"):
-        subs = conn.execute("SELECT id, user FROM push_subscriptions WHERE user = ?", (audience[5:],)).fetchall()
+        subs = conn.execute('SELECT id, "user" FROM push_subscriptions WHERE "user" = %s', (audience[5:],)).fetchall()
     else:
         return []
     return [s["id"] for s in subs if push_type == "__test__" or push_type in push_types_for(conn, s["user"])]
@@ -191,23 +128,23 @@ def _push_targets(conn: sqlite3.Connection, audience: str, push_type: str) -> li
 
 
 def _visible(user: str, role: str | None) -> tuple[str, list[Any]]:
-    clause = "(n.audience = 'all' OR n.audience = ?"
+    clause = "(n.audience = 'all' OR n.audience = %s"
     args: list[Any] = [f"user:{user}"]
     if role == "network-admin":
         clause += " OR n.audience = 'admins'"
     return clause + ")", args
 
 
-def list_for(conn: sqlite3.Connection, user: str, role: str | None, *, limit: int = 50,
+def list_for(conn: Connection, user: str, role: str | None, *, limit: int = 50,
              unread_only: bool = False) -> dict[str, Any]:
     clause, args = _visible(user, role)
     rows = conn.execute(
         f"SELECT n.*, r.read_at FROM notifications n "
-        f"LEFT JOIN notification_reads r ON r.notification_id = n.id AND r.user = ? "
-        f"WHERE {clause}{' AND r.read_at IS NULL' if unread_only else ''} ORDER BY n.id DESC LIMIT ?",
+        f'LEFT JOIN notification_reads r ON r.notification_id = n.id AND r."user" = %s '
+        f"WHERE {clause}{' AND r.read_at IS NULL' if unread_only else ''} ORDER BY n.id DESC LIMIT %s",
         [user, *args, limit]).fetchall()
     unread = conn.execute(
-        f"SELECT COUNT(*) FROM notifications n LEFT JOIN notification_reads r ON r.notification_id = n.id AND r.user = ? "
+        f'SELECT COUNT(*) FROM notifications n LEFT JOIN notification_reads r ON r.notification_id = n.id AND r."user" = %s '
         f"WHERE {clause} AND r.read_at IS NULL", [user, *args]).fetchone()[0]
     latest = conn.execute(f"SELECT COALESCE(MAX(n.id), 0) FROM notifications n WHERE {clause}", args).fetchone()[0]
     items = [{k: r[k] for k in ("id", "type", "severity", "title", "body", "link", "created_at", "read_at")}
@@ -215,19 +152,20 @@ def list_for(conn: sqlite3.Connection, user: str, role: str | None, *, limit: in
     return {"items": items, "unread": unread, "latest_id": latest}
 
 
-def mark_read(conn: sqlite3.Connection, user: str, role: str | None, ids: list[int] | None) -> int:
+def mark_read(conn: Connection, user: str, role: str | None, ids: list[int] | None) -> int:
     """Mark the given notifications (or all visible ones) read for this person."""
     clause, args = _visible(user, role)
     sql = f"SELECT n.id FROM notifications n WHERE {clause}"
     if ids is not None:
         if not ids:
             return 0
-        sql += f" AND n.id IN ({','.join('?' for _ in ids)})"
+        sql += f" AND n.id IN ({','.join('%s' for _ in ids)})"
         args += ids
     now = utcnow()
     with conn:
         targets = [r[0] for r in conn.execute(sql, args)]
-        conn.executemany("INSERT OR IGNORE INTO notification_reads (notification_id, user, read_at) VALUES (?, ?, ?)",
+        conn.executemany('INSERT INTO notification_reads (notification_id, "user", read_at) VALUES (%s, %s, %s) '
+                         "ON CONFLICT DO NOTHING",
                          [(i, user, now) for i in targets])
     return len(targets)
 
@@ -235,61 +173,62 @@ def mark_read(conn: sqlite3.Connection, user: str, role: str | None, ids: list[i
 # --- preferences and push subscriptions ------------------------------------------------------
 
 
-def push_types_for(conn: sqlite3.Connection, user: str) -> list[str]:
-    row = conn.execute("SELECT push_types FROM notification_prefs WHERE user = ?", (user,)).fetchone()
+def push_types_for(conn: Connection, user: str) -> list[str]:
+    row = conn.execute('SELECT push_types FROM notification_prefs WHERE "user" = %s', (user,)).fetchone()
     return json.loads(row[0]) if row else list(DEFAULT_PUSH_TYPES)
 
 
-def save_push_types(conn: sqlite3.Connection, user: str, types: list[str]) -> list[str]:
+def save_push_types(conn: Connection, user: str, types: list[str]) -> list[str]:
     clean = [t for t in PUSH_TYPES if t in set(types)]
     with conn:
-        conn.execute("INSERT INTO notification_prefs (user, push_types) VALUES (?, ?) "
-                     "ON CONFLICT(user) DO UPDATE SET push_types = excluded.push_types", (user, json.dumps(clean)))
+        conn.execute('INSERT INTO notification_prefs ("user", push_types) VALUES (%s, %s) '
+                     'ON CONFLICT ("user") DO UPDATE SET push_types = excluded.push_types', (user, json.dumps(clean)))
     return clean
 
 
-def subscribe(conn: sqlite3.Connection, user: str, role: str, endpoint: str, p256dh: str, auth: str) -> int:
+def subscribe(conn: Connection, user: str, role: str, endpoint: str, p256dh: str, auth: str) -> int:
     with conn:
-        conn.execute("INSERT INTO push_subscriptions (user, role, endpoint, p256dh, auth, created_at) "
-                     "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(endpoint) DO UPDATE SET user = excluded.user, "
+        conn.execute('INSERT INTO push_subscriptions ("user", role, endpoint, p256dh, auth, created_at) '
+                     'VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (endpoint) DO UPDATE SET "user" = excluded."user", '
                      "role = excluded.role, p256dh = excluded.p256dh, auth = excluded.auth",
                      (user, role, endpoint, p256dh, auth, utcnow()))
-    return conn.execute("SELECT id FROM push_subscriptions WHERE endpoint = ?", (endpoint,)).fetchone()[0]
+    return conn.execute("SELECT id FROM push_subscriptions WHERE endpoint = %s", (endpoint,)).fetchone()[0]
 
 
-def unsubscribe(conn: sqlite3.Connection, endpoint: str) -> None:
+def unsubscribe(conn: Connection, endpoint: str) -> None:
     with conn:
-        conn.execute("DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,))
+        conn.execute("DELETE FROM push_subscriptions WHERE endpoint = %s", (endpoint,))
 
 
-def subscriptions_for(conn: sqlite3.Connection, user: str) -> int:
-    return conn.execute("SELECT COUNT(*) FROM push_subscriptions WHERE user = ?", (user,)).fetchone()[0]
+def subscriptions_for(conn: Connection, user: str) -> int:
+    return conn.execute('SELECT COUNT(*) FROM push_subscriptions WHERE "user" = %s', (user,)).fetchone()[0]
 
 
 # --- event watchers (publish announcements) ---------------------------------------------------
 
 
-def watchers(conn: sqlite3.Connection, doc: int) -> list[str]:
-    return [r[0] for r in conn.execute("SELECT email FROM event_watchers WHERE document_id = ? ORDER BY email", (doc,))]
+def watchers(conn: Connection, doc: int) -> list[str]:
+    return [r[0] for r in conn.execute("SELECT email FROM event_watchers WHERE document_id = %s ORDER BY email", (doc,))]
 
 
-def add_watcher(conn: sqlite3.Connection, doc: int, email: str, user: str) -> list[str]:
+def add_watcher(conn: Connection, doc: int, email: str, user: str) -> list[str]:
     with conn:
-        conn.execute("INSERT OR IGNORE INTO event_watchers (document_id, email, created_by, created_at) VALUES (?, ?, ?, ?)",
+        conn.execute("INSERT INTO event_watchers (document_id, email, created_by, created_at) VALUES (%s, %s, %s, %s) "
+                     "ON CONFLICT DO NOTHING",
                      (doc, email.strip().lower(), user, utcnow()))
     return watchers(conn, doc)
 
 
-def remove_watcher(conn: sqlite3.Connection, doc: int, email: str) -> list[str]:
+def remove_watcher(conn: Connection, doc: int, email: str) -> list[str]:
     with conn:
-        conn.execute("DELETE FROM event_watchers WHERE document_id = ? AND email = ?", (doc, email.strip().lower()))
+        conn.execute("DELETE FROM event_watchers WHERE document_id = %s AND email = %s", (doc, email.strip().lower()))
     return watchers(conn, doc)
 
 
 # --- what happens in the app -> who is told ------------------------------------------------------
 
 
-def ticket_created(conn: sqlite3.Connection, ticket: dict[str, Any]) -> None:
+def ticket_created(conn: Connection, ticket: dict[str, Any]) -> None:
     urgent = ticket["severity"] in ("P1", "P2")
     where = ticket.get("stand") or ticket.get("location")
     notify(conn, type="ticket_new", severity="urgent" if urgent else "normal",
@@ -303,23 +242,23 @@ def ticket_created(conn: sqlite3.Connection, ticket: dict[str, Any]) -> None:
         _also_push(conn, ticket, "ticket_all")
 
 
-def _also_push(conn: sqlite3.Connection, ticket: dict[str, Any], push_type: str) -> None:
+def _also_push(conn: Connection, ticket: dict[str, Any], push_type: str) -> None:
     """Queue pushes for subscribers who chose ``push_type`` but not the type already used."""
     if not CHANNELS.push:
         return
-    row = conn.execute("SELECT id FROM notifications WHERE dedup_key = ?", (f"ticket-new:{ticket['id']}",)).fetchone()
+    row = conn.execute("SELECT id FROM notifications WHERE dedup_key = %s", (f"ticket-new:{ticket['id']}",)).fetchone()
     if not row:
         return
-    already = {r[0] for r in conn.execute("SELECT target FROM notification_deliveries WHERE notification_id = ? "
+    already = {r[0] for r in conn.execute("SELECT target FROM notification_deliveries WHERE notification_id = %s "
                                           "AND channel = 'push'", (row[0],))}
     now = utcnow()
     for sub in _push_targets(conn, "admins", push_type):
         if str(sub) not in already:
             conn.execute("INSERT INTO notification_deliveries (notification_id, channel, target, next_try_at, created_at) "
-                         "VALUES (?, 'push', ?, ?, ?)", (row[0], str(sub), now, now))
+                         "VALUES (%s, 'push', %s, %s, %s)", (row[0], str(sub), now, now))
 
 
-def ticket_assigned(conn: sqlite3.Connection, ticket: dict[str, Any], assignee: str, by: str) -> None:
+def ticket_assigned(conn: Connection, ticket: dict[str, Any], assignee: str, by: str) -> None:
     if not assignee or assignee == by:
         return
     notify(conn, type="ticket_assigned", title=f"Ticket #{ticket['id']} assigned to you",
@@ -327,14 +266,14 @@ def ticket_assigned(conn: sqlite3.Connection, ticket: dict[str, Any], assignee: 
            link=f"/helpdesk?view=tickets&ticket={ticket['id']}", event_id=ticket["event_id"], push_type="assigned")
 
 
-def request_submitted(conn: sqlite3.Connection, doc: int, team: str, count: int, requester: str, late: bool) -> None:
+def request_submitted(conn: Connection, doc: int, team: str, count: int, requester: str, late: bool) -> None:
     notify(conn, type="request_new",
            title=f"{count} new ICT request{'s' if count != 1 else ''} from {team}",
            body=f"Submitted by {requester}" + (" after the deadline" if late else ""),
            link=f"/event/{doc}?view=requests", event_id=doc, push_type="requests")
 
 
-def request_reviewed(conn: sqlite3.Connection, doc: int, req: dict[str, Any], event_code: str, status: str,
+def request_reviewed(conn: Connection, doc: int, req: dict[str, Any], event_code: str, status: str,
                      note: str | None) -> None:
     """Email the requester (they have no app account) when their request is reviewed."""
     label = {"approved": "approved", "needs_info": "needs more information", "declined": "declined"}[status]
@@ -347,7 +286,7 @@ def request_reviewed(conn: sqlite3.Connection, doc: int, req: dict[str, Any], ev
            emails=[contact] if is_email(contact) else [])
 
 
-def request_link_shared(conn: sqlite3.Connection, doc: int, event_code: str, team: str, url: str, email: str,
+def request_link_shared(conn: Connection, doc: int, event_code: str, team: str, url: str, email: str,
                         deadline: str | None) -> None:
     notify(conn, type="request_link", audience="external", event_id=doc,
            title=f"Request network connections for {event_code} ({team})",
@@ -356,7 +295,7 @@ def request_link_shared(conn: sqlite3.Connection, doc: int, event_code: str, tea
            link=url, emails=[email])
 
 
-def version_published(conn: sqlite3.Connection, doc: int, event_code: str, version: int, user: str,
+def version_published(conn: Connection, doc: int, event_code: str, version: int, user: str,
                       summary: str, note: str | None) -> None:
     notify(conn, type="version_published", severity="low", event_id=doc,
            title=f"{event_code} V{version} published",

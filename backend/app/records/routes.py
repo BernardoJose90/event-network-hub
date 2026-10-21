@@ -7,7 +7,6 @@ header, see auth.py). Every change is recorded in the change log.
 from __future__ import annotations
 
 import logging
-import sqlite3
 from collections.abc import Callable, Iterator
 from typing import Annotated, Any, Literal, TypeVar
 
@@ -31,7 +30,7 @@ def _not_archived(request: Request, document_id: int) -> None:
     """Archived events are read-only: every change is refused (revealing a password is a read)."""
     if request.method in ("GET", "HEAD") or request.url.path.endswith("/reveal"):
         return
-    conn = db.connect(request.app.state.settings.db_path)
+    conn = db.connect(request.app.state.settings.database_url)
     try:
         db.ensure_not_archived(conn, document_id)
     except db.EventArchived as exc:
@@ -49,15 +48,15 @@ GroupKindPath = Literal["wifi", "ethernet"]
 T = TypeVar("T")
 
 
-def _conn(request: Request) -> Iterator[sqlite3.Connection]:
-    conn = db.connect(request.app.state.settings.db_path)
+def _conn(request: Request) -> Iterator[db.Connection]:
+    conn = db.connect(request.app.state.settings.database_url)
     try:
         yield conn
     finally:
         conn.close()
 
 
-Conn = Annotated[sqlite3.Connection, Depends(_conn)]
+Conn = Annotated[db.Connection, Depends(_conn)]
 
 
 def _reader(principal: Annotated[Principal, Depends(current_principal)]) -> Principal:
@@ -74,7 +73,7 @@ Reader = Annotated[Principal, Depends(_reader)]
 Editor = Annotated[Principal, Depends(_editor)]
 
 
-def _document(conn: sqlite3.Connection, document_id: int) -> dict[str, Any]:
+def _document(conn: db.Connection, document_id: int) -> dict[str, Any]:
     document = db.get_document(conn, document_id)
     if document is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
@@ -145,7 +144,7 @@ def delete_template(template_id: int, conn: Conn, principal: Editor) -> None:
 # --- overview, history ---------------------------------------------------------
 
 
-def _viewer_view(conn: sqlite3.Connection, document_id: int, principal: Principal) -> dict[str, Any] | None:
+def _viewer_view(conn: db.Connection, document_id: int, principal: Principal) -> dict[str, Any] | None:
     """Viewers see the latest published version (None: an admin, or nothing published yet)."""
     if principal.role == ROLE_NETWORK_ADMIN:
         return None

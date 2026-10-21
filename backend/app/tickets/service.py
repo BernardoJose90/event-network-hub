@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -61,7 +60,7 @@ def view(ticket: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
     return ticket | {"sla": sla(ticket, now)}
 
 
-def _get(conn: sqlite3.Connection, ticket_id: int) -> dict[str, Any]:
+def _get(conn: db.Connection, ticket_id: int) -> dict[str, Any]:
     ticket = store.get_ticket(conn, ticket_id)
     if ticket is None:
         raise TicketError(404, f"Ticket #{ticket_id} not found")
@@ -74,7 +73,7 @@ def _check_revision(ticket: dict[str, Any], revision: int) -> None:
                                "Reload to see the latest version.")
 
 
-def _write(conn: sqlite3.Connection, ticket: dict[str, Any], revision: int, values: dict[str, Any]) -> None:
+def _write(conn: db.Connection, ticket: dict[str, Any], revision: int, values: dict[str, Any]) -> None:
     if not store.update_ticket(conn, ticket["id"], revision, values):
         raise TicketError(409, f"Ticket #{ticket['id']} was changed by someone else. Reload to see the latest version.")
 
@@ -84,7 +83,7 @@ def _not_merged(ticket: dict[str, Any]) -> None:
         raise TicketError(409, f"Ticket #{ticket['id']} was merged into #{ticket['merged_into']}. Work on that ticket.")
 
 
-def _notify(conn: sqlite3.Connection, ticket: dict[str, Any], message: str, *, notify: bool) -> None:
+def _notify(conn: db.Connection, ticket: dict[str, Any], message: str, *, notify: bool) -> None:
     """Queue an update for the reporter (WhatsApp tickets only, when the bot callback is configured).
 
     Reporters of duplicates merged into this ticket get the same update.
@@ -110,7 +109,7 @@ def _notify(conn: sqlite3.Connection, ticket: dict[str, Any], message: str, *, n
 # --- events -----------------------------------------------------------------------------
 
 
-def resolve_event(conn: sqlite3.Connection, event_id: int | None = None, event_code: str | None = None
+def resolve_event(conn: db.Connection, event_id: int | None = None, event_code: str | None = None
                   ) -> tuple[int | None, str | None]:
     """(event_id, event_code) for a ticket: the given event, an event by code, else the live event."""
     if event_id is not None:
@@ -119,7 +118,7 @@ def resolve_event(conn: sqlite3.Connection, event_id: int | None = None, event_c
             raise TicketError(404, "Event not found")
         return doc["id"], doc["name"].split(" | ")[0]
     if event_code:
-        row = conn.execute("SELECT id, name FROM documents WHERE kind = 'event' AND upper(name) LIKE ?",
+        row = conn.execute("SELECT id, name FROM documents WHERE kind = 'event' AND upper(name) LIKE %s",
                            (f"{event_code.upper()} |%",)).fetchone()
         if row:
             return row["id"], row["name"].split(" | ")[0]
@@ -135,7 +134,7 @@ def resolve_event(conn: sqlite3.Connection, event_id: int | None = None, event_c
 # --- create ----------------------------------------------------------------------------
 
 
-def create_ticket(conn: sqlite3.Connection, fields: dict[str, Any], *, user: str, source: str = "manual",
+def create_ticket(conn: db.Connection, fields: dict[str, Any], *, user: str, source: str = "manual",
                   external_id: str | None = None, event_id: int | None = None, event_code: str | None = None,
                   assignee: str | None = None) -> dict[str, Any]:
     category = fields.get("category") or "uncategorised"
@@ -170,7 +169,7 @@ def create_ticket(conn: sqlite3.Connection, fields: dict[str, Any], *, user: str
     return ticket  # type: ignore[return-value]
 
 
-def create_from_bot(conn: sqlite3.Connection, report: dict[str, Any], *, notify: bool) -> tuple[dict[str, Any], bool]:
+def create_from_bot(conn: db.Connection, report: dict[str, Any], *, notify: bool) -> tuple[dict[str, Any], bool]:
     """Create a ticket from a WhatsApp report. Idempotent on external_id: (ticket, created)."""
     existing = store.get_by_external_id(conn, report["external_id"])
     if existing is not None:
@@ -186,7 +185,7 @@ def create_from_bot(conn: sqlite3.Connection, report: dict[str, Any], *, notify:
         ticket = create_ticket(conn, fields | {"title": title, "description": message}, user="whatsapp-bot",
                                source="whatsapp", external_id=report["external_id"],
                                event_code=report.get("event_code"))
-    except sqlite3.IntegrityError:  # the same report arrived twice at the same moment
+    except db.IntegrityError:  # the same report arrived twice at the same moment
         return store.get_by_external_id(conn, report["external_id"]), False  # type: ignore[return-value]
     with conn:
         _notify(conn, ticket, f"Thanks, we've logged this as ticket #{ticket['id']}. The ICT team has been alerted.",
@@ -197,7 +196,7 @@ def create_from_bot(conn: sqlite3.Connection, report: dict[str, Any], *, notify:
 # --- change -------------------------------------------------------------------------------
 
 
-def update_fields(conn: sqlite3.Connection, ticket_id: int, *, revision: int, changes: dict[str, Any],
+def update_fields(conn: db.Connection, ticket_id: int, *, revision: int, changes: dict[str, Any],
                   user: str) -> dict[str, Any]:
     ticket = _get(conn, ticket_id)
     _check_revision(ticket, revision)
@@ -217,7 +216,7 @@ def update_fields(conn: sqlite3.Connection, ticket_id: int, *, revision: int, ch
     return store.get_ticket(conn, ticket_id)  # type: ignore[return-value]
 
 
-def acknowledge(conn: sqlite3.Connection, ticket_id: int, *, revision: int, user: str, notify: bool
+def acknowledge(conn: db.Connection, ticket_id: int, *, revision: int, user: str, notify: bool
                 ) -> dict[str, Any]:
     """An ICT owner takes the ticket: stamps the acknowledge time, assigns it if unowned."""
     ticket = _get(conn, ticket_id)
@@ -243,7 +242,7 @@ def acknowledge(conn: sqlite3.Connection, ticket_id: int, *, revision: int, user
     return store.get_ticket(conn, ticket_id)  # type: ignore[return-value]
 
 
-def assign(conn: sqlite3.Connection, ticket_id: int, *, revision: int, assignee: str | None, team: str | None,
+def assign(conn: db.Connection, ticket_id: int, *, revision: int, assignee: str | None, team: str | None,
            user: str) -> dict[str, Any]:
     ticket = _get(conn, ticket_id)
     _check_revision(ticket, revision)
@@ -268,7 +267,7 @@ def assign(conn: sqlite3.Connection, ticket_id: int, *, revision: int, assignee:
     return store.get_ticket(conn, ticket_id)  # type: ignore[return-value]
 
 
-def change_status(conn: sqlite3.Connection, ticket_id: int, *, revision: int, status: str, user: str,
+def change_status(conn: db.Connection, ticket_id: int, *, revision: int, status: str, user: str,
                   root_cause: str | None = None, resolution: str | None = None, notify: bool) -> dict[str, Any]:
     """Move a ticket through its lifecycle. Resolving or closing needs a root cause and a resolution."""
     ticket = _get(conn, ticket_id)
@@ -314,7 +313,7 @@ def change_status(conn: sqlite3.Connection, ticket_id: int, *, revision: int, st
     return store.get_ticket(conn, ticket_id)  # type: ignore[return-value]
 
 
-def comment(conn: sqlite3.Connection, ticket_id: int, *, body: str, visibility: str, user: str, notify: bool
+def comment(conn: db.Connection, ticket_id: int, *, body: str, visibility: str, user: str, notify: bool
             ) -> dict[str, Any]:
     ticket = _get(conn, ticket_id)
     if visibility == "reporter" and ticket["source"] != "whatsapp":
@@ -327,7 +326,7 @@ def comment(conn: sqlite3.Connection, ticket_id: int, *, body: str, visibility: 
     return store.get_ticket(conn, ticket_id)  # type: ignore[return-value]
 
 
-def merge(conn: sqlite3.Connection, ticket_id: int, *, revision: int, into: int, user: str, notify: bool
+def merge(conn: db.Connection, ticket_id: int, *, revision: int, into: int, user: str, notify: bool
           ) -> dict[str, Any]:
     """Close ticket_id as a duplicate of ``into``; its reporter is told to follow the other ticket."""
     ticket = _get(conn, ticket_id)

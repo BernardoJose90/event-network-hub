@@ -11,7 +11,7 @@ from app import db
 from app.config import Settings
 from app.main import create_app
 
-from .conftest import FakeConverter
+from .conftest import TEST_DATABASE_URL, FakeConverter
 from .records_fixture import records_workbook
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -22,7 +22,7 @@ VIEWER = {"X-Role": "viewer", "X-User": "victor"}
 @pytest.fixture
 def client(tmp_path: Path):
     settings = Settings(data_dir=tmp_path, gotenberg_url="http://unused", gotenberg_timeout_seconds=1,
-                        max_upload_bytes=1024 * 1024)
+                        max_upload_bytes=1024 * 1024, database_url=TEST_DATABASE_URL)
     app = create_app(settings)
     with TestClient(app) as c:
         app.state.converter = FakeConverter()

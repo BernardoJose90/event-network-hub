@@ -1,0 +1,49 @@
+# Production web server: the built app (static files) plus /api forwarded to the backend, so the
+# browser only ever talks to one origin. ${API_UPSTREAM} and ${CLIENT_MAX_BODY_SIZE} are filled
+# in from the environment when the container starts (see the Dockerfile for the defaults).
+
+server {
+    listen 8080;
+    server_name _;
+    root /usr/share/nginx/html;
+    server_tokens off;
+
+    # Uploads: a little above the backend's MAX_UPLOAD_BYTES, so the backend gives the error message.
+    client_max_body_size ${CLIENT_MAX_BODY_SIZE};
+
+    # The probe for this container (the backend has its own: /api/health, /api/ready).
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location /api/ {
+        proxy_pass ${API_UPSTREAM};
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # A PDF conversion can take GOTENBERG_TIMEOUT_SECONDS (90 s). The notification stream sends
+        # data at least every 15 s and turns off buffering itself (X-Accel-Buffering: no).
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+        include /etc/nginx/snippets/security-headers.conf;
+    }
+
+    # Built files have a content hash in their name, so they never change.
+    location /assets/ {
+        try_files $uri =404;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        include /etc/nginx/snippets/security-headers.conf;
+    }
+
+    # Everything else: a file if it exists, otherwise the app (it routes /event/…, /request/…, /helpdesk).
+    # Always revalidated, so a new release (and a new service worker) is picked up at once.
+    location / {
+        try_files $uri /index.html;
+        add_header Cache-Control "no-cache";
+        include /etc/nginx/snippets/security-headers.conf;
+    }
+}

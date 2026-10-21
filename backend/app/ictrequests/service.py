@@ -4,53 +4,12 @@ from __future__ import annotations
 
 import json
 import secrets
-import sqlite3
 from datetime import date, datetime, timezone
 from typing import Any
 
 from .. import db
 from ..records import service as records, store as records_store
 from .models import KINDS, REQUEST_TEAMS, STATUSES, TEAM_DEFAULTS
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS request_links (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id  INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    team         TEXT NOT NULL,
-    token        TEXT NOT NULL UNIQUE,
-    created_by   TEXT NOT NULL,
-    created_at   TEXT NOT NULL,
-    revoked_at   TEXT
-);
-
-CREATE TABLE IF NOT EXISTS request_settings (
-    document_id   INTEGER PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
-    deadline      TEXT,   -- YYYY-MM-DD: requests after this day are flagged late
-    instructions  TEXT
-);
-
-CREATE TABLE IF NOT EXISTS ict_requests (
-    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id        INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    link_id            INTEGER REFERENCES request_links(id) ON DELETE SET NULL,
-    batch              TEXT NOT NULL,  -- lines submitted together
-    team               TEXT NOT NULL,
-    kind               TEXT NOT NULL CHECK (kind IN ('wired', 'wifi')),
-    status             TEXT NOT NULL CHECK (status IN ('submitted', 'needs_info', 'approved', 'declined')),
-    requester_name     TEXT NOT NULL,
-    requester_contact  TEXT NOT NULL,
-    data               TEXT NOT NULL,
-    late               INTEGER NOT NULL DEFAULT 0,
-    submitted_at       TEXT NOT NULL,
-    reviewed_by        TEXT,
-    reviewed_at        TEXT,
-    review_note        TEXT,
-    record_id          INTEGER,  -- the Ethernet/Wi-Fi row created on approval
-    revision           INTEGER NOT NULL DEFAULT 1,
-    updated_at         TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS ict_requests_by_doc ON ict_requests (document_id, status);
-"""
 
 
 class RequestError(Exception):
@@ -59,18 +18,14 @@ class RequestError(Exception):
         self.status = status
 
 
-def init(conn: sqlite3.Connection) -> None:
-    conn.executescript(SCHEMA)
-
-
-def _row(row: sqlite3.Row) -> dict[str, Any]:
+def _row(row: db.Row) -> dict[str, Any]:
     out = dict(row)
     out["data"] = json.loads(out["data"])
     out["late"] = bool(out["late"])
     return out
 
 
-def _event(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
+def _event(conn: db.Connection, doc: int) -> dict[str, Any]:
     document = db.get_document(conn, doc)
     if document is None or document["kind"] != "event":
         raise RequestError(404, "Event not found")
@@ -80,16 +35,16 @@ def _event(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
 # --- settings, links ---------------------------------------------------------------------
 
 
-def settings(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
-    row = conn.execute("SELECT deadline, instructions FROM request_settings WHERE document_id = ?", (doc,)).fetchone()
+def settings(conn: db.Connection, doc: int) -> dict[str, Any]:
+    row = conn.execute("SELECT deadline, instructions FROM request_settings WHERE document_id = %s", (doc,)).fetchone()
     return dict(row) if row else {"deadline": None, "instructions": None}
 
 
-def save_settings(conn: sqlite3.Connection, doc: int, *, deadline: str | None, instructions: str | None,
+def save_settings(conn: db.Connection, doc: int, *, deadline: str | None, instructions: str | None,
                   user: str) -> dict[str, Any]:
     _event(conn, doc)
     with conn:
-        conn.execute("INSERT INTO request_settings (document_id, deadline, instructions) VALUES (?, ?, ?) "
+        conn.execute("INSERT INTO request_settings (document_id, deadline, instructions) VALUES (%s, %s, %s) "
                      "ON CONFLICT(document_id) DO UPDATE SET deadline = excluded.deadline, "
                      "instructions = excluded.instructions", (doc, deadline, instructions))
         records_store.log(conn, doc=doc, entity="request", action="request", user=user, new=deadline,
@@ -97,27 +52,28 @@ def save_settings(conn: sqlite3.Connection, doc: int, *, deadline: str | None, i
     return settings(conn, doc)
 
 
-def links(conn: sqlite3.Connection, doc: int) -> list[dict[str, Any]]:
+def links(conn: db.Connection, doc: int) -> list[dict[str, Any]]:
     return [dict(r) for r in conn.execute(
-        "SELECT * FROM request_links WHERE document_id = ? ORDER BY revoked_at IS NOT NULL, team, id", (doc,))]
+        "SELECT * FROM request_links WHERE document_id = %s ORDER BY revoked_at IS NOT NULL, team, id", (doc,))]
 
 
-def create_link(conn: sqlite3.Connection, doc: int, team: str, *, user: str) -> dict[str, Any]:
+def create_link(conn: db.Connection, doc: int, team: str, *, user: str) -> dict[str, Any]:
     _event(conn, doc)
     token = secrets.token_urlsafe(24)  # unguessable: the link is the credential
     with conn:
         link_id = conn.execute("INSERT INTO request_links (document_id, team, token, created_by, created_at) "
-                               "VALUES (?, ?, ?, ?, ?)", (doc, team, token, user, db.utcnow())).lastrowid
+                               "VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                               (doc, team, token, user, db.utcnow())).fetchone()[0]
         records_store.log(conn, doc=doc, entity="request", action="request", user=user,
                           summary=f"Created an ICT request link for {REQUEST_TEAMS[team]}")
-    return dict(conn.execute("SELECT * FROM request_links WHERE id = ?", (link_id,)).fetchone())
+    return dict(conn.execute("SELECT * FROM request_links WHERE id = %s", (link_id,)).fetchone())
 
 
-def email_link(conn: sqlite3.Connection, doc: int, link_id: int, email: str, *, user: str) -> dict[str, Any]:
+def email_link(conn: db.Connection, doc: int, link_id: int, email: str, *, user: str) -> dict[str, Any]:
     """Save the team contact for a link (deadline reminders go there) and email them the link."""
     from ..notifications import service as notifications
 
-    row = conn.execute("SELECT * FROM request_links WHERE id = ? AND document_id = ? AND revoked_at IS NULL",
+    row = conn.execute("SELECT * FROM request_links WHERE id = %s AND document_id = %s AND revoked_at IS NULL",
                        (link_id, doc)).fetchone()
     if row is None:
         raise RequestError(404, "Link not found")
@@ -125,29 +81,29 @@ def email_link(conn: sqlite3.Connection, doc: int, link_id: int, email: str, *, 
         raise RequestError(422, "Enter an email address, like name@example.com")
     document = _event(conn, doc)
     with conn:
-        conn.execute("UPDATE request_links SET contact_email = ? WHERE id = ?", (email.strip().lower(), link_id))
+        conn.execute("UPDATE request_links SET contact_email = %s WHERE id = %s", (email.strip().lower(), link_id))
         notifications.request_link_shared(conn, doc, document["name"].split(" | ")[0], REQUEST_TEAMS[row["team"]],
                                           f"{notifications.CHANNELS.public_url}/request/{row['token']}", email,
                                           settings(conn, doc)["deadline"])
         records_store.log(conn, doc=doc, entity="request", action="request", user=user,
                           summary=f"Emailed the {REQUEST_TEAMS[row['team']]} request link to {email}")
-    return dict(conn.execute("SELECT * FROM request_links WHERE id = ?", (link_id,)).fetchone())
+    return dict(conn.execute("SELECT * FROM request_links WHERE id = %s", (link_id,)).fetchone())
 
 
-def revoke_link(conn: sqlite3.Connection, doc: int, link_id: int, *, user: str) -> None:
-    row = conn.execute("SELECT * FROM request_links WHERE id = ? AND document_id = ?", (link_id, doc)).fetchone()
+def revoke_link(conn: db.Connection, doc: int, link_id: int, *, user: str) -> None:
+    row = conn.execute("SELECT * FROM request_links WHERE id = %s AND document_id = %s", (link_id, doc)).fetchone()
     if row is None:
         raise RequestError(404, "Link not found")
     with conn:
-        conn.execute("UPDATE request_links SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+        conn.execute("UPDATE request_links SET revoked_at = %s WHERE id = %s AND revoked_at IS NULL",
                      (db.utcnow(), link_id))
         records_store.log(conn, doc=doc, entity="request", action="request", user=user,
                           summary=f"Turned off the ICT request link for {REQUEST_TEAMS.get(row['team'], row['team'])}")
 
 
-def link_by_token(conn: sqlite3.Connection, token: str) -> tuple[dict[str, Any], dict[str, Any]]:
+def link_by_token(conn: db.Connection, token: str) -> tuple[dict[str, Any], dict[str, Any]]:
     """(link, event) for an active link, or RequestError 404/410."""
-    row = conn.execute("SELECT * FROM request_links WHERE token = ?", (token,)).fetchone()
+    row = conn.execute("SELECT * FROM request_links WHERE token = %s", (token,)).fetchone()
     if row is None or row["revoked_at"]:
         raise RequestError(404, "This request link isn't valid. Ask the ICT team for a new one.")
     document = db.get_document(conn, row["document_id"])
@@ -156,7 +112,7 @@ def link_by_token(conn: sqlite3.Connection, token: str) -> tuple[dict[str, Any],
     return dict(row), document
 
 
-def is_late(conn: sqlite3.Connection, doc: int, today: date | None = None) -> bool:
+def is_late(conn: db.Connection, doc: int, today: date | None = None) -> bool:
     deadline = settings(conn, doc)["deadline"]
     today = today or datetime.now(timezone.utc).date()
     return bool(deadline) and today > date.fromisoformat(deadline)
@@ -165,7 +121,7 @@ def is_late(conn: sqlite3.Connection, doc: int, today: date | None = None) -> bo
 # --- submissions -----------------------------------------------------------------------------
 
 
-def _check_line(conn: sqlite3.Connection, doc: int, line: dict[str, Any]) -> dict[str, Any]:
+def _check_line(conn: db.Connection, doc: int, line: dict[str, Any]) -> dict[str, Any]:
     data = {k: v for k, v in line.items() if v is not None and k != "kind"}
     wired_only = ("device_type", "ports", "poe", "bandwidth")
     wifi_only = ("network_name", "devices", "coverage", "password")
@@ -178,7 +134,7 @@ def _check_line(conn: sqlite3.Connection, doc: int, line: dict[str, Any]) -> dic
     return data
 
 
-def submit(conn: sqlite3.Connection, token: str, submission: dict[str, Any]) -> dict[str, Any]:
+def submit(conn: db.Connection, token: str, submission: dict[str, Any]) -> dict[str, Any]:
     link, document = link_by_token(conn, token)
     doc = document["id"]
     late = is_late(conn, doc)
@@ -190,9 +146,10 @@ def submit(conn: sqlite3.Connection, token: str, submission: dict[str, Any]) -> 
         for kind, data in lines:
             ids.append(conn.execute(
                 "INSERT INTO ict_requests (document_id, link_id, batch, team, kind, status, requester_name, "
-                "requester_contact, data, late, submitted_at, updated_at) VALUES (?, ?, ?, ?, ?, 'submitted', ?, ?, ?, ?, ?, ?)",
+                "requester_contact, data, late, submitted_at, updated_at) "
+                "VALUES (%s, %s, %s, %s, %s, 'submitted', %s, %s, %s, %s, %s, %s) RETURNING id",
                 (doc, link["id"], batch, link["team"], kind, submission["requester_name"],
-                 submission["requester_contact"], json.dumps(data), int(late), now, now)).lastrowid)
+                 submission["requester_contact"], json.dumps(data), int(late), now, now)).fetchone()[0])
         records_store.log(conn, doc=doc, entity="request", action="request", user=submission["requester_name"],
                           summary=f"{REQUEST_TEAMS[link['team']]} submitted {len(ids)} ICT request(s)"
                                   + (" after the deadline" if late else ""))
@@ -202,17 +159,17 @@ def submit(conn: sqlite3.Connection, token: str, submission: dict[str, Any]) -> 
     return {"batch": batch, "late": late, "requests": [get(conn, doc, i) for i in ids]}
 
 
-def get(conn: sqlite3.Connection, doc: int, request_id: int) -> dict[str, Any]:
-    row = conn.execute("SELECT * FROM ict_requests WHERE id = ? AND document_id = ?", (request_id, doc)).fetchone()
+def get(conn: db.Connection, doc: int, request_id: int) -> dict[str, Any]:
+    row = conn.execute("SELECT * FROM ict_requests WHERE id = %s AND document_id = %s", (request_id, doc)).fetchone()
     if row is None:
         raise RequestError(404, "Request not found")
     return _row(row)
 
 
-def list_for(conn: sqlite3.Connection, doc: int, *, link_id: int | None = None) -> list[dict[str, Any]]:
-    sql, args = "SELECT * FROM ict_requests WHERE document_id = ?", [doc]
+def list_for(conn: db.Connection, doc: int, *, link_id: int | None = None) -> list[dict[str, Any]]:
+    sql, args = "SELECT * FROM ict_requests WHERE document_id = %s", [doc]
     if link_id is not None:
-        sql += " AND link_id = ?"
+        sql += " AND link_id = %s"
         args.append(link_id)
     return [_row(r) for r in conn.execute(sql + " ORDER BY id DESC", args)]
 
@@ -223,7 +180,7 @@ def public_view(req: dict[str, Any]) -> dict[str, Any]:
                                 "requester_name")} | {"status_label": STATUSES[req["status"]]}
 
 
-def resubmit(conn: sqlite3.Connection, token: str, request_id: int, *, revision: int, line: dict[str, Any]
+def resubmit(conn: db.Connection, token: str, request_id: int, *, revision: int, line: dict[str, Any]
              ) -> dict[str, Any]:
     """The requester answers a 'needs more information' request (or corrects a submitted one)."""
     link, document = link_by_token(conn, token)
@@ -236,8 +193,8 @@ def resubmit(conn: sqlite3.Connection, token: str, request_id: int, *, revision:
         raise RequestError(409, "This request changed since you opened it. Reload the page.")
     data = _check_line(conn, document["id"], line)
     with conn:
-        conn.execute("UPDATE ict_requests SET kind = ?, data = ?, status = 'submitted', revision = revision + 1, "
-                     "updated_at = ? WHERE id = ?", (line["kind"], json.dumps(data), db.utcnow(), request_id))
+        conn.execute("UPDATE ict_requests SET kind = %s, data = %s, status = 'submitted', revision = revision + 1, "
+                     "updated_at = %s WHERE id = %s", (line["kind"], json.dumps(data), db.utcnow(), request_id))
         records_store.log(conn, doc=document["id"], entity="request", action="request", user=req["requester_name"],
                           summary=f"Updated ICT request #{request_id}")
     return get(conn, document["id"], request_id)
@@ -246,7 +203,7 @@ def resubmit(conn: sqlite3.Connection, token: str, request_id: int, *, revision:
 # --- review -----------------------------------------------------------------------------------
 
 
-def _open_for_review(conn: sqlite3.Connection, doc: int, request_id: int, revision: int) -> dict[str, Any]:
+def _open_for_review(conn: db.Connection, doc: int, request_id: int, revision: int) -> dict[str, Any]:
     db.ensure_not_archived(conn, doc)
     req = get(conn, doc, request_id)
     if req["revision"] != revision:
@@ -256,12 +213,12 @@ def _open_for_review(conn: sqlite3.Connection, doc: int, request_id: int, revisi
     return req
 
 
-def set_review(conn: sqlite3.Connection, doc: int, request_id: int, *, revision: int, status: str, note: str,
+def set_review(conn: db.Connection, doc: int, request_id: int, *, revision: int, status: str, note: str,
                user: str) -> dict[str, Any]:
     req = _open_for_review(conn, doc, request_id, revision)
     with conn:
-        conn.execute("UPDATE ict_requests SET status = ?, review_note = ?, reviewed_by = ?, reviewed_at = ?, "
-                     "revision = revision + 1, updated_at = ? WHERE id = ?",
+        conn.execute("UPDATE ict_requests SET status = %s, review_note = %s, reviewed_by = %s, reviewed_at = %s, "
+                     "revision = revision + 1, updated_at = %s WHERE id = %s",
                      (status, note, user, db.utcnow(), db.utcnow(), request_id))
         records_store.log(conn, doc=doc, entity="request", action="request", user=user,
                           summary=f"{'Declined' if status == 'declined' else 'Asked for more information on'} "
@@ -270,14 +227,14 @@ def set_review(conn: sqlite3.Connection, doc: int, request_id: int, *, revision:
     return get(conn, doc, request_id)
 
 
-def _tell_requester(conn: sqlite3.Connection, doc: int, req: dict[str, Any], status: str, note: str | None) -> None:
+def _tell_requester(conn: db.Connection, doc: int, req: dict[str, Any], status: str, note: str | None) -> None:
     from ..notifications import service as notifications
 
     document = db.get_document(conn, doc)
     notifications.request_reviewed(conn, doc, req, document["name"].split(" | ")[0], status, note)
 
 
-def approve(conn: sqlite3.Connection, doc: int, request_id: int, *, revision: int, venue_id: int, group_id: int,
+def approve(conn: db.Connection, doc: int, request_id: int, *, revision: int, venue_id: int, group_id: int,
             vlan: str | None, location: str | None, ports: int | None, name: str | None, note: str | None,
             user: str) -> dict[str, Any]:
     """Create the Ethernet item or Wi-Fi network from the request, then mark it approved."""
@@ -315,8 +272,8 @@ def approve(conn: sqlite3.Connection, doc: int, request_id: int, *, revision: in
     except records.RecordError as exc:
         raise RequestError(exc.status, str(exc))
     with conn:
-        conn.execute("UPDATE ict_requests SET status = 'approved', record_id = ?, reviewed_by = ?, reviewed_at = ?, "
-                     "review_note = ?, revision = revision + 1, updated_at = ? WHERE id = ?",
+        conn.execute("UPDATE ict_requests SET status = 'approved', record_id = %s, reviewed_by = %s, reviewed_at = %s, "
+                     "review_note = %s, revision = revision + 1, updated_at = %s WHERE id = %s",
                      (record["id"], user, db.utcnow(), note, db.utcnow(), request_id))
         records_store.log(conn, doc=doc, entity="request", action="request", user=user, record_id=record["id"],
                           summary=f"Approved ICT request #{request_id} from {team}: added "
@@ -329,7 +286,7 @@ def approve(conn: sqlite3.Connection, doc: int, request_id: int, *, revision: in
 # --- summary ---------------------------------------------------------------------------------
 
 
-def summary(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
+def summary(conn: db.Connection, doc: int) -> dict[str, Any]:
     reqs = list_for(conn, doc)
     by_team = {}
     for key, label in REQUEST_TEAMS.items():
@@ -354,7 +311,7 @@ def summary(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
     }
 
 
-def reference(conn: sqlite3.Connection, doc: int, team: str) -> dict[str, Any]:
+def reference(conn: db.Connection, doc: int, team: str) -> dict[str, Any]:
     """What the public form needs: the event's areas and bandwidths, and the team's template."""
     lists = records_store.lists(conn, doc)
     return {

@@ -10,12 +10,14 @@ from fastapi.testclient import TestClient
 from app.config import Settings, _flag
 from app.main import create_app
 
+from .conftest import TEST_DATABASE_URL
+
 ADMIN = {"X-Role": "network-admin", "X-User": "alice"}
 
 
 def _client(tmp_path: Path, **flags) -> TestClient:
     settings = Settings(data_dir=tmp_path, gotenberg_url="http://unused", gotenberg_timeout_seconds=1,
-                        max_upload_bytes=1024 * 1024)
+                        max_upload_bytes=1024 * 1024, database_url=TEST_DATABASE_URL)
     return TestClient(create_app(replace(settings, **flags)))
 
 

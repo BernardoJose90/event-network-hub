@@ -14,7 +14,6 @@ from __future__ import annotations
 import csv
 import io
 import re
-import sqlite3
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from statistics import mean, median
@@ -24,6 +23,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from ..db import Connection
 from . import service, store
 from .models import CATEGORIES, DONE_STATUSES, SEVERITIES, SOURCES, STATUSES, TEAMS
 
@@ -50,7 +50,7 @@ def is_partner_impacting(ticket: dict[str, Any]) -> bool:
     return ticket["category"] == "partner_stand" or bool(ticket.get("partner"))
 
 
-def kpis(conn: sqlite3.Connection, event_id: int | None, informal: int | None = None) -> dict[str, Any]:
+def kpis(conn: Connection, event_id: int | None, informal: int | None = None) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
     everything = store.list_tickets(conn, limit=1_000_000)
     scoped = [t for t in everything if event_id is None or t["event_id"] == event_id]
@@ -128,7 +128,7 @@ def kpis(conn: sqlite3.Connection, event_id: int | None, informal: int | None = 
     }
 
 
-def recurring_issues(conn: sqlite3.Connection, min_count: int = 2) -> list[dict[str, Any]]:
+def recurring_issues(conn: Connection, min_count: int = 2) -> list[dict[str, Any]]:
     """Issues seen at least min_count times in the same category and area, across events,
     with what fixed them: the knowledge base."""
     groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
@@ -188,7 +188,7 @@ def _when(value: str | None) -> str | None:
     return value.replace("T", " ")[:16] if value else None
 
 
-def export_rows(conn: sqlite3.Connection, event_id: int | None) -> list[list[Any]]:
+def export_rows(conn: Connection, event_id: int | None) -> list[list[Any]]:
     now = datetime.now(timezone.utc)
     rows = []
     for t in sorted(store.list_tickets(conn, event_id=event_id, limit=1_000_000), key=lambda t: t["id"]):
@@ -205,7 +205,7 @@ def export_rows(conn: sqlite3.Connection, event_id: int | None) -> list[list[Any
     return rows
 
 
-def export_csv(conn: sqlite3.Connection, event_id: int | None) -> bytes:
+def export_csv(conn: Connection, event_id: int | None) -> bytes:
     buffer = io.StringIO()
     writer = csv.writer(buffer)
     writer.writerow([c for c, _ in COLUMNS])
@@ -213,7 +213,7 @@ def export_csv(conn: sqlite3.Connection, event_id: int | None) -> bytes:
     return buffer.getvalue().encode("utf-8-sig")  # BOM so Excel opens it as UTF-8
 
 
-def export_xlsx(conn: sqlite3.Connection, event_id: int | None, title: str) -> bytes:
+def export_xlsx(conn: Connection, event_id: int | None, title: str) -> bytes:
     wb = Workbook()
     ws = wb.active
     ws.title = "Tickets"

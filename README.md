@@ -19,8 +19,12 @@ Then open <http://localhost:5173>.
 | Service   | Exposed on                     | Notes                                       |
 |-----------|--------------------------------|---------------------------------------------|
 | frontend  | `127.0.0.1:5173`               | Vite dev server; proxies `/api` to backend  |
-| backend   | `127.0.0.1:8000`               | FastAPI; data in the `appdata` volume       |
+| backend   | `127.0.0.1:8000`               | FastAPI (the API); files in the `appdata` volume |
+| worker    | not published                  | Background jobs: notifications, SLA and deadline checks, bot updates |
+| postgres  | not published                  | PostgreSQL 17; data in the `pgdata` volume  |
+| migrate   | not published                  | Runs `alembic upgrade head`, then exits; backend and worker start after it |
 | gotenberg | not published                  | Reachable only from the backend             |
+| web       | `127.0.0.1:8080` (profile `prod`) | The production frontend image: `docker compose --profile prod up web` |
 
 Configuration defaults live in `docker-compose.yml`; copy `.env.example` to `.env` to override them. Nothing in the repo is a secret.
 
@@ -28,15 +32,16 @@ To reset all data: `docker compose down -v`.
 
 ## Test it
 
-**Unit tests** (no Gotenberg needed):
+**Unit tests** run on PostgreSQL, on a database built by the migrations (no Gotenberg needed):
 
 ```bash
 docker compose run --rm --build tests
-# or locally:
-cd backend && python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt && .venv/bin/pytest
+# or locally, against any PostgreSQL you can create databases on:
+cd backend && python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+TEST_DATABASE_URL=postgresql://user:password@127.0.0.1:5432/enh_test .venv/bin/pytest
 ```
 
-These cover upload validation, sha256 duplicate detection, version-number race retry and the download API.
+`TEST_DATABASE_URL` must name a database ending in `_test`, because every table is emptied before each test. It is created if it doesn't exist. These tests cover upload validation, sha256 duplicate detection, version-number race retry, the download API, the migrations, S3 storage (with an in-memory S3), the worker lock and the SQLite copy.
 
 **Smoke test** (needs the stack running, plus `jq` and poppler's `pdffonts` and `pdfinfo`, e.g. `brew install poppler jq`):
 
@@ -59,9 +64,17 @@ The smoke test uploads your file under a throwaway `SMOKE<n>` event code, so it 
 
 > `samples/`, `*.xlsx` and `*.pdf` are git-ignored, because sample workbooks can contain credentials. The smoke script keeps its downloads in a private temp dir that is deleted on exit.
 
+## CI and images
+
+`.github/workflows/ci.yml` runs on every pull request and on main: backend tests on PostgreSQL, the frontend build, the 3 image builds, dependency review, a secret scan (trufflehog), CodeQL and a workflow lint (zizmor). **CI passed** sums them up; it's the check branch protection requires.
+
+On main only, after every check has passed, the **publish** job pushes the images to ECR in the infra_shared_services account (eu-west-2): `event-network-hub/backend`, `/frontend` and `/gotenberg`, each tagged with the full commit SHA, with provenance and an SBOM attached. The job signs in through GitHub OIDC as `EventNetworkHubEcrPush` (defined in terraform-platform), which trusts only runs on main of this repository, so no AWS keys are stored anywhere. A re-run for a commit that's already pushed skips the push (tags are immutable). It needs the repository variable `AWS_ACCOUNT_ID`.
+
+Every action is pinned to a commit SHA, and Dependabot (`.github/dependabot.yml`) proposes updates weekly, 14 days after a release. Two pins are updated by hand: the zizmor version and the PostgreSQL service image digest in `ci.yml`.
+
 ## Architecture
 
-The React UI talks only to the FastAPI backend, through the Vite `/api` proxy.
+The React UI talks only to the FastAPI backend, on the same origin: through the Vite `/api` proxy locally, and through nginx in the production image.
 
 On upload, the backend:
 
@@ -70,7 +83,7 @@ On upload, the backend:
 3. sends the workbook to Gotenberg's LibreOffice route (`POST /forms/libreoffice/convert`, `singlePageSheets=true`);
 4. stores `original.xlsx` and `full.pdf`.
 
-Files go through a small `Storage` interface (`put`/`get`; local volume today). Metadata is in SQLite: `documents`, `document_versions` (unique on document and version, with conflicting inserts retried) and `download_log`. Downloads serve the latest `ready` version, or `?version=N`, to any known role, and every download is logged.
+Files go through a small `Storage` interface (`put`/`get`): the local volume, or S3 with `STORAGE_BACKEND=s3`. Metadata is in PostgreSQL: `documents`, `document_versions` (unique on document and version, with conflicting inserts retried) and `download_log`. Downloads serve the latest `ready` version, or `?version=N`, to any known role, and every download is logged.
 
 Gotenberg runs a custom image based on `gotenberg/gotenberg:8.37.0`. It adds Lato, Roboto, Carlito, Caladea and Overpass 3.0.5; Overpass is downloaded from Red Hat's GitHub release and checked against a pinned sha256. Gotenberg is not published to the host.
 
@@ -81,8 +94,11 @@ backend/app/
   xlsx.py        visible sheet count (openpyxl)
   converter.py   Gotenberg client
   service.py     upload pipeline (dedup, version allocation, convert, store)
-  storage.py     Storage protocol + LocalStorage
-  db.py          SQLite schema and queries
+  storage.py     Storage protocol + LocalStorage, S3Storage
+  db.py          PostgreSQL connections, schema version check, document queries
+  worker.py      the worker process (python -m app.worker)
+  copy_from_sqlite.py  one-off copy of a SQLite database into PostgreSQL
+backend/migrations/  Alembic migrations (the schema)
   auth.py        TEST ONLY fake identity (X-Role / X-User headers)
   routes.py      HTTP API
 ```
@@ -106,6 +122,47 @@ backend/app/
 - **Print gridlines are turned off for conversion.** With `singlePageSheets=true`, LibreOffice draws "print gridlines" at the wrong positions, so lines cut through the text. Seen with LibreOffice 26.8.0.3 (gotenberg 8.37.0) and 26.8.1.1 (gotenberg 8.38.1). `app/pdf_prep.py` removes the flag from the copy sent to Gotenberg; the stored original is untouched, and cell borders still render.
 - **Formula errors may look different in the PDF.** LibreOffice recalculates formulas, so a broken formula such as `sum(#REF!)`, saved as `#REF!`, can appear as `#NAME?`. Both are errors in the source workbook.
 - **Clipped text.** Text wider than its column is cut off in the PDF, exactly as Excel prints it. Widen the column in the source workbook if a value must be readable in full.
+
+## Database, migrations and the worker
+
+**PostgreSQL** holds everything except the files (RDS in the cluster). The app reads `DATABASE_URL`, and each process keeps a small connection pool (`DB_POOL_MAX_SIZE`, 10 by default). Timestamps are stored as ISO 8601 text in UTC, and JSON as text, as they were in SQLite.
+
+**Migrations** (`backend/migrations/`, Alembic, plain SQL) create and change the schema. The app never creates tables. Run them once per release, before the new version starts:
+
+```bash
+DATABASE_URL=postgresql://... alembic upgrade head   # in the backend image; compose's migrate service does this
+```
+
+At start-up the API and the worker check the database's schema version (`alembic_version`). They refuse to start if it is older than the release needs (`db.SCHEMA_VERSION`). A newer one is accepted, so the previous release keeps running while a release rolls out. To change the schema, add `migrations/versions/0002_<what>.py` (`alembic revision --rev-id 0002 -m "..."`), bump `SCHEMA_VERSION`, and keep the change backwards compatible: add first, remove what the old code reads only in a later release.
+
+**The worker** (`python -m app.worker`, same image) sends notifications (browser push, Slack, email), runs the help desk SLA checks and ICT deadline reminders, and delivers WhatsApp bot updates. The API only queues them. Only one worker works at a time: it holds a PostgreSQL advisory lock, and a second worker waits as a standby. If the worker loses its database connection it exits (code 1), so Kubernetes restarts it.
+
+**Health endpoints**, both reporting the running commit (`GIT_SHA`, a build argument of the backend image):
+
+| Path | Use | 200 when |
+|------|-----|----------|
+| `/api/health` | liveness probe | the process is up (doesn't touch the database) |
+| `/api/ready` | readiness probe; a pipeline can poll it for `commit` | the database answers and its schema is at this release's version or newer (503 otherwise) |
+
+**Files** go to S3 with `STORAGE_BACKEND=s3`, `S3_BUCKET` and optionally `S3_PREFIX` (such as `prod/`). Credentials come from the pod's IAM role, never from settings. The VAPID keys must then be set (`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`), because keys generated in a pod would differ between pods. Locally, files stay in the `appdata` volume.
+
+**Production frontend:** `frontend/Dockerfile`'s default target builds the app and serves it with nginx (unprivileged, port 8080). nginx forwards `/api` to `API_UPSTREAM` (`http://backend:8000` by default) and answers `/healthz` for its own probe. The dev server stays the `dev` target.
+
+### Moving the data from SQLite
+
+`python -m app.copy_from_sqlite` copies a SQLite database into an empty, migrated PostgreSQL database. Every row keeps its id. The copy is one transaction, committed only if every table has as many rows as in SQLite. `--files-dir` also copies the files into the configured storage (S3 in the cluster), and `--dry-run` checks the rows without writing anything.
+
+For this compose stack (the SQLite file and the files are already in the `appdata` volume):
+
+```bash
+docker compose stop backend frontend        # nothing changes during the copy
+docker compose up -d --build migrate        # PostgreSQL, then the migrations
+docker compose run --rm --no-deps backend python -m app.copy_from_sqlite --sqlite /data/portal.sqlite3 --dry-run
+docker compose run --rm --no-deps backend python -m app.copy_from_sqlite --sqlite /data/portal.sqlite3
+docker compose up -d --build
+```
+
+`portal.sqlite3` is left in the volume, untouched, so going back is only a matter of running the previous build.
 
 ## Requirements (the app as the master copy)
 
@@ -197,7 +254,7 @@ The **Help desk** and **Reports** can be paused with `FEATURE_HELPDESK=false` an
 - help desk alert types are hidden from the bell's Settings, and each person's choices are kept;
 - all its data (tickets, history, settings) is kept.
 
-After changing a switch, run `docker compose up -d backend`. `GET /api/features` reports which areas are on.
+After changing a switch, run `docker compose up -d backend worker`. `GET /api/features` reports which areas are on.
 
 The **Web Summit look** can be switched off the same way (`FEATURE_WEBSUMMIT_THEME=false`). The pages then use a plain, neutral look:
 - dark grey bars and table headers;
@@ -471,7 +528,7 @@ cloudflared tunnel --url http://localhost:5173
 
 ## What changes for production
 
-- **Storage: S3 with presigned URLs.** Add an `S3Storage` implementing `put`/`get`, plus a `presign(key)` method. Downloads return a short-lived presigned GET URL, after the authorization check and the `download_log` write, instead of streaming bytes through the API. Use bucket encryption (SSE-KMS), block all public access, and add a lifecycle policy for old versions.
+- **Storage: presigned URLs.** `S3Storage` exists (`STORAGE_BACKEND=s3`); add a `presign(key)` method. Downloads return a short-lived presigned GET URL, after the authorization check and the `download_log` write, instead of streaming bytes through the API. Use bucket encryption (SSE-KMS), block all public access, and add a lifecycle policy for old versions.
 - **Real authentication.** Replace `auth.py` with OIDC/SSO token validation in the backend. Map IdP group claims to `viewer` and `network-admin`, and fail closed. Take `uploaded_by` and the download user from the verified identity, never from headers. Add authorization per document if needed.
 - **Google Drive sync as a Kubernetes CronJob.** A CronJob polls the Drive folder, downloads changed workbooks and feeds them through the same upload pipeline: sha256 dedup makes it idempotent. It runs as a separate job, not inside the API pods.
 - **Workload Identity Federation.** No long-lived keys anywhere:
@@ -481,17 +538,17 @@ cloudflared tunnel --url http://localhost:5173
   - Metrics: conversions by outcome, conversion latency, Gotenberg 5xx and timeouts, failed versions, and the Drive sync's last-success timestamp.
   - Alerts: a high conversion failure rate, Gotenberg unhealthy, or the sync stale.
   - Structured JSON logs with request IDs.
-- **Database.** Move from SQLite to Postgres (RDS) with migrations (Alembic). The unique-constraint-and-retry logic carries over unchanged.
+- **Database.** Done: PostgreSQL with Alembic migrations (see "Database, migrations and the worker"). Next: an RDS Proxy or PgBouncer if pods × `DB_POOL_MAX_SIZE` nears RDS's `max_connections`, and moving the text timestamps to `timestamptz` in a later migration.
 - **Conversion off the request path.** Run uploads as a queued job (for example SQS plus a worker), so the API returns immediately with status `processing`. Gotenberg becomes an internal-only Deployment, scaled horizontally, with a NetworkPolicy that allows only the backend or worker to reach it.
 - **Hardening.**
   - Enforce the upload size limit at the ingress.
   - Run containers with a read-only root filesystem and drop all capabilities.
   - Scan images in CI.
-  - Serve a production frontend build, static files from S3 and CloudFront or nginx, instead of the Vite dev server.
+  - The production frontend build is served by nginx (`frontend/Dockerfile`, default target); with a read-only root filesystem, mount writable `emptyDir`s on `/etc/nginx/conf.d` and `/tmp`.
 - **Help desk.**
   - Owners come from real accounts (SSO groups for the Network team and IT Support) instead of free-text names.
   - Keep `BOT_API_TOKEN` and `BOT_CALLBACK_SECRET` in a secret store and rotate them; serve the bot endpoints over HTTPS only.
-  - Run the outbox worker in exactly one replica, or move it to a queue such as SQS, so updates aren't sent twice.
+  - The outbox runs in the worker process, which works one at a time (advisory lock), so updates aren't sent twice however many API pods run.
   - Optionally push dashboard updates over server-sent events instead of polling every 10 s.
 - **Notifications.**
   - Browser push needs HTTPS (it works on `localhost` only for development).

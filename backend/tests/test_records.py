@@ -12,7 +12,7 @@ from app.config import Settings
 from app.main import create_app
 from app.records.importer import import_workbook, values_missing_from_lists
 
-from .conftest import FakeConverter
+from .conftest import TEST_DATABASE_URL, FakeConverter
 from .records_fixture import records_workbook
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -76,7 +76,7 @@ def test_warnings_and_lists(imported) -> None:
 @pytest.fixture
 def client(tmp_path: Path):
     settings = Settings(data_dir=tmp_path, gotenberg_url="http://unused", gotenberg_timeout_seconds=1,
-                        max_upload_bytes=1024 * 1024)
+                        max_upload_bytes=1024 * 1024, database_url=TEST_DATABASE_URL)
     app = create_app(settings)
     with TestClient(app) as c:
         app.state.converter = FakeConverter()
@@ -264,7 +264,7 @@ def test_venues_and_sections(client: TestClient, event: int) -> None:
 def test_deleting_the_document_removes_its_records(client: TestClient, event: int) -> None:
     client.post(f"/api/documents/{event}/archive", headers=ADMIN)
     client.delete(f"/api/documents/{event}", headers=ADMIN)
-    conn = db.connect(client.settings.db_path)
+    conn = db.connect(client.settings.database_url)
     counts = [conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
               for t in ("records", "event_lists", "event_venues", "event_groups", "change_log")]
     conn.close()
@@ -383,38 +383,10 @@ def test_delete_removes_from_totals_and_reports(client: TestClient, event: int) 
     assert client.post(f"{url}/archive", headers=ADMIN, json={"revision": 1}).status_code in (404, 405)
 
 
-def test_records_archived_before_the_change_are_deleted_at_start_up(client: TestClient, event: int) -> None:
-    eth = _find(client, event, "ethernet", purpose="FoodTrucks / Bar")
-    conn = db.connect(client.settings.db_path)
-    with conn:
-        conn.execute("UPDATE records SET archived_at = '2026-01-01T00:00:00+00:00', archived_by = 'bob' WHERE id = ?",
-                     (eth["id"],))
-    conn.close()
-    db.init_db(client.settings.db_path)
-    conn = db.connect(client.settings.db_path)
-    assert conn.execute("SELECT COUNT(*) FROM records WHERE id = ?", (eth["id"],)).fetchone()[0] == 0
-    conn.close()
-    entry = client.get(f"/api/events/{event}/history?entity=ethernet", headers=ADMIN).json()[0]
-    assert (entry["action"], entry["user"]) == ("delete", "bob")
-    assert "FoodTrucks / Bar" in entry["old"] and "it was archived" in entry["summary"]
-
-
 def test_vlan_extensions_are_retired(client: TestClient, event: int) -> None:
     assert client.get(f"/api/events/{event}/records/vlan_extension", headers=ADMIN).status_code == 422
     r = client.post(f"/api/events/{event}/records/vlan_extension", headers=ADMIN, json={"data": {}})
     assert r.status_code == 422
-    # rows from before are deleted at start-up, with their values kept in the history
-    conn = db.connect(client.settings.db_path)
-    with conn:
-        conn.execute("INSERT INTO records (document_id, type, sort, data, updated_by, updated_at) "
-                     "VALUES (?, 'vlan_extension', 1, '{\"vlan\": \"General\"}', 'bob', '2026-01-01')", (event,))
-    conn.close()
-    db.init_db(client.settings.db_path)
-    conn = db.connect(client.settings.db_path)
-    assert conn.execute("SELECT COUNT(*) FROM records WHERE type = 'vlan_extension'").fetchone()[0] == 0
-    conn.close()
-    entry = client.get(f"/api/events/{event}/history?entity=vlan_extension", headers=ADMIN).json()[0]
-    assert entry["action"] == "delete" and "no longer tracked" in entry["summary"] and "General" in entry["old"]
     # the published workbook and report have no VLAN extensions
     client.post(f"/api/events/{event}/publish", headers=ADMIN)
     assert "VLAN extension" not in client.app.state.converter.html.split("Changes since")[0]
@@ -605,9 +577,10 @@ def test_band_must_be_an_option(client: TestClient, event: int) -> None:
     r = client.patch(url, headers=ADMIN, json={"revision": rec["revision"], "data": {"band": "5GHz & 6GHz"}})
     assert r.status_code == 200 and r.json()["data"]["band"] == "5 GHz & 6 GHz"
     # an older value outside the options doesn't block editing other fields
-    conn = db.connect(client.settings.db_path)
+    conn = db.connect(client.settings.database_url)
     with conn:
-        conn.execute("UPDATE records SET data = json_set(data, '$.band', '6 GHz') WHERE id = ?", (rec["id"],))
+        conn.execute("""UPDATE records SET data = jsonb_set(data::jsonb, '{band}', '"6 GHz"')::text WHERE id = %s""",
+                     (rec["id"],))
     conn.close()
     rec = next(r for r in _records(client, event, "wifi") if r["id"] == rec["id"])
     r = client.patch(url, headers=ADMIN, json={"revision": rec["revision"], "data": {"ssid": "Renamed"}})
@@ -705,8 +678,8 @@ def test_ids_are_row_numbers_per_venue(client: TestClient, event: int) -> None:
             ids = _ids(client, event, rtype, venue["id"])
             assert ids == [str(i) for i in range(1, len(ids) + 1)], (rtype, venue["name"], ids)
     assert _ids(client, event, "partner") == ["1", "2", "3"]
-    conn = db.connect(client.settings.db_path)  # never stored
-    assert conn.execute("SELECT COUNT(*) FROM records WHERE json_extract(data, '$.ref_id') IS NOT NULL").fetchone()[0] == 0
+    conn = db.connect(client.settings.database_url)  # never stored
+    assert conn.execute("SELECT COUNT(*) FROM records WHERE data::jsonb -> 'ref_id' IS NOT NULL").fetchone()[0] == 0
     conn.close()
 
 
@@ -723,16 +696,6 @@ def test_adding_increments_and_removing_decrements(client: TestClient, event: in
     acme = next(x for x in after if x["data"]["partner"] == "Acme")
     assert client.patch(f"/api/events/{event}/records/partner/{acme['id']}", headers=ADMIN,
                         json={"revision": acme["revision"], "data": {"ref_id": "7"}}).status_code == 422
-
-
-def test_stored_ids_from_earlier_builds_are_removed(client: TestClient, event: int) -> None:
-    wifi = _records(client, event, "wifi")[0]
-    conn = db.connect(client.settings.db_path)
-    with conn:
-        conn.execute("UPDATE records SET data = json_set(data, '$.ref_id', '42') WHERE id = ?", (wifi["id"],))
-    conn.close()
-    db.init_db(client.settings.db_path)
-    assert _records(client, event, "wifi")[0]["data"]["ref_id"] == "1"
 
 
 def test_published_files_show_the_row_numbers(client: TestClient, event: int) -> None:

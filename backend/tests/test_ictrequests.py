@@ -9,7 +9,7 @@ from app import db
 from app.config import Settings
 from app.main import create_app
 
-from .conftest import FakeConverter
+from .conftest import TEST_DATABASE_URL, FakeConverter
 from .records_fixture import records_workbook
 
 XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -20,7 +20,7 @@ VIEWER = {"X-Role": "viewer", "X-User": "victor"}
 @pytest.fixture
 def client(tmp_path: Path):
     settings = Settings(data_dir=tmp_path, gotenberg_url="http://unused", gotenberg_timeout_seconds=1,
-                        max_upload_bytes=1024 * 1024, app_public_url="https://hub.example")
+                        max_upload_bytes=1024 * 1024, database_url=TEST_DATABASE_URL, app_public_url="https://hub.example")
     app = create_app(settings)
     with TestClient(app) as c:
         app.state.converter = FakeConverter()
@@ -198,6 +198,6 @@ def test_deleting_the_event_removes_requests(client: TestClient, event: int) -> 
     _submit(client, token, WIRED | {"area": _area(client, event)})
     client.post(f"/api/documents/{event}/archive", headers=ADMIN)
     client.delete(f"/api/documents/{event}", headers=ADMIN)
-    conn = db.connect(client.settings.db_path)
+    conn = db.connect(client.settings.database_url)
     assert [conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in ("ict_requests", "request_links")] == [0, 0]
     conn.close()

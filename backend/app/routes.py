@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import re
-import sqlite3
 from collections.abc import Iterator
 from typing import Annotated, Any, Literal
 
@@ -33,8 +32,8 @@ DOWNLOAD_FORMATS = {
 # --- dependencies -----------------------------------------------------------
 
 
-def get_conn(request: Request) -> Iterator[sqlite3.Connection]:
-    conn = db.connect(request.app.state.settings.db_path)
+def get_conn(request: Request) -> Iterator[db.Connection]:
+    conn = db.connect(request.app.state.settings.database_url)
     try:
         yield conn
     finally:
@@ -49,11 +48,11 @@ def get_converter(request: Request) -> Converter:
     return request.app.state.converter
 
 
-Conn = Annotated[sqlite3.Connection, Depends(get_conn)]
+Conn = Annotated[db.Connection, Depends(get_conn)]
 CurrentPrincipal = Annotated[Principal, Depends(current_principal)]
 
 
-def _document_or_404(conn: sqlite3.Connection, document_id: int) -> dict[str, Any]:
+def _document_or_404(conn: db.Connection, document_id: int) -> dict[str, Any]:
     document = db.get_document(conn, document_id)
     if document is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
@@ -64,8 +63,30 @@ def _document_or_404(conn: sqlite3.Connection, document_id: int) -> dict[str, An
 
 
 @router.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health(request: Request) -> dict[str, str]:
+    """Liveness: the process is up. Doesn't touch the database, so a database outage doesn't
+    get every pod restarted. ``commit`` tells a pipeline which build is running."""
+    return {"status": "ok", "commit": request.app.state.settings.git_sha}
+
+
+@router.get("/ready")
+def ready(request: Request) -> JSONResponse:
+    """Readiness: the database answers and is at this release's schema (or newer)."""
+    settings = request.app.state.settings
+    try:
+        conn = db.connect(settings.database_url, timeout=3)
+        try:
+            schema = db.check_schema(conn)
+        finally:
+            conn.close()
+    except db.SchemaNotReady as exc:
+        return JSONResponse(status_code=503, content={"status": "not ready", "reason": str(exc),
+                                                      "commit": settings.git_sha})
+    except Exception:  # noqa: BLE001 - any failure to reach the database means not ready
+        log.warning("readiness check: database unavailable", exc_info=True)
+        return JSONResponse(status_code=503, content={"status": "not ready", "reason": "database unavailable",
+                                                      "commit": settings.git_sha})
+    return JSONResponse({"status": "ready", "commit": settings.git_sha, "schema": schema})
 
 
 def _read_validated_upload(request: Request, file: UploadFile) -> bytes:

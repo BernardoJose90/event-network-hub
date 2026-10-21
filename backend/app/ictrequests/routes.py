@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 from collections.abc import Callable, Iterator
 from typing import Annotated, Any, TypeVar
 
@@ -30,15 +29,15 @@ T = TypeVar("T")
 Token = Annotated[str, Path(min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")]
 
 
-def _conn(request: Request) -> Iterator[sqlite3.Connection]:
-    conn = db.connect(request.app.state.settings.db_path)
+def _conn(request: Request) -> Iterator[db.Connection]:
+    conn = db.connect(request.app.state.settings.database_url)
     try:
         yield conn
     finally:
         conn.close()
 
 
-Conn = Annotated[sqlite3.Connection, Depends(_conn)]
+Conn = Annotated[db.Connection, Depends(_conn)]
 
 
 def _reader(principal: Annotated[Principal, Depends(current_principal)]) -> Principal:

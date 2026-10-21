@@ -9,7 +9,6 @@ after the item is changed or deleted. Comments are never edits: the requirements
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Iterator
 from typing import Annotated, Any
 
@@ -23,26 +22,6 @@ from ..notifications import service as notifications
 from . import published, store
 from .routes import _not_archived
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS comments (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id  INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    parent_id    INTEGER REFERENCES comments(id) ON DELETE CASCADE,  -- set on replies
-    record_id    INTEGER,          -- the item; no foreign key, so comments outlive deleted items
-    record_type  TEXT,
-    item_label   TEXT,             -- e.g. "Stage 2 - Press", copied when the comment is made
-    item_where   TEXT,             -- e.g. "Main venue · STAGES"
-    version      INTEGER,          -- latest published version when it was made (None = before V1)
-    body         TEXT NOT NULL,
-    user         TEXT NOT NULL,
-    role         TEXT NOT NULL,
-    created_at   TEXT NOT NULL,
-    resolved_at  TEXT,
-    resolved_by  TEXT
-);
-CREATE INDEX IF NOT EXISTS comments_by_doc ON comments (document_id, parent_id);
-"""
-
 TYPE_TITLES = {"wifi": "Wi-Fi network", "ethernet": "Ethernet requirement", "partner": "Partner order"}
 NAME_FIELD = {"wifi": "ssid", "ethernet": "purpose", "partner": "partner"}
 
@@ -53,14 +32,10 @@ class CommentError(Exception):
         self.status = status_code
 
 
-def init(conn: sqlite3.Connection) -> None:
-    conn.executescript(SCHEMA)
-
-
 # --- service -------------------------------------------------------------------------------
 
 
-def _item(conn: sqlite3.Connection, doc: int, record_id: int) -> dict[str, Any]:
+def _item(conn: db.Connection, doc: int, record_id: int) -> dict[str, Any]:
     """The item's type, name and place: from the live requirements, or the latest published version
     (what viewers see) if it has since been deleted."""
     record = store.get_record(conn, doc, record_id)
@@ -80,12 +55,12 @@ def _item(conn: sqlite3.Connection, doc: int, record_id: int) -> dict[str, Any]:
             "item_where": " · ".join(x for x in (venue, group) if x) or None}
 
 
-def _row(r: sqlite3.Row) -> dict[str, Any]:
+def _row(r: db.Row) -> dict[str, Any]:
     return dict(r)
 
 
-def _get(conn: sqlite3.Connection, doc: int, comment_id: int) -> dict[str, Any]:
-    row = conn.execute("SELECT * FROM comments WHERE id = ? AND document_id = ?", (comment_id, doc)).fetchone()
+def _get(conn: db.Connection, doc: int, comment_id: int) -> dict[str, Any]:
+    row = conn.execute("SELECT * FROM comments WHERE id = %s AND document_id = %s", (comment_id, doc)).fetchone()
     if row is None:
         raise CommentError(404, "Comment not found")
     return dict(row)
@@ -96,7 +71,7 @@ def _check_author(principal: Principal) -> None:
         raise CommentError(422, "Enter your name in the top bar first, so people know who commented")
 
 
-def _event(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
+def _event(conn: db.Connection, doc: int) -> dict[str, Any]:
     document = db.get_document(conn, doc)
     if document is None:
         raise CommentError(404, "Document not found")
@@ -105,35 +80,35 @@ def _event(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
     return document
 
 
-def threads(conn: sqlite3.Connection, doc: int, *, state: str = "all", record_id: int | None = None
+def threads(conn: db.Connection, doc: int, *, state: str = "all", record_id: int | None = None
             ) -> list[dict[str, Any]]:
     """Top-level comments (newest first) with their replies (oldest first)."""
-    sql, args = "SELECT * FROM comments WHERE document_id = ? AND parent_id IS NULL", [doc]
+    sql, args = "SELECT * FROM comments WHERE document_id = %s AND parent_id IS NULL", [doc]
     if state == "open":
         sql += " AND resolved_at IS NULL"
     elif state == "resolved":
         sql += " AND resolved_at IS NOT NULL"
     if record_id is not None:
-        sql += " AND record_id = ?"
+        sql += " AND record_id = %s"
         args.append(record_id)
     tops = [_row(r) for r in conn.execute(sql + " ORDER BY id DESC", args)]
     replies: dict[int, list[dict[str, Any]]] = {}
     if tops:
         ids = [t["id"] for t in tops]
-        for r in conn.execute(f"SELECT * FROM comments WHERE parent_id IN ({','.join('?' * len(ids))}) ORDER BY id",
+        for r in conn.execute(f"SELECT * FROM comments WHERE parent_id IN ({', '.join(['%s'] * len(ids))}) ORDER BY id",
                               ids):
             replies.setdefault(r["parent_id"], []).append(_row(r))
     return [t | {"replies": replies.get(t["id"], [])} for t in tops]
 
 
-def open_counts(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
-    rows = conn.execute("SELECT record_id, COUNT(*) FROM comments WHERE document_id = ? AND parent_id IS NULL "
+def open_counts(conn: db.Connection, doc: int) -> dict[str, Any]:
+    rows = conn.execute("SELECT record_id, COUNT(*) FROM comments WHERE document_id = %s AND parent_id IS NULL "
                         "AND resolved_at IS NULL GROUP BY record_id", (doc,)).fetchall()
     return {"open": sum(n for _, n in rows),
             "by_record": {str(record_id): n for record_id, n in rows if record_id is not None}}
 
 
-def _latest_version(conn: sqlite3.Connection, doc: int) -> int | None:
+def _latest_version(conn: db.Connection, doc: int) -> int | None:
     versions = store.published_versions(conn, doc)
     return versions[-1] if versions else None
 
@@ -142,7 +117,7 @@ def _label(c: dict[str, Any]) -> str:
     return f"{TYPE_TITLES[c['record_type']]} '{c['item_label']}'" if c["record_type"] else "the event"
 
 
-def add(conn: sqlite3.Connection, doc: int, *, body: str, record_id: int | None, principal: Principal
+def add(conn: db.Connection, doc: int, *, body: str, record_id: int | None, principal: Principal
         ) -> dict[str, Any]:
     document = _event(conn, doc)
     _check_author(principal)
@@ -154,10 +129,10 @@ def add(conn: sqlite3.Connection, doc: int, *, body: str, record_id: int | None,
     code = document["name"].split(" | ")[0]
     with conn:
         comment_id = conn.execute(
-            "INSERT INTO comments (document_id, record_id, record_type, item_label, item_where, version, body, user, "
-            "role, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            'INSERT INTO comments (document_id, record_id, record_type, item_label, item_where, version, body, "user", '
+            "role, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
             (doc, record_id, item.get("record_type"), item.get("item_label"), item.get("item_where"), version,
-             body, principal.user, principal.role, utcnow())).lastrowid
+             body, principal.user, principal.role, utcnow())).fetchone()[0]
         comment = _get(conn, doc, comment_id)
         store.log(conn, doc=doc, entity="comment", action="comment", user=principal.user, record_id=record_id,
                   summary=f"Commented on {_label(comment)}{f' (V{version})' if version else ''}: {body}")
@@ -167,7 +142,7 @@ def add(conn: sqlite3.Connection, doc: int, *, body: str, record_id: int | None,
     return comment | {"replies": []}
 
 
-def reply(conn: sqlite3.Connection, doc: int, comment_id: int, *, body: str, principal: Principal
+def reply(conn: db.Connection, doc: int, comment_id: int, *, body: str, principal: Principal
           ) -> dict[str, Any]:
     document = _event(conn, doc)
     _check_author(principal)
@@ -181,10 +156,10 @@ def reply(conn: sqlite3.Connection, doc: int, comment_id: int, *, body: str, pri
     with conn:
         reply_id = conn.execute(
             "INSERT INTO comments (document_id, parent_id, record_id, record_type, item_label, item_where, version, "
-            "body, user, role, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            'body, "user", role, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id',
             (doc, comment_id, parent["record_id"], parent["record_type"], parent["item_label"],
              parent["item_where"], _latest_version(conn, doc), body, principal.user, principal.role,
-             utcnow())).lastrowid
+             utcnow())).fetchone()[0]
         store.log(conn, doc=doc, entity="comment", action="reply", user=principal.user,
                   record_id=parent["record_id"], summary=f"Replied about {_label(parent)}: {body}")
         # Tell the person who started the thread; if they're the one replying, tell the admins.
@@ -196,7 +171,7 @@ def reply(conn: sqlite3.Connection, doc: int, comment_id: int, *, body: str, pri
     return _get(conn, doc, reply_id)
 
 
-def set_resolved(conn: sqlite3.Connection, doc: int, comment_id: int, *, resolved: bool, principal: Principal
+def set_resolved(conn: db.Connection, doc: int, comment_id: int, *, resolved: bool, principal: Principal
                  ) -> dict[str, Any]:
     document = _event(conn, doc)
     comment = _get(conn, doc, comment_id)
@@ -206,7 +181,7 @@ def set_resolved(conn: sqlite3.Connection, doc: int, comment_id: int, *, resolve
         raise CommentError(409, "This comment is already resolved" if resolved else "This comment is already open")
     code = document["name"].split(" | ")[0]
     with conn:
-        conn.execute("UPDATE comments SET resolved_at = ?, resolved_by = ? WHERE id = ?",
+        conn.execute("UPDATE comments SET resolved_at = %s, resolved_by = %s WHERE id = %s",
                      (utcnow() if resolved else None, principal.user if resolved else None, comment_id))
         store.log(conn, doc=doc, entity="comment", action="resolve" if resolved else "reopen", user=principal.user,
                   record_id=comment["record_id"],
@@ -223,15 +198,15 @@ def set_resolved(conn: sqlite3.Connection, doc: int, comment_id: int, *, resolve
 router = APIRouter(prefix="/api/events/{document_id}/comments", dependencies=[Depends(_not_archived)])
 
 
-def _conn(request: Request) -> Iterator[sqlite3.Connection]:
-    conn = db.connect(request.app.state.settings.db_path)
+def _conn(request: Request) -> Iterator[db.Connection]:
+    conn = db.connect(request.app.state.settings.database_url)
     try:
         yield conn
     finally:
         conn.close()
 
 
-Conn = Annotated[sqlite3.Connection, Depends(_conn)]
+Conn = Annotated[db.Connection, Depends(_conn)]
 
 
 def _reader(principal: Annotated[Principal, Depends(current_principal)]) -> Principal:

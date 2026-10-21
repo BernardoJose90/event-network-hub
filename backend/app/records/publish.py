@@ -11,7 +11,6 @@ import hashlib
 import html
 import io
 import logging
-import sqlite3
 from datetime import datetime, timezone
 from typing import Any
 
@@ -57,7 +56,7 @@ SKIPPED_ACTIONS = ("reveal", "legacy", "publish", "request", "review",  # not ch
 # --- snapshot --------------------------------------------------------------------
 
 
-def snapshot(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
+def snapshot(conn: db.Connection, doc: int) -> dict[str, Any]:
     """Everything a published version contains, with group/venue names resolved."""
     venues = store.venues(conn, doc)
     groups = store.groups(conn, doc)
@@ -328,13 +327,13 @@ def build_report(snap: dict, log: dict, *, title: str, version: int, user: str, 
 # --- publish -------------------------------------------------------------------------------
 
 
-def changes_since_last_publish(conn: sqlite3.Connection, doc: int) -> list[dict]:
+def changes_since_last_publish(conn: db.Connection, doc: int) -> list[dict]:
     after = store.last_publish_log_id(conn, doc) or 0
     entries = store.history(conn, doc, after_id=after, limit=10_000)
     return [e for e in reversed(entries) if e["action"] not in SKIPPED_ACTIONS]
 
 
-def publish(conn: sqlite3.Connection, storage: Storage, converter: Converter, *, doc: int,
+def publish(conn: db.Connection, storage: Storage, converter: Converter, *, doc: int,
             user: str, note: str | None = None) -> tuple[dict[str, Any], str | None]:
     """Create the next version from the records. Returns (version row, failure reason or None)."""
     document = db.get_document(conn, doc)
@@ -400,7 +399,7 @@ def _from_workbook(result) -> dict[str, Any]:
 SOURCE_WORDS = {"upload": "uploaded", "edit": "edited in the spreadsheet editor"}
 
 
-def version_snapshot(conn: sqlite3.Connection, storage: Storage, doc: int, n: int) -> tuple[dict[str, Any], str | None]:
+def version_snapshot(conn: db.Connection, storage: Storage, doc: int, n: int) -> tuple[dict[str, Any], str | None]:
     """(snapshot, notice) for any ready version. Published versions use the snapshot saved at
     publish; uploaded and edited ones are read from their workbook once and cached."""
     snap = store.snapshot_for(conn, doc, n)
@@ -429,13 +428,13 @@ def version_snapshot(conn: sqlite3.Connection, storage: Storage, doc: int, n: in
     return snap, notice
 
 
-def comparable_versions(conn: sqlite3.Connection, doc: int) -> list[int]:
+def comparable_versions(conn: db.Connection, doc: int) -> list[int]:
     return [r[0] for r in conn.execute(
-        "SELECT version FROM document_versions WHERE document_id = ? AND status = ? ORDER BY version",
+        "SELECT version FROM document_versions WHERE document_id = %s AND status = %s ORDER BY version",
         (doc, db.STATUS_READY))]
 
 
-def changelog_between(conn: sqlite3.Connection, storage: Storage, doc: int, *, to: str,
+def changelog_between(conn: db.Connection, storage: Storage, doc: int, *, to: str,
                       from_version: int | None = None) -> dict[str, Any]:
     """Changelog between any two ready versions (published, uploaded or edited), or for the
     unpublished draft (to='draft') against the latest published version. Without ``from_version``

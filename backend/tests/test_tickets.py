@@ -18,6 +18,8 @@ from app.config import Settings
 from app.main import create_app
 from app.tickets import outbox, service, store
 
+from .conftest import TEST_DATABASE_URL
+
 ADMIN = {"X-Role": "network-admin", "X-User": "alice"}
 VIEWER = {"X-Role": "viewer", "X-User": "victor"}
 BOT = {"Authorization": "Bearer bot-secret-token"}
@@ -25,7 +27,7 @@ BOT = {"Authorization": "Bearer bot-secret-token"}
 
 def _settings(tmp_path: Path, **extra) -> Settings:
     return Settings(data_dir=tmp_path, gotenberg_url="http://unused", gotenberg_timeout_seconds=1,
-                    max_upload_bytes=1024 * 1024, **extra)
+                    max_upload_bytes=1024 * 1024, database_url=TEST_DATABASE_URL, **extra)
 
 
 @pytest.fixture
@@ -50,13 +52,13 @@ def _ticket(client, **fields) -> dict:
 
 def _backdate(client, ticket_id: int, minutes: float, **columns) -> None:
     """Move a ticket's created time (and given timestamp columns) back by minutes."""
-    conn = db.connect(client.settings.db_path)
+    conn = db.connect(client.settings.database_url)
     created = datetime.now(timezone.utc) - timedelta(minutes=minutes)
     values = {"created_at": created.isoformat(timespec="seconds")}
     for column, offset in columns.items():
         values[column] = (created + timedelta(minutes=offset)).isoformat(timespec="seconds")
     with conn:
-        conn.execute(f"UPDATE tickets SET {', '.join(f'{k} = ?' for k in values)} WHERE id = ?",
+        conn.execute(f"UPDATE tickets SET {', '.join(f'{k} = %s' for k in values)} WHERE id = %s",
                      (*values.values(), ticket_id))
     conn.close()
 
@@ -207,9 +209,8 @@ def _bot_ticket(conn, external_id, notify=True, **extra):
     return service.create_from_bot(conn, report, notify=notify)[0]
 
 
-def test_merge_and_reporter_updates(tmp_path: Path) -> None:
-    db.init_db(tmp_path / "db.sqlite3")
-    conn = db.connect(tmp_path / "db.sqlite3")
+def test_merge_and_reporter_updates() -> None:
+    conn = db.connect(TEST_DATABASE_URL)
     main = _bot_ticket(conn, "wa-1", reporter_phone="+111")
     dup = _bot_ticket(conn, "wa-2", reporter_phone="+222")
     merged = service.merge(conn, dup["id"], revision=dup["revision"], into=main["id"], user="alice", notify=True)
@@ -231,18 +232,15 @@ def test_merge_and_reporter_updates(tmp_path: Path) -> None:
     conn.close()
 
 
-def test_no_updates_queued_when_bot_callbacks_are_off(tmp_path: Path) -> None:
-    db.init_db(tmp_path / "db.sqlite3")
-    conn = db.connect(tmp_path / "db.sqlite3")
+def test_no_updates_queued_when_bot_callbacks_are_off() -> None:
+    conn = db.connect(TEST_DATABASE_URL)
     _bot_ticket(conn, "wa-1", notify=False)
     assert conn.execute("SELECT COUNT(*) FROM ticket_outbox").fetchone()[0] == 0
     conn.close()
 
 
-def test_outbox_delivery_signs_and_retries(tmp_path: Path) -> None:
-    path = tmp_path / "db.sqlite3"
-    db.init_db(path)
-    conn = db.connect(path)
+def test_outbox_delivery_signs_and_retries() -> None:
+    conn = db.connect(TEST_DATABASE_URL)
     _bot_ticket(conn, "wa-1")
     received = []
 
@@ -251,7 +249,7 @@ def test_outbox_delivery_signs_and_retries(tmp_path: Path) -> None:
         return httpx.Response(200)
 
     with httpx.Client(transport=httpx.MockTransport(ok)) as client:
-        assert outbox.deliver_due(path, "https://bot.example/updates", "s3cret", client) == 1
+        assert outbox.deliver_due(TEST_DATABASE_URL, "https://bot.example/updates", "s3cret", client) == 1
     body = received[0].content
     assert received[0].headers["X-Signature"] == "sha256=" + hmac.new(b"s3cret", body, hashlib.sha256).hexdigest()
     assert json.loads(body)["external_id"] == "wa-1"
@@ -259,24 +257,24 @@ def test_outbox_delivery_signs_and_retries(tmp_path: Path) -> None:
 
     _bot_ticket(conn, "wa-2")
     with httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(500))) as client:
-        assert outbox.deliver_due(path, "https://bot.example/updates", "s3cret", client) == 0
+        assert outbox.deliver_due(TEST_DATABASE_URL, "https://bot.example/updates", "s3cret", client) == 0
         row = conn.execute("SELECT status, attempts, next_try_at, last_error FROM ticket_outbox WHERE id = 2").fetchone()
         assert (row["status"], row["attempts"]) == ("pending", 1) and "500" in row["last_error"]
-        assert outbox.deliver_due(path, "https://bot.example/updates", "s3cret", client) == 0  # not due yet
+        assert outbox.deliver_due(TEST_DATABASE_URL, "https://bot.example/updates", "s3cret", client) == 0  # not due yet
         assert conn.execute("SELECT attempts FROM ticket_outbox WHERE id = 2").fetchone()[0] == 1
         for _ in range(outbox.MAX_ATTEMPTS):
             with conn:
                 conn.execute("UPDATE ticket_outbox SET next_try_at = '2000-01-01T00:00:00+00:00' WHERE id = 2")
-            outbox.deliver_due(path, "https://bot.example/updates", "s3cret", client)
+            outbox.deliver_due(TEST_DATABASE_URL, "https://bot.example/updates", "s3cret", client)
     assert conn.execute("SELECT status FROM ticket_outbox WHERE id = 2").fetchone()[0] == "failed"
     conn.close()
 
 
 def test_callback_url_needs_a_secret(tmp_path: Path) -> None:
-    app = create_app(_settings(tmp_path, bot_callback_url="https://bot.example/updates"))
+    from app import worker
+
     with pytest.raises(RuntimeError, match="BOT_CALLBACK_SECRET"):
-        with TestClient(app):
-            pass
+        worker.check_config(_settings(tmp_path, bot_callback_url="https://bot.example/updates"))
 
 
 # --- SLA, reports, export ------------------------------------------------------------------------

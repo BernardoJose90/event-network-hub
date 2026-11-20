@@ -1,4 +1,4 @@
-FROM node:22.23.3-alpine3.24
+FROM node:22.23.5-alpine3.24
 
 WORKDIR /app
 RUN chown node:node /app

@@ -2,7 +2,7 @@
 
 Web Summit's event network requirements in one place: Wi-Fi networks, Ethernet requirements and partner orders, kept as structured records per event. Events start empty or from a template (LIS, QATAR, RIO, VAN), and **Publish** creates a numbered version as an Excel workbook and a PDF report. It started as a test harness for one feature, uploading an Excel workbook and downloading it as a PDF that looks like the spreadsheet, and that path is still available under Legacy. Viewers and network admins both see the same complete content; viewers are trusted, so nothing is redacted.
 
-(Internal names such as the Docker Compose project `portal-pdf-test` are unchanged, because renaming the project would point the app at a new, empty data volume.)
+(Internal names such as the Docker Compose project `portal-pdf-test` are unchanged. The `appdata` volume from the SQLite era is no longer mounted but is kept, untouched: see [Data](#data).)
 
 It is built to production standards but kept deliberately small, so the code can move into the production app (Python backend, React frontend, EKS).
 
@@ -19,21 +19,44 @@ Then open <http://localhost:5173>.
 | Service   | Exposed on                     | Notes                                       |
 |-----------|--------------------------------|---------------------------------------------|
 | frontend  | `127.0.0.1:5173`               | Vite dev server; proxies `/api` to backend  |
-| backend   | `127.0.0.1:8000`               | FastAPI; data in the `appdata` volume       |
+| backend   | `127.0.0.1:8000`               | FastAPI; files in the `appdata-postgres` volume |
+| postgres  | `127.0.0.1:5432`               | PostgreSQL 17 (same major version as RDS); data in the `postgres17` volume |
 | gotenberg | not published                  | Reachable only from the backend             |
+
+If something on your machine already uses port 5432, pick another: `POSTGRES_HOST_PORT=55432 docker compose up --build`.
 
 Configuration defaults live in `docker-compose.yml`; copy `.env.example` to `.env` to override them. Nothing in the repo is a secret.
 
-To reset all data: `docker compose down -v`.
+To reset all data: `docker compose down -v`. That removes `postgres17` and `appdata-postgres`, not the old SQLite-era volumes (`appdata`, `pgdata`), which this file no longer declares.
+
+### Data
+
+- **Database: PostgreSQL.** Locally the `postgres` service (`DATABASE_URL`); in the cluster RDS, reached with `DB_HOST`, `DB_NAME` and `DB_SECRET_ARN` (below). Tables are created at start-up if missing; several pods starting at once take turns (an advisory lock).
+- **Files: S3 when `S3_BUCKET` is set** (the cluster), otherwise files under `DATA_DIR/files` (locally, and in unit tests).
+- **Moving from SQLite started empty.** Nothing was copied from the old `appdata` volume (`portal.sqlite3` and its files), including the event templates (LIS, QATAR, RIO, VAN): recreate them with "Save as template". The old volume is still there if you want anything from it.
+
+### In the cluster (EKS)
+
+| Variable | Value |
+|---|---|
+| `DB_HOST`, `DB_PORT`, `DB_NAME` | the RDS instance (Terraform output `event_network_hub_db_host`; database `event_network_hub`) |
+| `DB_SECRET_ARN` | Terraform output `event_network_hub_db_secret_arn`: the RDS-managed secret. The password is read from it at connect time (cached) and re-read when RDS rotates it, so no password is ever in Kubernetes |
+| `DB_SSLMODE` | `require` (the default when `DATABASE_URL` isn't set) |
+| `S3_BUCKET` | Terraform output `event_network_hub_bucket` |
+| `AWS_REGION` | `eu-west-2` |
+
+AWS credentials come from EKS Pod Identity: the pod must run as service account `event-network-hub-sa` in namespace `development`, which Terraform binds to a role allowed to read that secret and use that bucket.
 
 ## Test it
 
-**Unit tests** (no Gotenberg needed):
+**Unit tests** (need PostgreSQL, not Gotenberg; each test gets its own schema, dropped at the end):
 
 ```bash
 docker compose run --rm --build tests
-# or locally:
-cd backend && python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt && .venv/bin/pytest
+# or locally, against the compose postgres service:
+docker compose up -d postgres
+cd backend && python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/event_network_hub .venv/bin/pytest
 ```
 
 These cover upload validation, sha256 duplicate detection, version-number race retry and the download API.
@@ -70,7 +93,7 @@ On upload, the backend:
 3. sends the workbook to Gotenberg's LibreOffice route (`POST /forms/libreoffice/convert`, `singlePageSheets=true`);
 4. stores `original.xlsx` and `full.pdf`.
 
-Files go through a small `Storage` interface (`put`/`get`; local volume today). Metadata is in SQLite: `documents`, `document_versions` (unique on document and version, with conflicting inserts retried) and `download_log`. Downloads serve the latest `ready` version, or `?version=N`, to any known role, and every download is logged.
+Files go through a small `Storage` interface (`put`/`get`/`delete_prefix`; S3 or a local directory). Metadata is in PostgreSQL: `documents`, `document_versions` (unique on document and version, with conflicting inserts retried) and `download_log`. Downloads serve the latest `ready` version, or `?version=N`, to any known role, and every download is logged.
 
 Gotenberg runs a custom image based on `gotenberg/gotenberg:8.37.0`. It adds Lato, Roboto, Carlito, Caladea and Overpass 3.0.5; Overpass is downloaded from Red Hat's GitHub release and checked against a pinned sha256. Gotenberg is not published to the host.
 
@@ -81,8 +104,9 @@ backend/app/
   xlsx.py        visible sheet count (openpyxl)
   converter.py   Gotenberg client
   service.py     upload pipeline (dedup, version allocation, convert, store)
-  storage.py     Storage protocol + LocalStorage
-  db.py          SQLite schema and queries
+  storage.py     Storage protocol + S3Storage + LocalStorage
+  pg.py          PostgreSQL connections, transactions, rows, the RDS password secret
+  db.py          documents/versions schema and queries
   auth.py        TEST ONLY fake identity (X-Role / X-User headers)
   routes.py      HTTP API
 ```
@@ -471,7 +495,7 @@ cloudflared tunnel --url http://localhost:5173
 
 ## What changes for production
 
-- **Storage: S3 with presigned URLs.** Add an `S3Storage` implementing `put`/`get`, plus a `presign(key)` method. Downloads return a short-lived presigned GET URL, after the authorization check and the `download_log` write, instead of streaming bytes through the API. Use bucket encryption (SSE-KMS), block all public access, and add a lifecycle policy for old versions.
+- **Storage: presigned URLs.** `S3Storage` exists; add a `presign(key)` method. Downloads return a short-lived presigned GET URL, after the authorization check and the `download_log` write, instead of streaming bytes through the API. Use bucket encryption (SSE-KMS), block all public access, and add a lifecycle policy for old versions.
 - **Real authentication.** Replace `auth.py` with OIDC/SSO token validation in the backend. Map IdP group claims to `viewer` and `network-admin`, and fail closed. Take `uploaded_by` and the download user from the verified identity, never from headers. Add authorization per document if needed.
 - **Google Drive sync as a Kubernetes CronJob.** A CronJob polls the Drive folder, downloads changed workbooks and feeds them through the same upload pipeline: sha256 dedup makes it idempotent. It runs as a separate job, not inside the API pods.
 - **Workload Identity Federation.** No long-lived keys anywhere:
@@ -481,7 +505,7 @@ cloudflared tunnel --url http://localhost:5173
   - Metrics: conversions by outcome, conversion latency, Gotenberg 5xx and timeouts, failed versions, and the Drive sync's last-success timestamp.
   - Alerts: a high conversion failure rate, Gotenberg unhealthy, or the sync stale.
   - Structured JSON logs with request IDs.
-- **Database.** Move from SQLite to Postgres (RDS) with migrations (Alembic). The unique-constraint-and-retry logic carries over unchanged.
+- **Database migrations.** PostgreSQL (RDS) is in place, but tables are still created with `CREATE TABLE IF NOT EXISTS` at start-up. Before the schema changes with real data in it, add versioned migrations (for example Alembic) run once per deploy, not by every pod. Connect with a dedicated app user instead of the RDS master user, and verify the server certificate (`sslmode=verify-full` with the RDS CA bundle).
 - **Conversion off the request path.** Run uploads as a queued job (for example SQS plus a worker), so the API returns immediately with status `processing`. Gotenberg becomes an internal-only Deployment, scaled horizontally, with a NetworkPolicy that allows only the backend or worker to reach it.
 - **Hardening.**
   - Enforce the upload size limit at the ingress.

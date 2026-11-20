@@ -13,7 +13,6 @@ from __future__ import annotations
 import csv
 import io
 import logging
-import sqlite3
 from collections.abc import Iterator
 from datetime import datetime
 from statistics import mean
@@ -24,6 +23,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from . import pg
 from . import db
 from .auth import Principal, current_principal, require_known_role
 from .ictrequests import service as requests_service
@@ -65,15 +65,15 @@ DEFINITIONS = {
 }
 
 
-def _conn(request: Request) -> Iterator[sqlite3.Connection]:
-    conn = db.connect(request.app.state.settings.db_path)
+def _conn(request: Request) -> Iterator[pg.Connection]:
+    conn = db.connect(request.app.state.settings.database)
     try:
         yield conn
     finally:
         conn.close()
 
 
-Conn = Annotated[sqlite3.Connection, Depends(_conn)]
+Conn = Annotated[pg.Connection, Depends(_conn)]
 
 
 def _reader(principal: Annotated[Principal, Depends(current_principal)]) -> Principal:
@@ -91,7 +91,7 @@ def _pct(part: float, whole: float) -> float | None:
 # --- measures -------------------------------------------------------------------------------
 
 
-def cable_planning(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
+def cable_planning(conn: pg.Connection, doc: int) -> dict[str, Any]:
     totals = records_service.totals(conn, doc)["ethernet"]
     ethernet = {r["id"]: r for r in records_store.records(conn, doc, "ethernet")}
     sections: dict[str, int | float] = {}
@@ -126,7 +126,7 @@ def cable_planning(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
     }
 
 
-def request_adoption(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
+def request_adoption(conn: pg.Connection, doc: int) -> dict[str, Any]:
     reqs = requests_service.list_for(conn, doc)
     summary = requests_service.summary(conn, doc)
 
@@ -159,7 +159,7 @@ def request_adoption(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
     }
 
 
-def live_operations(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
+def live_operations(conn: pg.Connection, doc: int) -> dict[str, Any]:
     k = ticket_report.kpis(conn, doc)
     return {
         "tickets": k["tickets"],
@@ -175,7 +175,7 @@ def live_operations(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
     }
 
 
-def change_and_publishing(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
+def change_and_publishing(conn: pg.Connection, doc: int) -> dict[str, Any]:
     published = records_store.published_versions(conn, doc)
     versions = db.list_versions(conn, doc)
     out: dict[str, Any] = {
@@ -222,7 +222,7 @@ def data_notes(report: dict[str, Any]) -> list[str]:
     return notes
 
 
-def event_report(conn: sqlite3.Connection, document: dict[str, Any]) -> dict[str, Any]:
+def event_report(conn: pg.Connection, document: dict[str, Any]) -> dict[str, Any]:
     doc = document["id"]
     report = {
         "id": doc,
@@ -237,7 +237,7 @@ def event_report(conn: sqlite3.Connection, document: dict[str, Any]) -> dict[str
     return report | {"notes": data_notes(report)}
 
 
-def _events(conn: sqlite3.Connection, ids: str | None) -> list[dict[str, Any]]:
+def _events(conn: pg.Connection, ids: str | None) -> list[dict[str, Any]]:
     events = db.list_documents(conn)  # events only (templates excluded)
     if not ids:
         return [e for e in events if not e["archived_at"]]

@@ -1,35 +1,47 @@
 from __future__ import annotations
 
-import sqlite3
-from pathlib import Path
-
-from app import db
+from app import db, pg
 
 
-def test_migration_adds_format_column_and_keeps_rows(tmp_path: Path) -> None:
-    path = tmp_path / "old.sqlite3"
-    old = sqlite3.connect(path)
-    old.executescript(
-        """
-        CREATE TABLE documents (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL);
-        CREATE TABLE document_versions (id INTEGER PRIMARY KEY, document_id INTEGER NOT NULL,
-            version INTEGER NOT NULL, sha256 TEXT NOT NULL, uploaded_by TEXT NOT NULL,
-            uploaded_at TEXT NOT NULL, status TEXT NOT NULL, warnings TEXT NOT NULL DEFAULT '[]',
-            error TEXT, UNIQUE (document_id, version));
-        CREATE TABLE download_log (id INTEGER PRIMARY KEY, version_id INTEGER NOT NULL,
-            user TEXT NOT NULL, downloaded_at TEXT NOT NULL);
-        INSERT INTO download_log (version_id, user, downloaded_at) VALUES (1, 'alice', 'then');
-        """
-    )
-    old.commit()
-    old.close()
+def test_init_db_is_idempotent_and_keeps_rows(database: pg.Database) -> None:
+    db.init_db(database)
+    conn = db.connect(database)
+    document = db.create_document(conn, "LIS25 Network Requirements")
+    version = db.insert_version(conn, document_id=document["id"], version=1, sha256="x", uploaded_by="t")
+    db.log_download(conn, version_id=version["id"], user="alice", format="pdf")
+    conn.close()
 
-    db.init_db(path)
-    db.init_db(path)  # idempotent
+    db.init_db(database)  # every start-up runs it again
 
-    conn = db.connect(path)
-    rows = [dict(r) for r in conn.execute("SELECT user, format FROM download_log")]
-    version_columns = {r["name"] for r in conn.execute("PRAGMA table_info(document_versions)")}
+    conn = db.connect(database)
+    rows = [dict(r) for r in conn.execute('SELECT "user", format FROM download_log')]
     conn.close()
     assert rows == [{"user": "alice", "format": "pdf"}]
-    assert "warnings" not in version_columns and {"edited_from", "source"} <= version_columns
+
+
+def test_nested_transaction_failure_keeps_the_outer_one(conn: pg.Connection, document) -> None:
+    """An inner ``with conn:`` is a savepoint: a duplicate caught inside it doesn't abort the outer work."""
+    db.insert_version(conn, document_id=document["id"], version=1, sha256="x", uploaded_by="t")
+    with conn:
+        conn.execute("UPDATE documents SET archived_by = ? WHERE id = ?", ("kept", document["id"]))
+        try:
+            db.insert_version(conn, document_id=document["id"], version=1, sha256="y", uploaded_by="t")
+        except pg.IntegrityError:
+            pass
+    assert db.get_document(conn, document["id"])["archived_by"] == "kept"
+
+
+def test_rows_work_by_name_index_and_dict(conn: pg.Connection) -> None:
+    row = conn.execute("SELECT 1 AS a, 'x' AS b").fetchone()
+    assert (row["a"], row[1], dict(row)) == (1, "x", {"a": 1, "b": "x"})
+
+
+def test_question_marks_inside_quotes_are_not_placeholders(conn: pg.Connection) -> None:
+    row = conn.execute("SELECT '?' AS q, ? AS p, '100%' AS pct", ("v",)).fetchone()
+    assert (row["q"], row["p"], row["pct"]) == ("?", "v", "100%")
+
+
+def test_database_from_url() -> None:
+    d = pg.Database.from_url("postgresql://app:s%40cret@db.example:5433/hub?sslmode=require")
+    assert (d.host, d.port, d.dbname, d.user, d.password, d.sslmode) == (
+        "db.example", 5433, "hub", "app", "s@cret", "require")

@@ -11,6 +11,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .pg import Database
+
 # Every uploaded file name must contain this, e.g. "LIS26 _ Event_Network_Requirements_V1.xlsx".
 REQUIRED_NAME = "Event_Network_Requirements"
 
@@ -18,7 +20,7 @@ REQUIRED_NAME = "Event_Network_Requirements"
 
 @dataclass(frozen=True)
 class Settings:
-    data_dir: Path
+    data_dir: Path  # local scratch: generated VAPID keys when none are configured, and the local file store
     gotenberg_url: str
     gotenberg_timeout_seconds: float
     max_upload_bytes: int
@@ -43,10 +45,12 @@ class Settings:
     helpdesk_enabled: bool = True
     reports_enabled: bool = True
     websummit_theme_enabled: bool = True  # off: the pages use a plain, neutral look
-
-    @property
-    def db_path(self) -> Path:
-        return self.data_dir / "portal.sqlite3"
+    # PostgreSQL: DATABASE_URL locally, DB_HOST/DB_NAME/DB_USER/DB_SECRET_ARN in the cluster (pg.Database).
+    database: Database = field(default_factory=lambda: Database.from_env())
+    # Uploaded workbooks and generated PDFs: an S3 bucket when set (MinIO locally, through
+    # s3_endpoint_url), otherwise files under data_dir/files.
+    s3_bucket: str | None = None
+    s3_endpoint_url: str | None = None
 
     @property
     def files_dir(self) -> Path:
@@ -81,5 +85,8 @@ def load_settings() -> Settings:
         smtp_password=os.environ.get("SMTP_PASSWORD") or None,
         smtp_from=os.environ.get("SMTP_FROM") or "Event Network Hub <no-reply@websummit.com>",
         smtp_starttls=(os.environ.get("SMTP_STARTTLS", "true").lower() != "false"),
+        database=Database.from_env(),
+        s3_bucket=os.environ.get("S3_BUCKET") or None,
+        s3_endpoint_url=os.environ.get("S3_ENDPOINT_URL") or None,
         escalation_emails=tuple(e.strip() for e in (os.environ.get("ESCALATION_EMAILS") or "").split(",") if e.strip()),
     )

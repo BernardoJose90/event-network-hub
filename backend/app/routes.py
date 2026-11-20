@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import logging
 import re
-import sqlite3
 from collections.abc import Iterator
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import JSONResponse
 
+from . import pg
 from . import db
 from .auth import Principal, current_principal, require_admin, require_known_role
 from .converter import XLSX_MEDIA_TYPE, Converter
@@ -33,8 +33,8 @@ DOWNLOAD_FORMATS = {
 # --- dependencies -----------------------------------------------------------
 
 
-def get_conn(request: Request) -> Iterator[sqlite3.Connection]:
-    conn = db.connect(request.app.state.settings.db_path)
+def get_conn(request: Request) -> Iterator[pg.Connection]:
+    conn = db.connect(request.app.state.settings.database)
     try:
         yield conn
     finally:
@@ -49,11 +49,11 @@ def get_converter(request: Request) -> Converter:
     return request.app.state.converter
 
 
-Conn = Annotated[sqlite3.Connection, Depends(get_conn)]
+Conn = Annotated[pg.Connection, Depends(get_conn)]
 CurrentPrincipal = Annotated[Principal, Depends(current_principal)]
 
 
-def _document_or_404(conn: sqlite3.Connection, document_id: int) -> dict[str, Any]:
+def _document_or_404(conn: pg.Connection, document_id: int) -> dict[str, Any]:
     document = db.get_document(conn, document_id)
     if document is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")

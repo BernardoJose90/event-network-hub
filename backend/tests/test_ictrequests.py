@@ -198,6 +198,6 @@ def test_deleting_the_event_removes_requests(client: TestClient, event: int) -> 
     _submit(client, token, WIRED | {"area": _area(client, event)})
     client.post(f"/api/documents/{event}/archive", headers=ADMIN)
     client.delete(f"/api/documents/{event}", headers=ADMIN)
-    conn = db.connect(client.settings.db_path)
+    conn = db.connect(client.settings.database)
     assert [conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in ("ict_requests", "request_links")] == [0, 0]
     conn.close()

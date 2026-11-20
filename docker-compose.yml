@@ -1,6 +1,25 @@
 name: portal-pdf-test
 
 services:
+  # PostgreSQL, the same major version as RDS in the cluster (modules/rds: engine_version 17).
+  # Local only: the password below is not a secret.
+  postgres:
+    image: postgres:17.12-trixie
+    environment:
+      POSTGRES_DB: event_network_hub
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres17:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"  # for pytest from the host; change it if 5432 is taken
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "event_network_hub"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
   gotenberg:
     build: ./gotenberg
     # No "ports": Gotenberg is reachable only from the backend on the compose network.
@@ -22,6 +41,10 @@ services:
       GOTENBERG_URL: ${GOTENBERG_URL:-http://gotenberg:3000}
       GOTENBERG_TIMEOUT_SECONDS: ${GOTENBERG_TIMEOUT_SECONDS:-90}
       DATA_DIR: ${DATA_DIR:-/data}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/event_network_hub}
+      # Files go to the appdata volume unless a bucket is set (S3 in the cluster).
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-10485760}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # Help desk WhatsApp bot integration (off when empty). Secrets come from .env, never the repo.
@@ -47,11 +70,14 @@ services:
       SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
       ESCALATION_EMAILS: ${ESCALATION_EMAILS:-}
     volumes:
-      - appdata:/data
+      # Not "appdata": that volume holds the SQLite-era database and files, kept untouched.
+      - appdata-postgres:/data
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
       gotenberg:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     restart: unless-stopped
 
@@ -72,7 +98,13 @@ services:
     build:
       context: ./backend
       target: test
+    environment:
+      TEST_DATABASE_URL: postgresql://postgres:postgres@postgres:5432/event_network_hub
+    depends_on:
+      postgres:
+        condition: service_healthy
     profiles: ["test"]
 
 volumes:
-  appdata:
+  appdata-postgres:
+  postgres17:

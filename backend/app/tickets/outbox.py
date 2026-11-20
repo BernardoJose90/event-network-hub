@@ -29,9 +29,9 @@ def sign(secret: str, body: bytes) -> str:
     return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
 
 
-def deliver_due(db_path, url: str, secret: str, client: httpx.Client) -> int:
+def deliver_due(database, url: str, secret: str, client: httpx.Client) -> int:
     """Send every due update once. Returns how many were sent."""
-    conn = db.connect(db_path)
+    conn = db.connect(database)
     sent = 0
     try:
         now = datetime.now(timezone.utc)
@@ -66,7 +66,7 @@ async def run(settings) -> None:
     with httpx.Client(timeout=10) as client:
         while True:
             try:
-                await run_in_threadpool(deliver_due, settings.db_path, settings.bot_callback_url,
+                await run_in_threadpool(deliver_due, settings.database, settings.bot_callback_url,
                                         settings.bot_callback_secret, client)
             except Exception:
                 log.exception("bot outbox delivery failed")

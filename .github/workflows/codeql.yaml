@@ -8,20 +8,16 @@
 
 name: CodeQL
 
+# Pull requests and pushes to main: through ci.yaml, so it counts toward
+# "CI passed". The weekly run is its own.
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_call:
   schedule:
     - cron: "41 6 * * 1" # Mondays 06:41 UTC: picks up new CodeQL queries
   workflow_dispatch:
 
 permissions:
   contents: read
-
-concurrency:
-  group: codeql-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   analyze:

@@ -26,17 +26,11 @@
 
 name: Images
 
+# Runs only as part of ci.yaml, which triggers it on pull requests and pushes
+# to main. github.event_name and github.ref are ci.yaml's, so the push-or-not
+# decision below works the same.
 on:
-  push:
-    branches: [main]
-  pull_request:
-  workflow_dispatch:
-
-# Pull requests: a newer push cancels the older run. Main: every commit gets
-# its own images, so nothing is cancelled.
-concurrency:
-  group: images-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  workflow_call:
 
 permissions:
   contents: read

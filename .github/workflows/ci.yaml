@@ -1,0 +1,76 @@
+# The one entry point for pull requests and pushes to main. It runs the three
+# workflows below, then "CI passed", which succeeds only if all of them did.
+#
+# "CI passed" is the single required status check in the main branch ruleset.
+# Requiring one summary check instead of every job means adding, renaming or
+# splitting a job never needs a ruleset change, and a skipped or cancelled job
+# can't slip through as "not failed".
+#
+#   images.yaml    tests, then build, scan and (main only) push the images
+#   security.yaml  gitleaks, pip-audit, npm audit
+#   codeql.yaml    CodeQL code scanning
+#
+# Permissions: a called workflow can never have more than its caller grants,
+# so each call below grants exactly what that workflow's jobs ask for.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Pull requests: a newer push cancels the older run. Main: every commit gets
+# its own images, so nothing is cancelled.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  images:
+    name: Images
+    uses: ./.github/workflows/images.yaml
+    permissions:
+      contents: read
+      id-token: write # OIDC login to AWS, used only when pushing on main
+
+  security:
+    name: Security
+    uses: ./.github/workflows/security.yaml
+    permissions:
+      contents: read
+
+  codeql:
+    name: CodeQL
+    uses: ./.github/workflows/codeql.yaml
+    permissions:
+      contents: read
+      security-events: write # upload results to Code scanning
+
+  ci-passed:
+    name: CI passed
+    needs: [images, security, codeql]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      # if: always() above makes this job run even when one it needs failed,
+      # so it reports a failure instead of being skipped (GitHub treats a
+      # skipped required check as passing).
+      - name: Check every workflow succeeded
+        env:
+          IMAGES: ${{ needs.images.result }}
+          SECURITY: ${{ needs.security.result }}
+          CODEQL: ${{ needs.codeql.result }}
+        run: |
+          echo "images=$IMAGES security=$SECURITY codeql=$CODEQL"
+          for result in "$IMAGES" "$SECURITY" "$CODEQL"; do
+            if [ "$result" != success ]; then
+              echo "::error::At least one workflow did not succeed."
+              exit 1
+            fi
+          done

@@ -22,7 +22,7 @@ from .records.routes import events_router, router as records_router
 from .reports import router as reports_router
 from .routes import router
 from .service import DocumentGone
-from .storage import LocalStorage
+from . import storage as storage_backends
 from .tickets import outbox
 from .tickets.routes import bot_router, router as tickets_router, settings_router as helpdesk_router
 
@@ -55,12 +55,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        db.init_db(settings.db_path)
+        db.init_db(settings.database)
         converter = GotenbergConverter(
             settings.gotenberg_url, timeout_seconds=settings.gotenberg_timeout_seconds
         )
         app.state.settings = settings
-        app.state.storage = LocalStorage(settings.files_dir)
+        app.state.storage = storage_backends.from_settings(settings)
         app.state.converter = converter
         vapid, app.state.vapid_public_key = notification_keys.load(settings)
         notifications.configure(notifications.Channels(

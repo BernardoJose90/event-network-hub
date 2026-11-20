@@ -50,7 +50,7 @@ def _ticket(client, **fields) -> dict:
 
 def _backdate(client, ticket_id: int, minutes: float, **columns) -> None:
     """Move a ticket's created time (and given timestamp columns) back by minutes."""
-    conn = db.connect(client.settings.db_path)
+    conn = db.connect(client.settings.database)
     created = datetime.now(timezone.utc) - timedelta(minutes=minutes)
     values = {"created_at": created.isoformat(timespec="seconds")}
     for column, offset in columns.items():
@@ -207,9 +207,9 @@ def _bot_ticket(conn, external_id, notify=True, **extra):
     return service.create_from_bot(conn, report, notify=notify)[0]
 
 
-def test_merge_and_reporter_updates(tmp_path: Path) -> None:
-    db.init_db(tmp_path / "db.sqlite3")
-    conn = db.connect(tmp_path / "db.sqlite3")
+def test_merge_and_reporter_updates(database) -> None:
+    db.init_db(database)
+    conn = db.connect(database)
     main = _bot_ticket(conn, "wa-1", reporter_phone="+111")
     dup = _bot_ticket(conn, "wa-2", reporter_phone="+222")
     merged = service.merge(conn, dup["id"], revision=dup["revision"], into=main["id"], user="alice", notify=True)
@@ -231,16 +231,16 @@ def test_merge_and_reporter_updates(tmp_path: Path) -> None:
     conn.close()
 
 
-def test_no_updates_queued_when_bot_callbacks_are_off(tmp_path: Path) -> None:
-    db.init_db(tmp_path / "db.sqlite3")
-    conn = db.connect(tmp_path / "db.sqlite3")
+def test_no_updates_queued_when_bot_callbacks_are_off(database) -> None:
+    db.init_db(database)
+    conn = db.connect(database)
     _bot_ticket(conn, "wa-1", notify=False)
     assert conn.execute("SELECT COUNT(*) FROM ticket_outbox").fetchone()[0] == 0
     conn.close()
 
 
-def test_outbox_delivery_signs_and_retries(tmp_path: Path) -> None:
-    path = tmp_path / "db.sqlite3"
+def test_outbox_delivery_signs_and_retries(database) -> None:
+    path = database
     db.init_db(path)
     conn = db.connect(path)
     _bot_ticket(conn, "wa-1")

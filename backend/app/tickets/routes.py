@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import logging
 import secrets
-import sqlite3
 from collections.abc import Callable, Iterator
 from typing import Annotated, Any, TypeVar
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 
+from .. import pg
 from .. import db
 from ..auth import Principal, current_principal, require_admin, require_known_role
 from . import report, service, store
@@ -32,15 +32,15 @@ settings_router = APIRouter(prefix="/api/helpdesk")
 T = TypeVar("T")
 
 
-def _conn(request: Request) -> Iterator[sqlite3.Connection]:
-    conn = db.connect(request.app.state.settings.db_path)
+def _conn(request: Request) -> Iterator[pg.Connection]:
+    conn = db.connect(request.app.state.settings.database)
     try:
         yield conn
     finally:
         conn.close()
 
 
-Conn = Annotated[sqlite3.Connection, Depends(_conn)]
+Conn = Annotated[pg.Connection, Depends(_conn)]
 
 
 def _reader(principal: Annotated[Principal, Depends(current_principal)]) -> Principal:
@@ -68,7 +68,7 @@ def _notify(request: Request) -> bool:
     return bool(request.app.state.settings.bot_callback_url)
 
 
-def _event_name(conn: sqlite3.Connection, event_id: int | None) -> str:
+def _event_name(conn: pg.Connection, event_id: int | None) -> str:
     if event_id is None:
         return "All events"
     doc = db.get_document(conn, event_id)

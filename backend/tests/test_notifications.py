@@ -53,7 +53,7 @@ def env(tmp_path: Path):
         rec.install(app.state.notification_sender)
         c.settings = settings
         c.rec = rec
-        c.deliver = lambda: worker.deliver_due(settings.db_path, app.state.notification_sender)
+        c.deliver = lambda: worker.deliver_due(settings.database, app.state.notification_sender)
         yield c
 
 
@@ -122,7 +122,7 @@ def test_gone_subscriptions_are_removed(env) -> None:
     _ticket(env, severity="P1")
     env.deliver()
     assert env.get("/api/notifications/settings", headers=ADMIN).json()["devices"] == 0
-    conn = db.connect(env.settings.db_path)
+    conn = db.connect(env.settings.database)
     assert conn.execute("SELECT status FROM notification_deliveries WHERE channel = 'push'").fetchone()[0] == "failed"
     conn.close()
 
@@ -139,7 +139,7 @@ def test_urgent_tickets_go_to_slack(env) -> None:
 
 
 def _age(c, ticket_id, minutes):
-    conn = db.connect(c.settings.db_path)
+    conn = db.connect(c.settings.database)
     with conn:
         conn.execute("UPDATE tickets SET created_at = ? WHERE id = ?",
                      ((datetime.now(timezone.utc) - timedelta(minutes=minutes)).isoformat(timespec="seconds"), ticket_id))
@@ -150,11 +150,11 @@ def test_sla_warning_then_breach_escalation_once(env) -> None:
     t = _ticket(env, severity="P1")
     low = _ticket(env, severity="P3")
     _age(env, t["id"], 4.5)
-    assert worker.check_sla(env.settings.db_path) == 1
-    assert worker.check_sla(env.settings.db_path) == 0  # once per ticket
+    assert worker.check_sla(env.settings.database) == 1
+    assert worker.check_sla(env.settings.database) == 0  # once per ticket
     _age(env, t["id"], 6)
     _age(env, low["id"], 6)
-    assert worker.check_sla(env.settings.db_path) == 2  # P1 breach + P3 breach (in-app only)
+    assert worker.check_sla(env.settings.database) == 2  # P1 breach + P3 breach (in-app only)
     env.deliver()
     titles = [s["text"] for s in env.rec.slack]
     assert any(x.startswith(f"#{t['id']} not acknowledged yet") for x in titles)
@@ -166,7 +166,7 @@ def test_sla_warning_then_breach_escalation_once(env) -> None:
     acked = _ticket(env, severity="P1")
     env.post(f"/api/tickets/{acked['id']}/acknowledge", headers=ADMIN, json={"revision": acked["revision"]})
     _age(env, acked["id"], 10)
-    assert worker.check_sla(env.settings.db_path) == 0  # acknowledged tickets don't escalate
+    assert worker.check_sla(env.settings.database) == 0  # acknowledged tickets don't escalate
 
 
 def test_ict_requests_notify_the_team_and_email_requesters(env) -> None:
@@ -198,10 +198,10 @@ def test_deadline_reminders_7_and_1_days_before(env) -> None:
     env.post(f"/api/events/{doc}/ict-requests/links/{link['id']}/email", headers=ADMIN, json={"email": "cctv@example.com"})
     deadline = date(2030, 5, 20)
     env.put(f"/api/events/{doc}/ict-requests/settings", headers=ADMIN, json={"deadline": deadline.isoformat()})
-    assert worker.check_deadlines(env.settings.db_path, today=deadline - timedelta(days=3)) == 0
-    assert worker.check_deadlines(env.settings.db_path, today=deadline - timedelta(days=7)) == 1
-    assert worker.check_deadlines(env.settings.db_path, today=deadline - timedelta(days=7)) == 0  # once
-    assert worker.check_deadlines(env.settings.db_path, today=deadline - timedelta(days=1)) == 1
+    assert worker.check_deadlines(env.settings.database, today=deadline - timedelta(days=3)) == 0
+    assert worker.check_deadlines(env.settings.database, today=deadline - timedelta(days=7)) == 1
+    assert worker.check_deadlines(env.settings.database, today=deadline - timedelta(days=7)) == 0  # once
+    assert worker.check_deadlines(env.settings.database, today=deadline - timedelta(days=1)) == 1
     env.deliver()
     reminders = [s for to, s, _ in env.rec.email if to == "cctv@example.com" and s.startswith("Reminder")]
     assert reminders == ["Reminder: ICT requests for VAN26 are due in 7 days",
@@ -244,7 +244,7 @@ def test_channels_off_without_configuration_and_stable_keys(tmp_path: Path) -> N
     with TestClient(app) as c:
         key = c.get("/api/notifications/settings", headers=ADMIN).json()["vapid_public_key"]
         c.post("/api/tickets", headers=ADMIN, json={"title": "x", "category": "wifi", "severity": "P1"})
-        conn = db.connect(settings.db_path)
+        conn = db.connect(settings.database)
         assert conn.execute("SELECT COUNT(*) FROM notification_deliveries").fetchone()[0] == 0  # no Slack, email or devices
         conn.close()
     assert (tmp_path / "vapid.json").exists()

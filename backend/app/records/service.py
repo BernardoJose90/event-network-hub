@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from typing import Any
 
 from pydantic import ValidationError
 
+from .. import pg
 from . import store
 from .models import (
     BAND_OPTIONS, GROUP_KIND, LABELS, LIST_FIELDS, SECRET_FIELDS, TYPE_LABELS, VENUE_TYPES, validate_data,
@@ -38,14 +38,14 @@ def public(record: dict[str, Any]) -> dict[str, Any]:
                                        "updated_at")} | {"data": data} | flags
 
 
-def _list_values(conn: sqlite3.Connection, doc: int) -> dict[str, set[str]]:
+def _list_values(conn: pg.Connection, doc: int) -> dict[str, set[str]]:
     out: dict[str, set[str]] = {}
     for item in store.lists(conn, doc):
         out.setdefault(item["kind"], set()).add(item["value"])
     return out
 
 
-def _check_lists(conn: sqlite3.Connection, doc: int, record_type: str, data: dict[str, Any],
+def _check_lists(conn: pg.Connection, doc: int, record_type: str, data: dict[str, Any],
                  fields: set[str] | None = None) -> None:
     allowed = _list_values(conn, doc)
     for field, kinds in LIST_FIELDS[record_type].items():
@@ -59,12 +59,12 @@ def _check_lists(conn: sqlite3.Connection, doc: int, record_type: str, data: dic
             raise RecordError(422, f"'{value}' is not in the {names} list. Add it under Setup first.")
 
 
-def _is_template(conn: sqlite3.Connection, doc: int) -> bool:
+def _is_template(conn: pg.Connection, doc: int) -> bool:
     row = conn.execute("SELECT kind FROM documents WHERE id = ?", (doc,)).fetchone()
     return row is not None and row["kind"] == "template"
 
 
-def _check_rules(conn: sqlite3.Connection, doc: int, record_type: str, data: dict[str, Any],
+def _check_rules(conn: pg.Connection, doc: int, record_type: str, data: dict[str, Any],
                  fields: set[str] | None = None) -> None:
     """Field rules beyond the schema, for new values only (fields=None: all fields).
 
@@ -96,7 +96,7 @@ def _validate(record_type: str, data: dict[str, Any]) -> dict[str, Any]:
         raise RecordError(422, f"{label}: {message}")
 
 
-def _place(conn: sqlite3.Connection, doc: int, record_type: str, venue_id: int | None, group_id: int | None) -> None:
+def _place(conn: pg.Connection, doc: int, record_type: str, venue_id: int | None, group_id: int | None) -> None:
     if record_type in VENUE_TYPES:
         if venue_id is None or not any(v["id"] == venue_id for v in store.venues(conn, doc)):
             raise RecordError(422, "Choose a venue for this record")
@@ -106,7 +106,7 @@ def _place(conn: sqlite3.Connection, doc: int, record_type: str, venue_id: int |
         raise RecordError(422, f"{TYPE_LABELS[record_type]}s don't belong to a venue or section")
 
 
-def _sort_before(conn: sqlite3.Connection, doc: int, record_type: str, venue_id: int | None,
+def _sort_before(conn: pg.Connection, doc: int, record_type: str, venue_id: int | None,
                  group_id: int | None, before_id: int | None) -> float:
     """Sort key placing a record before ``before_id`` (or at the end) among its siblings."""
     siblings = [r for r in store.records(conn, doc, record_type)
@@ -141,16 +141,7 @@ def row_numbers(records: list[dict[str, Any]]) -> dict[int, str]:
     return out
 
 
-def strip_stored_ids(conn: sqlite3.Connection) -> int:
-    """Start-up: remove IDs stored by earlier builds (IDs are row numbers now)."""
-    rows = conn.execute("SELECT id, data FROM records WHERE json_extract(data, '$.ref_id') IS NOT NULL").fetchall()
-    with conn:
-        for row in rows:
-            conn.execute("UPDATE records SET data = json_remove(data, '$.ref_id') WHERE id = ?", (row["id"],))
-    return len(rows)
-
-
-def create_record(conn: sqlite3.Connection, doc: int, record_type: str, *, venue_id: int | None,
+def create_record(conn: pg.Connection, doc: int, record_type: str, *, venue_id: int | None,
                   group_id: int | None, before_id: int | None, data: dict[str, Any], user: str) -> dict[str, Any]:
     data = {k: v for k, v in data.items() if k != "ref_id"}  # IDs are assigned, not chosen
     data = _validate(record_type, data)
@@ -168,7 +159,7 @@ def create_record(conn: sqlite3.Connection, doc: int, record_type: str, *, venue
     return store.get_record(conn, doc, record_id)  # type: ignore[return-value]
 
 
-def _existing(conn: sqlite3.Connection, doc: int, record_id: int, record_type: str) -> dict[str, Any]:
+def _existing(conn: pg.Connection, doc: int, record_id: int, record_type: str) -> dict[str, Any]:
     record = store.get_record(conn, doc, record_id)
     if record is None or record["type"] != record_type:
         raise RecordError(404, "Record not found")
@@ -180,7 +171,7 @@ def _conflict(record: dict[str, Any]) -> RecordError:
                             "Reload to see the latest values.")
 
 
-def update_record(conn: sqlite3.Connection, doc: int, record_type: str, record_id: int, *, revision: int,
+def update_record(conn: pg.Connection, doc: int, record_type: str, record_id: int, *, revision: int,
                   changes: dict[str, Any], user: str) -> dict[str, Any]:
     record = _existing(conn, doc, record_id, record_type)
     if record["revision"] != revision:
@@ -222,7 +213,7 @@ def update_record(conn: sqlite3.Connection, doc: int, record_type: str, record_i
     return store.get_record(conn, doc, record_id)  # type: ignore[return-value]
 
 
-def delete_record(conn: sqlite3.Connection, doc: int, record_type: str, record_id: int, *, revision: int,
+def delete_record(conn: pg.Connection, doc: int, record_type: str, record_id: int, *, revision: int,
                   user: str) -> None:
     """Delete a record. The change log keeps its values (except secrets)."""
     record = _existing(conn, doc, record_id, record_type)
@@ -234,7 +225,7 @@ def delete_record(conn: sqlite3.Connection, doc: int, record_type: str, record_i
                   old=shown, summary=f"Deleted {_describe(record_type, record['data'])}")
 
 
-def move_record(conn: sqlite3.Connection, doc: int, record_type: str, record_id: int, *, revision: int,
+def move_record(conn: pg.Connection, doc: int, record_type: str, record_id: int, *, revision: int,
                 before_id: int | None, group_id: int | None, user: str) -> dict[str, Any]:
     record = _existing(conn, doc, record_id, record_type)
     if record["revision"] != revision:
@@ -253,27 +244,7 @@ def move_record(conn: sqlite3.Connection, doc: int, record_type: str, record_id:
     return store.get_record(conn, doc, record_id)  # type: ignore[return-value]
 
 
-def purge_retired_records(conn: sqlite3.Connection) -> int:
-    """Delete records of retired features, logging what they held (runs at start-up):
-    archived records (archiving items was replaced by deleting) and VLAN extensions
-    (no longer tracked)."""
-    rows = list(conn.execute(
-        "SELECT id, document_id, type, data, archived_by FROM records "
-        "WHERE archived_at IS NOT NULL OR type = 'vlan_extension'"))
-    with conn:
-        for row in rows:
-            data = json.loads(row["data"])
-            shown = {k: v for k, v in data.items() if k not in SECRET_FIELDS.get(row["type"], ())}
-            why = ("VLAN extensions are no longer tracked" if row["type"] == "vlan_extension"
-                   else "it was archived; archiving items was replaced by deleting")
-            conn.execute("DELETE FROM records WHERE id = ?", (row["id"],))
-            store.log(conn, doc=row["document_id"], entity=row["type"], record_id=row["id"], action="delete",
-                      user=row["archived_by"] or "system", old=shown,
-                      summary=f"Deleted {_describe(row['type'], data)} ({why})")
-    return len(rows)
-
-
-def reveal_secret(conn: sqlite3.Connection, doc: int, record_id: int, *, user: str) -> str | None:
+def reveal_secret(conn: pg.Connection, doc: int, record_id: int, *, user: str) -> str | None:
     record = _existing(conn, doc, record_id, "wifi")
     with conn:
         store.log(conn, doc=doc, entity="wifi", record_id=record_id, action="reveal", user=user,
@@ -281,7 +252,7 @@ def reveal_secret(conn: sqlite3.Connection, doc: int, record_id: int, *, user: s
     return record["data"].get("password")
 
 
-def reveal_published_secret(conn: sqlite3.Connection, doc: int, record: dict[str, Any] | None, *,
+def reveal_published_secret(conn: pg.Connection, doc: int, record: dict[str, Any] | None, *,
                             user: str) -> str | None:
     """A viewer reveals a password as published (it may differ from the draft). Logged the same way."""
     if record is None:
@@ -295,7 +266,7 @@ def reveal_published_secret(conn: sqlite3.Connection, doc: int, record: dict[str
 # --- lists, venues, groups ---------------------------------------------------
 
 
-def _list_usage(conn: sqlite3.Connection, doc: int, kind: str, value: str) -> list[tuple[dict, str]]:
+def _list_usage(conn: pg.Connection, doc: int, kind: str, value: str) -> list[tuple[dict, str]]:
     used = []
     for record in store.records(conn, doc):
         for field, kinds in LIST_FIELDS[record["type"]].items():
@@ -304,7 +275,7 @@ def _list_usage(conn: sqlite3.Connection, doc: int, kind: str, value: str) -> li
     return used
 
 
-def add_list_value(conn: sqlite3.Connection, doc: int, kind: str, value: str, *, user: str) -> None:
+def add_list_value(conn: pg.Connection, doc: int, kind: str, value: str, *, user: str) -> None:
     value = value.strip()
     if not value:
         raise RecordError(422, "The value must not be blank")
@@ -316,14 +287,14 @@ def add_list_value(conn: sqlite3.Connection, doc: int, kind: str, value: str, *,
                   summary=f"Added '{value}' to the {kind} list")
 
 
-def _list_item(conn: sqlite3.Connection, doc: int, item_id: int) -> dict[str, Any]:
+def _list_item(conn: pg.Connection, doc: int, item_id: int) -> dict[str, Any]:
     item = next((i for i in store.lists(conn, doc) if i["id"] == item_id), None)
     if item is None:
         raise RecordError(404, "List value not found")
     return item
 
 
-def rename_list_value(conn: sqlite3.Connection, doc: int, item_id: int, value: str, *, user: str) -> None:
+def rename_list_value(conn: pg.Connection, doc: int, item_id: int, value: str, *, user: str) -> None:
     """Rename a list value and every record field that uses it."""
     item, value = _list_item(conn, doc, item_id), value.strip()
     if not value:
@@ -343,7 +314,7 @@ def rename_list_value(conn: sqlite3.Connection, doc: int, item_id: int, value: s
                   summary=f"Renamed '{item['value']}' to '{value}' in the {item['kind']} list and its records")
 
 
-def delete_list_value(conn: sqlite3.Connection, doc: int, item_id: int, *, user: str) -> None:
+def delete_list_value(conn: pg.Connection, doc: int, item_id: int, *, user: str) -> None:
     item = _list_item(conn, doc, item_id)
     used = _list_usage(conn, doc, item["kind"], item["value"])
     if used:
@@ -355,14 +326,14 @@ def delete_list_value(conn: sqlite3.Connection, doc: int, item_id: int, *, user:
                   summary=f"Removed '{item['value']}' from the {item['kind']} list")
 
 
-def accept_list_value(conn: sqlite3.Connection, doc: int, item_id: int, *, user: str) -> None:
+def accept_list_value(conn: pg.Connection, doc: int, item_id: int, *, user: str) -> None:
     """Clear the 'added by import, please review' flag."""
     _list_item(conn, doc, item_id)
     with conn:
         conn.execute("UPDATE event_lists SET flagged = 0 WHERE id = ?", (item_id,))
 
 
-def add_named(conn: sqlite3.Connection, doc: int, what: str, name: str, *, user: str, kind: str | None = None) -> int:
+def add_named(conn: pg.Connection, doc: int, what: str, name: str, *, user: str, kind: str | None = None) -> int:
     name = name.strip()
     existing = store.venues(conn, doc) if what == "venue" else store.groups(conn, doc, kind)
     if any(x["name"] == name for x in existing):
@@ -373,7 +344,7 @@ def add_named(conn: sqlite3.Connection, doc: int, what: str, name: str, *, user:
     return new_id
 
 
-def rename_named(conn: sqlite3.Connection, doc: int, what: str, item_id: int, name: str, *, user: str) -> None:
+def rename_named(conn: pg.Connection, doc: int, what: str, item_id: int, name: str, *, user: str) -> None:
     table = "event_venues" if what == "venue" else "event_groups"
     items = store.venues(conn, doc) if what == "venue" else store.groups(conn, doc)
     item = next((x for x in items if x["id"] == item_id), None)
@@ -388,7 +359,7 @@ def rename_named(conn: sqlite3.Connection, doc: int, what: str, item_id: int, na
                   summary=f"Renamed {what} '{item['name']}' to '{name}'")
 
 
-def delete_named(conn: sqlite3.Connection, doc: int, what: str, item_id: int, *, user: str) -> None:
+def delete_named(conn: pg.Connection, doc: int, what: str, item_id: int, *, user: str) -> None:
     table = "event_venues" if what == "venue" else "event_groups"
     column = "venue_id" if what == "venue" else "group_id"
     items = store.venues(conn, doc) if what == "venue" else store.groups(conn, doc)
@@ -408,7 +379,7 @@ def delete_named(conn: sqlite3.Connection, doc: int, what: str, item_id: int, *,
 # --- totals ------------------------------------------------------------------
 
 
-def totals(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
+def totals(conn: pg.Connection, doc: int) -> dict[str, Any]:
     """Ethernet points per venue and section (always computed, never stored)."""
     sections = store.groups(conn, doc, "ethernet")
     by_venue: dict[int, dict[int, float]] = {}
@@ -435,7 +406,7 @@ def totals(conn: sqlite3.Connection, doc: int) -> dict[str, Any]:
 # --- import ------------------------------------------------------------------
 
 
-def apply_import(conn: sqlite3.Connection, doc: int, result, *, user: str, source: str,
+def apply_import(conn: pg.Connection, doc: int, result, *, user: str, source: str,
                  replace: bool = False) -> dict[str, Any]:
     """Write an ImportResult as the event's records (one transaction)."""
     from .importer import values_missing_from_lists
@@ -518,7 +489,7 @@ def _template_data(record: dict[str, Any]) -> dict[str, Any] | None:
     return data
 
 
-def _copy_event(conn: sqlite3.Connection, source: int, target: int, *, user: str, as_template: bool) -> int:
+def _copy_event(conn: pg.Connection, source: int, target: int, *, user: str, as_template: bool) -> int:
     """Copy venues, groups, lists and active records from source into target (inside a transaction)."""
     venue_ids = {v["id"]: store.insert_venue(conn, target, v["name"]) for v in store.venues(conn, source)}
     group_ids = {g["id"]: store.insert_group(conn, target, g["kind"], g["name"]) for g in store.groups(conn, source)}
@@ -541,7 +512,7 @@ def _copy_event(conn: sqlite3.Connection, source: int, target: int, *, user: str
     return copied
 
 
-def _source(conn: sqlite3.Connection, doc: int, kind: str) -> dict[str, Any]:
+def _source(conn: pg.Connection, doc: int, kind: str) -> dict[str, Any]:
     from ..db import get_document
 
     source = get_document(conn, doc)
@@ -550,14 +521,14 @@ def _source(conn: sqlite3.Connection, doc: int, kind: str) -> dict[str, Any]:
     return source
 
 
-def _unused(conn: sqlite3.Connection, name: str) -> None:
+def _unused(conn: pg.Connection, name: str) -> None:
     from ..db import get_document_by_name
 
     if get_document_by_name(conn, name) is not None:
         raise RecordError(409, f"'{name}' already exists")
 
 
-def create_event(conn: sqlite3.Connection, name: str, *, user: str, template_id: int | None = None) -> int:
+def create_event(conn: pg.Connection, name: str, *, user: str, template_id: int | None = None) -> int:
     """Create an event document without a workbook, in one transaction.
 
     Empty: one default venue and the usual Wi-Fi groups and Ethernet sections.
@@ -583,7 +554,7 @@ def create_event(conn: sqlite3.Connection, name: str, *, user: str, template_id:
     return doc
 
 
-def save_template(conn: sqlite3.Connection, name: str, *, user: str, event_id: int) -> int:
+def save_template(conn: pg.Connection, name: str, *, user: str, event_id: int) -> int:
     """Save an event as a template: setup, Wi-Fi, Ethernet (0 points) and VLAN extensions;
     no partner orders and no Wi-Fi passwords. Returns the template's document id."""
     from ..db import insert_document

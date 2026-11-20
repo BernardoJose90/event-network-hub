@@ -189,7 +189,7 @@ def test_admin_deletes_document_with_everything(client: TestClient) -> None:
     assert client.get(f"/api/documents/{doc_id}/versions").status_code == 404
     assert client.get(f"/api/documents/{doc_id}/download", headers=ADMIN).status_code == 404
     assert not files_dir.exists()
-    conn = db.connect(client.settings.db_path)
+    conn = db.connect(client.settings.database)
     counts = [conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
               for t in ("documents", "document_versions", "download_log")]
     conn.close()
@@ -237,8 +237,8 @@ def test_every_role_gets_the_full_pdf(client: TestClient, role) -> None:
     assert r.headers["content-type"] == "application/pdf"
     assert r.content.endswith(b"-v1.xlsx")  # FakeConverter echoes the filename
 
-    conn = db.connect(client.settings.db_path)
-    rows = [dict(x) for x in conn.execute("SELECT user, format FROM download_log")]
+    conn = db.connect(client.settings.database)
+    rows = [dict(x) for x in conn.execute('SELECT "user", format FROM download_log')]
     conn.close()
     assert rows == [{"user": "bob", "format": "pdf"}]
 

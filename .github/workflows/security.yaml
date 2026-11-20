@@ -1,0 +1,87 @@
+# Two checks that don't need the images built:
+#
+#   Secrets       gitleaks looks for credentials committed by mistake: AWS
+#                 keys, API tokens, private keys, webhook URLs, and long
+#                 random-looking strings. Same setup as Terraform-platform's
+#                 safety-secret-scan.yaml. This repo is public, so a leaked key
+#                 is found and abused within minutes and stays in git history.
+#   Dependencies  pip-audit (backend) and npm audit (frontend) check the pinned
+#                 packages against published vulnerability databases.
+#
+# Also runs weekly: new vulnerabilities are published against packages that
+# haven't changed, so a check that passed last week can fail today.
+#
+# Layers around this (repo settings, not code): GitHub secret scanning with
+# push protection rejects a push containing a known provider's secret, and
+# Dependabot (.github/dependabot.yml) opens PRs that update the pins.
+
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  secrets:
+    name: Secrets (gitleaks)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: on a push the action scans the pushed commit range,
+          # which needs the parent commits present.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Free for public repositories. If this repo ever becomes private in a
+      # GitHub organization, it needs a GITLEAKS_LICENSE secret.
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  python-deps:
+    name: Dependencies (backend, pip-audit)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Reads the pinned requirements files directly; nothing from them is
+      # installed on the runner. Any known vulnerability fails the job.
+      - name: Audit Python dependencies
+        run: |
+          python3 -m venv "$RUNNER_TEMP/pip-audit"
+          "$RUNNER_TEMP/pip-audit/bin/pip" install --quiet --disable-pip-version-check pip-audit==2.10.1
+          "$RUNNER_TEMP/pip-audit/bin/pip-audit" --progress-spinner off \
+            -r backend/requirements.txt \
+            -r backend/requirements-dev.txt
+
+  node-deps:
+    name: Dependencies (frontend, npm audit)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Includes devDependencies on purpose: the web image runs the Vite dev
+      # server, so dev dependencies are what actually runs in the cluster.
+      # Reads package-lock.json only; nothing is installed.
+      - name: Audit npm dependencies
+        working-directory: frontend
+        run: npm audit --audit-level=high

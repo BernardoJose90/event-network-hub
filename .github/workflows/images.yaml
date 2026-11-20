@@ -1,7 +1,9 @@
 # Builds the app's three container images and, on main, pushes them to ECR.
 #
-#   Pull request:  run the tests, then build every image (nothing is pushed).
-#   Push to main:  run the tests, then build and push every image.
+#   Pull request:  run the tests, then build and scan every image (nothing is pushed).
+#   Push to main:  run the tests, then build, scan and push every image.
+#
+# Secret, dependency and code scanning live in security.yaml and codeql.yaml.
 #
 # Where the images go: one ECR repository, event-network-hub, in the
 # infra_shared_services account (Terraform-platform,
@@ -113,6 +115,35 @@ jobs:
             --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
             --tag "$IMAGE" \
             "$CONTEXT"
+
+      # Scan before pushing: ECR's own scan only runs after the image is
+      # stored and blocks nothing. Fixable CRITICAL findings fail the job;
+      # fixable HIGH findings are listed but don't block (yet).
+      #
+      # trivy-action v0.36.0 is an immutable release published after the
+      # March 2026 tag hijack (CVE-2026-33634), and it pins its own
+      # setup-trivy to the known-good commit. Never move this to a tag.
+      - name: Scan for vulnerabilities (report HIGH and CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.76.1
+          image-ref: ${{ env.IMAGE }}
+          scanners: vuln
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          format: table
+          exit-code: "0"
+
+      - name: Scan for vulnerabilities (fail on CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          skip-setup-trivy: true
+          image-ref: ${{ env.IMAGE }}
+          scanners: vuln
+          ignore-unfixed: true
+          severity: CRITICAL
+          format: table
+          exit-code: "1"
 
       - name: Log in to AWS
         if: env.PUSH == 'true'

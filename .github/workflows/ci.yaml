@@ -10,6 +10,9 @@
 #   security.yaml  gitleaks, pip-audit, npm audit
 #   codeql.yaml    CodeQL code scanning
 #
+# Then, on main only, "Update GitOps image tags" opens a PR in Platform-Gitops
+# that points development at the images just pushed.
+#
 # Permissions: a called workflow can never have more than its caller grants,
 # so each call below grants exactly what that workflow's jobs ask for.
 
@@ -73,4 +76,104 @@ jobs:
               echo "::error::At least one workflow did not succeed."
               exit 1
             fi
+          done
+
+  # After the images for this commit are in ECR, open a PR in Platform-Gitops
+  # that points development at them. Merging that PR is the deploy: Argo CD
+  # syncs whatever main says. Staging and production are promoted by their
+  # own PRs that reuse an already-built tag, never by this job.
+  #
+  # Credential: a GitHub App installed only on Platform-Gitops. Its token
+  # lasts an hour, is limited to that one repo, and here to contents and pull
+  # requests only. This repo's own GITHUB_TOKEN can't write to another repo.
+  # Needs, in this repo's settings:
+  #   variable GITOPS_APP_CLIENT_ID   the app's Client ID
+  #   secret   GITOPS_APP_PRIVATE_KEY the app's private key (.pem contents)
+  #
+  # If this job fails, "CI passed" has already reported, so the merge itself
+  # isn't blocked: re-run this job, or set the tags by hand.
+  gitops:
+    name: Update GitOps image tags
+    needs: ci-passed
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions: {} # uses the app's token, not GITHUB_TOKEN
+    env:
+      GITOPS_REPO: BernardoJose90/Platform-Gitops
+      OVERLAY: apps/event-network-hub/envs/development/kustomization.yaml
+    steps:
+      - name: Get a token for Platform-Gitops
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.GITOPS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GITOPS_APP_PRIVATE_KEY }}
+          owner: BernardoJose90
+          repositories: Platform-Gitops
+          permission-contents: write
+          permission-pull-requests: write
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: BernardoJose90/Platform-Gitops
+          token: ${{ steps.app-token.outputs.token }}
+          # Kept so the push below can use it. The token is revoked when
+          # this job ends.
+          persist-credentials: true
+
+      - name: Set the image tags and open a PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          short="${GITHUB_SHA::7}"
+          branch="image-bump/event-network-hub-development-${short}"
+          prefix="image-bump/event-network-hub-development-"
+
+          # All three images share one commit, so all three tags move together.
+          sed -E -i "s/^(    newTag: (backend|web|gotenberg))-[^[:space:]]+$/\1-${GITHUB_SHA}/" "$OVERLAY"
+          count=$(grep -cE "^    newTag: (backend|web|gotenberg)-${GITHUB_SHA}$" "$OVERLAY" || true)
+          if [ "$count" -ne 3 ]; then
+            echo "::error::Expected 3 image tags in $OVERLAY, found $count. Has the file's layout changed?"
+            exit 1
+          fi
+
+          if git diff --quiet; then
+            echo "Development already runs ${short}. Nothing to do."
+            exit 0
+          fi
+
+          # Re-runs: the PR for this commit may already exist.
+          open=$(gh pr list --repo "$GITOPS_REPO" --head "$branch" --state open --json number --jq length)
+          if [ "$open" != 0 ]; then
+            echo "A PR for ${short} is already open."
+            exit 0
+          fi
+
+          bot_id=$(gh api "/users/${APP_SLUG}%5Bbot%5D" --jq .id)
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+
+          source_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}"
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          git switch -c "$branch"
+          git commit -a -q -m "chore(event-network-hub): deploy ${short} to development" \
+                         -m "Images built and pushed by ${run_url}" \
+                         -m "Source: ${source_url}"
+          git push --force -q origin "$branch"
+
+          url=$(gh pr create --repo "$GITOPS_REPO" --base main --head "$branch" \
+            --title "Deploy event-network-hub ${short} to development" \
+            --body "Points \`backend\`, \`web\` and \`gotenberg\` in development at the images for [${short}](${source_url}), built, scanned and pushed by [this run](${run_url}). Merging deploys it: Argo CD syncs \`main\`.")
+          echo "Opened ${url}" >> "$GITHUB_STEP_SUMMARY"
+
+          # Older bump PRs that were never merged are now out of date.
+          gh pr list --repo "$GITOPS_REPO" --state open --json number,headRefName \
+            --jq ".[] | select(.headRefName | startswith(\"${prefix}\")) | select(.headRefName != \"${branch}\") | .number" |
+          while read -r old; do
+            gh pr close "$old" --repo "$GITOPS_REPO" --delete-branch \
+              --comment "Superseded by ${url}."
           done

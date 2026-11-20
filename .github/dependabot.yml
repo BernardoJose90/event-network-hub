@@ -1,0 +1,73 @@
+# Dependabot opens PRs that update pinned versions, so security fixes reach the
+# pins instead of the pins staying frozen. Each PR runs the same tests and scans
+# as any other change.
+#
+# cooldown: a new release must be 7 days old before Dependabot proposes it.
+# A hijacked release (like trivy-action's in March 2026) is usually found and
+# pulled within that time. Security updates for a known vulnerability skip the
+# cooldown.
+#
+# Major versions are left to a deliberate upgrade, not a weekly PR:
+#   - postgres stays on 17 to match RDS (Terraform-platform modules/rds).
+#   - gotenberg 9 changes its API (see its upgrade guide); converter.py is
+#     written for 8.
+#   - python and node majors change the runtime under the app.
+# Python is versioned 3.x, so 3.12 → 3.13 counts as "minor": it's ignored by
+# version range instead.
+
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      python-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directories: [/backend, /frontend, /gotenberg]
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major
+      - dependency-name: python
+        versions: [">=3.13"]
+
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-major

@@ -1,0 +1,158 @@
+# Builds the app's three container images and, on main, pushes them to ECR.
+#
+#   Pull request:  run the tests, then build and scan every image (nothing is pushed).
+#   Push to main:  run the tests, then build, scan and push every image.
+#
+# Secret, dependency and code scanning live in security.yaml and codeql.yaml.
+#
+# Where the images go: one ECR repository, event-network-hub, in the
+# infra_shared_services account (Terraform-platform,
+# member-accounts/infra_shared_services/main.tf). Each image has its own tag
+# prefix, which is what Platform-Gitops expects
+# (apps/event-network-hub/envs/<env>/kustomization.yaml):
+#
+#   backend-<commit sha>    backend/Dockerfile, runtime stage
+#   web-<commit sha>        frontend/Dockerfile
+#   gotenberg-<commit sha>  gotenberg/Dockerfile
+#
+# Login: GitHub OIDC into the EventNetworkHubEcrPush role. No stored AWS keys.
+# The role trusts only runs on main (sub = repo:...:ref:refs/heads/main), so
+# the push job must NOT use a GitHub Environment: an environment changes the
+# token's sub and AWS would refuse the login.
+#
+# Tags are immutable in this repository. A tag can't be pushed twice, so
+# "Re-run all jobs" on a run that already pushed fails for those images.
+# Re-run only the failed jobs instead.
+
+name: Images
+
+# Runs only as part of ci.yaml, which triggers it on pull requests and pushes
+# to main. github.event_name and github.ref are ci.yaml's, so the push-or-not
+# decision below works the same.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: eu-west-2
+  # infra_shared_services (also in Platform-Gitops' image names).
+  ECR_REGISTRY: 613993872109.dkr.ecr.eu-west-2.amazonaws.com
+  ECR_REPOSITORY: event-network-hub
+  PUSH_ROLE_ARN: arn:aws:iam::613993872109:role/EventNetworkHubEcrPush
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Same command as locally: the test image against the compose Postgres.
+      - name: Run the test suite
+        run: docker compose run --rm --build tests
+
+      - name: Stop the compose services
+        if: always()
+        run: docker compose --profile test down --volumes
+
+  image:
+    name: Image (${{ matrix.name }})
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write # OIDC login to AWS; only used when pushing
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            context: backend
+            target: runtime
+          - name: web
+            context: frontend
+            target: ""
+          - name: gotenberg
+            context: gotenberg
+            target: ""
+    env:
+      PUSH: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Name the image
+        env:
+          NAME: ${{ matrix.name }}
+        run: echo "IMAGE=${ECR_REGISTRY}/${ECR_REPOSITORY}:${NAME}-${GITHUB_SHA}" >> "$GITHUB_ENV"
+
+      # No provenance or SBOM attestations: they are stored as untagged
+      # images, which the repository's lifecycle rule deletes after 7 days.
+      - name: Build
+        env:
+          CONTEXT: ${{ matrix.context }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          target_args=()
+          if [ -n "$TARGET" ]; then target_args=(--target "$TARGET"); fi
+          docker build \
+            --provenance=false --sbom=false \
+            "${target_args[@]}" \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --tag "$IMAGE" \
+            "$CONTEXT"
+
+      # Scan before pushing: ECR's own scan only runs after the image is
+      # stored and blocks nothing. Fixable CRITICAL findings fail the job;
+      # fixable HIGH findings are listed but don't block (yet).
+      #
+      # trivy-action v0.36.0 is an immutable release published after the
+      # March 2026 tag hijack (CVE-2026-33634), and it pins its own
+      # setup-trivy to the known-good commit. Never move this to a tag.
+      - name: Scan for vulnerabilities (report HIGH and CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.76.1
+          image-ref: ${{ env.IMAGE }}
+          scanners: vuln
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          format: table
+          exit-code: "0"
+
+      - name: Scan for vulnerabilities (fail on CRITICAL)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          skip-setup-trivy: true
+          image-ref: ${{ env.IMAGE }}
+          scanners: vuln
+          ignore-unfixed: true
+          severity: CRITICAL
+          format: table
+          exit-code: "1"
+
+      - name: Log in to AWS
+        if: env.PUSH == 'true'
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ env.PUSH_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: event-network-hub-${{ matrix.name }}-${{ github.run_id }}
+          retry-max-attempts: 3
+
+      - name: Push to ECR
+        if: env.PUSH == 'true'
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+          docker push "$IMAGE"
+          docker logout "$ECR_REGISTRY"
+          echo "Pushed \`$IMAGE\`" >> "$GITHUB_STEP_SUMMARY"

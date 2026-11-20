@@ -1,0 +1,46 @@
+# CodeQL: GitHub's code scanner (free for public repositories). It looks for
+# security bugs in the app's own code, such as injection or unsafe file paths,
+# and for risky patterns in these workflow files. Findings appear under the
+# repo's Security tab → Code scanning, and on the PR that introduces them.
+#
+# No build step: Python, JavaScript/TypeScript and Actions are analysed from
+# source (build-mode: none).
+
+name: CodeQL
+
+# Pull requests and pushes to main: through ci.yaml, so it counts toward
+# "CI passed". The weekly run is its own.
+on:
+  workflow_call:
+  schedule:
+    - cron: "41 6 * * 1" # Mondays 06:41 UTC: picks up new CodeQL queries
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write # upload results to Code scanning
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript, actions]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          category: /language:${{ matrix.language }}

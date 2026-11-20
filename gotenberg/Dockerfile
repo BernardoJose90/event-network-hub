@@ -21,7 +21,7 @@ RUN curl -fsSL -o overpass.zip \
           "Overpass-${OVERPASS_VERSION}"/desktop-fonts/overpass-mono/*.otf /fonts/
 
 # --- Stage 2: Gotenberg with extra fonts -------------------------------------
-FROM gotenberg/gotenberg:8.37.0
+FROM gotenberg/gotenberg:8.40.0
 
 USER root
 
